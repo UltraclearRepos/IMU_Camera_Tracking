@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from lightglue import LightGlue, SuperPoint
 from lightglue.utils import rbd
+from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 
 
@@ -26,7 +27,12 @@ MAX_KEYPOINTS = 2048
 MIN_MATCHES = 30
 MIN_INLIERS = 20
 PNP_REPROJECTION_ERROR_PX = 3.0
-KEYFRAME_INTERVAL = 30
+KEYFRAME_TRANSLATION_MM = 8.0
+KEYFRAME_ROTATION_DEG = 5.0
+KEYFRAME_INLIER_RATIO_THRESHOLD = 0.65
+KEYFRAME_MIN_NEW_FEATURES = 200
+KEYFRAME_MIN_PNP_INLIERS = 80
+NEW_MAP_POINT_MIN_DISTANCE_MM = 1.0
 ARUCO_ID = 7
 ARUCO_SIZE_MM = 20.0
 MAP_DISPLAY_GRID_MM = 1.0
@@ -129,7 +135,6 @@ class SkinMapTracker:
         self.aruco_detector = cv2.aruco.ArucoDetector(dictionary)
 
         self.keyframes = []
-        self.last_keyframe_frame = -KEYFRAME_INTERVAL
         self.R_map_to_camera = None
         self.t_map_to_camera = None
 
@@ -186,21 +191,103 @@ class SkinMapTracker:
         map_points[:, 2] = 0.0
         return map_points
 
-    def add_keyframe(self, frame_index, features, R_map_to_camera, t_map_to_camera):
+    def all_map_points(self):
+        if not self.keyframes:
+            return np.empty((0, 3))
+
+        map_points = np.vstack(
+            [keyframe["map_points"] for keyframe in self.keyframes]
+        )
+        return map_points[np.isfinite(map_points).all(axis=1)]
+
+    def add_keyframe(
+        self,
+        frame_index,
+        features,
+        R_map_to_camera,
+        t_map_to_camera,
+        known_feature_indices=None,
+        known_map_points=None,
+        new_feature_indices=None,
+    ):
         keypoints = rbd(features)["keypoints"].detach().cpu().numpy()
-        map_points = self.pixels_to_skin_plane(
-            keypoints,
+        map_points = np.full((len(keypoints), 3), np.nan)
+
+        if known_feature_indices is not None:
+            map_points[known_feature_indices] = known_map_points
+
+        if new_feature_indices is None:
+            new_feature_indices = np.arange(len(keypoints))
+
+        new_points = self.pixels_to_skin_plane(
+            keypoints[new_feature_indices],
             R_map_to_camera,
             t_map_to_camera,
         )
+        valid = np.isfinite(new_points).all(axis=1)
+        new_feature_indices = new_feature_indices[valid]
+        new_points = new_points[valid]
+
+        existing_points = self.all_map_points()
+        if len(existing_points) and len(new_points):
+            distances, _ = cKDTree(existing_points[:, :2]).query(
+                new_points[:, :2]
+            )
+            is_new = distances >= NEW_MAP_POINT_MIN_DISTANCE_MM
+            new_feature_indices = new_feature_indices[is_new]
+            new_points = new_points[is_new]
+
+        if len(new_points):
+            grid_cells = np.rint(
+                new_points[:, :2] / NEW_MAP_POINT_MIN_DISTANCE_MM
+            ).astype(np.int32)
+            _, unique_indices = np.unique(
+                grid_cells,
+                axis=0,
+                return_index=True,
+            )
+            new_feature_indices = new_feature_indices[unique_indices]
+            new_points = new_points[unique_indices]
+            map_points[new_feature_indices] = new_points
+
+        camera_rotation = R_map_to_camera.T
+        camera_position = -camera_rotation @ t_map_to_camera.reshape(3)
         self.keyframes.append(
             {
                 "frame": frame_index,
                 "features": features,
                 "map_points": map_points,
+                "camera_position": camera_position,
+                "camera_rotation": camera_rotation,
             }
         )
-        self.last_keyframe_frame = frame_index
+
+    def should_add_keyframe(self, result):
+        last_keyframe = self.keyframes[-1]
+        camera_rotation = result["R"].T
+        camera_position = -camera_rotation @ result["t"]
+
+        translation = np.linalg.norm(
+            camera_position - last_keyframe["camera_position"]
+        )
+        relative_rotation = (
+            last_keyframe["camera_rotation"].T @ camera_rotation
+        )
+        rotation = np.degrees(
+            Rotation.from_matrix(relative_rotation).magnitude()
+        )
+        inlier_ratio = result["inliers"] / result["matches"]
+
+        pose_is_reliable = result["inliers"] >= KEYFRAME_MIN_PNP_INLIERS
+        enough_new_features = (
+            len(result["new_feature_indices"]) >= KEYFRAME_MIN_NEW_FEATURES
+        )
+        viewpoint_changed = (
+            translation >= KEYFRAME_TRANSLATION_MM
+            or rotation >= KEYFRAME_ROTATION_DEG
+            or inlier_ratio <= KEYFRAME_INLIER_RATIO_THRESHOLD
+        )
+        return pose_is_reliable and enough_new_features and viewpoint_changed
 
     def match_keyframe(self, keyframe, current_features):
         with torch.inference_mode():
@@ -216,9 +303,11 @@ class SkinMapTracker:
 
         map_points = keyframe["map_points"][matches[:, 0]]
         image_points = current_keypoints[matches[:, 1]]
+        current_feature_indices = matches[:, 1]
         valid = np.isfinite(map_points).all(axis=1)
         map_points = np.ascontiguousarray(map_points[valid], dtype=np.float64)
         image_points = np.ascontiguousarray(image_points[valid], dtype=np.float64)
+        current_feature_indices = current_feature_indices[valid]
 
         if len(map_points) < MIN_MATCHES:
             return None
@@ -250,12 +339,16 @@ class SkinMapTracker:
         R_map_to_camera = cv2.Rodrigues(rvec)[0]
         inlier_mask = np.zeros(len(image_points), dtype=bool)
         inlier_mask[inlier_indices] = True
+        unmatched_mask = np.ones(len(current_keypoints), dtype=bool)
+        unmatched_mask[current_feature_indices] = False
         return {
             "R": R_map_to_camera,
             "t": tvec.reshape(3),
             "matches": len(map_points),
             "inliers": len(inlier_indices),
             "inlier_map_points": map_points[inlier_indices],
+            "inlier_current_indices": current_feature_indices[inlier_indices],
+            "new_feature_indices": np.flatnonzero(unmatched_mask),
             "outlier_points": image_points[~inlier_mask],
             "keyframe_frame": keyframe["frame"],
         }
@@ -299,12 +392,15 @@ class SkinMapTracker:
         self.R_map_to_camera = result["R"]
         self.t_map_to_camera = result["t"]
 
-        if frame_index - self.last_keyframe_frame >= KEYFRAME_INTERVAL:
+        if self.should_add_keyframe(result):
             self.add_keyframe(
                 frame_index,
                 features,
                 self.R_map_to_camera,
                 self.t_map_to_camera,
+                known_feature_indices=result["inlier_current_indices"],
+                known_map_points=result["inlier_map_points"],
+                new_feature_indices=result["new_feature_indices"],
             )
 
         return result
