@@ -1,0 +1,16 @@
+=== 6DoF Validation Accuracy Report ===
+Analyzed frames: 3143
+
+[ Translation ]
+RMSE X: 1.587 mm
+RMSE Y: 0.667 mm
+RMSE Z: 2.996 mm
+Final MAE (Mean Absolute Error): 3.043 mm
+Final RMSE (Root Mean Squared Error): 3.455 mm
+
+[ Rotation ]
+RMSE Roll: 4.387 deg
+RMSE Pitch: 3.440 deg
+RMSE Yaw: 0.411 deg
+Final MAE (Mean Absolute Error): 4.641 deg
+Final RMSE (Root Mean Squared Error): 5.590 deg
