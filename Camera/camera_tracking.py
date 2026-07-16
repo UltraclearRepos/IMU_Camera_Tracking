@@ -29,9 +29,9 @@ MIN_INLIERS = 20
 PNP_REPROJECTION_ERROR_PX = 3.0
 KEYFRAME_TRANSLATION_MM = 8.0
 KEYFRAME_ROTATION_DEG = 5.0
-KEYFRAME_INLIER_RATIO_THRESHOLD = 0.65
+KEYFRAME_INLIER_RATIO_THRESHOLD = 0.75
+KEYFRAME_MIN_PNP_INLIER_RATIO = 0.60
 KEYFRAME_MIN_NEW_FEATURES = 200
-KEYFRAME_MIN_PNP_INLIERS = 80
 NEW_MAP_POINT_MIN_DISTANCE_MM = 1.0
 ARUCO_ID = 7
 ARUCO_SIZE_MM = 20.0
@@ -278,7 +278,7 @@ class SkinMapTracker:
         )
         inlier_ratio = result["inliers"] / result["matches"]
 
-        pose_is_reliable = result["inliers"] >= KEYFRAME_MIN_PNP_INLIERS
+        pose_is_reliable = inlier_ratio >= KEYFRAME_MIN_PNP_INLIER_RATIO
         enough_new_features = (
             len(result["new_feature_indices"]) >= KEYFRAME_MIN_NEW_FEATURES
         )
@@ -579,7 +579,82 @@ def load_ground_truth(path):
     return np.array(frames), np.array(positions), np.array(orientations)
 
 
-def create_comparison_plot(rows, gt_path, output_path):
+def save_comparison_figure(
+    frames,
+    ground_truth,
+    estimate,
+    component_errors,
+    overall_errors,
+    component_names,
+    unit,
+    overall_name,
+    output_path,
+    title,
+):
+    figure = plt.figure(figsize=(14, 14))
+    grid = figure.add_gridspec(4, 2)
+
+    for component in range(3):
+        comparison_axis = figure.add_subplot(grid[component, 0])
+        comparison_axis.plot(
+            frames,
+            ground_truth[:, component],
+            "k--",
+            label="GT",
+        )
+        comparison_axis.plot(
+            frames,
+            estimate[:, component],
+            color="tab:blue",
+            label="Camera",
+        )
+        comparison_axis.set_ylabel(
+            f"{component_names[component]} [{unit}]"
+        )
+        comparison_axis.grid(True)
+        comparison_axis.legend()
+
+        component_rmse = np.sqrt(
+            np.mean(component_errors[:, component] ** 2)
+        )
+        error_axis = figure.add_subplot(grid[component, 1])
+        error_axis.plot(
+            frames,
+            np.abs(component_errors[:, component]),
+            color="red",
+        )
+        error_axis.set_title(
+            f"{component_names[component]} error | "
+            f"RMSE: {component_rmse:.2f} {unit}"
+        )
+        error_axis.set_ylabel(f"Absolute error [{unit}]")
+        error_axis.grid(True)
+
+    overall_mae = np.mean(overall_errors)
+    overall_rmse = np.sqrt(np.mean(overall_errors**2))
+    overall_axis = figure.add_subplot(grid[3, :])
+    overall_axis.plot(frames, overall_errors, color="red")
+    overall_axis.set_title(
+        f"{overall_name} | MAE: {overall_mae:.2f} {unit} | "
+        f"RMSE: {overall_rmse:.2f} {unit}"
+    )
+    overall_axis.set_ylabel(f"Error [{unit}]")
+    overall_axis.set_xlabel("Frame")
+    overall_axis.grid(True)
+
+    figure.suptitle(title)
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+    return overall_rmse
+
+
+def create_comparison_plots(
+    rows,
+    gt_path,
+    position_output_path,
+    orientation_output_path,
+):
     frames = np.array([row["frame"] for row in rows])
     estimate = np.array(
         [[row["x_mm"], row["y_mm"], row["z_mm"]] for row in rows],
@@ -606,11 +681,10 @@ def create_comparison_plot(rows, gt_path, output_path):
     first_valid = np.flatnonzero(valid)[0]
     relative_estimate = estimate - estimate[first_valid]
     relative_gt = gt - gt[first_valid]
-    errors = np.linalg.norm(
-        relative_estimate[valid] - relative_gt[valid],
-        axis=1,
+    position_component_errors = (
+        relative_estimate[valid] - relative_gt[valid]
     )
-    position_rmse = np.sqrt(np.mean(errors**2))
+    position_errors = np.linalg.norm(position_component_errors, axis=1)
 
     absolute_estimate_rotations = Rotation.from_euler(
         "xyz", estimate_euler[valid], degrees=True
@@ -635,81 +709,41 @@ def create_comparison_plot(rows, gt_path, output_path):
     relative_gt_euler = np.degrees(
         np.unwrap(np.radians(relative_gt_euler), axis=0)
     )
+    orientation_component_errors = (
+        relative_estimate_euler - relative_gt_euler + 180.0
+    ) % 360.0 - 180.0
     relative_rotations = np.transpose(gt_rotations, (0, 2, 1)) @ estimate_rotations
     angular_errors = np.degrees(
         Rotation.from_matrix(relative_rotations).magnitude()
     )
 
-    position_mae = np.mean(errors)
-    orientation_mae = np.mean(angular_errors)
-    orientation_rmse = np.sqrt(np.mean(angular_errors**2))
-
-    position_columns = ["X [mm]", "Y [mm]", "Z [mm]"]
-    orientation_columns = ["Roll [deg]", "Pitch [deg]", "Yaw [deg]"]
-    fig, axes = plt.subplots(4, 2, figsize=(14, 13), sharex=True)
-    for axis in range(3):
-        position_axis = axes[axis, 0]
-        position_axis.plot(
-            frames[valid],
-            relative_gt[valid, axis],
-            "k--",
-            label="GT",
-        )
-        position_axis.plot(
-            frames[valid],
-            relative_estimate[valid, axis],
-            color="tab:blue",
-            label="Camera",
-        )
-        position_axis.set_ylabel(position_columns[axis])
-        position_axis.grid(True)
-        position_axis.legend()
-
-        orientation_axis = axes[axis, 1]
-        orientation_axis.plot(
-            frames[valid],
-            relative_gt_euler[:, axis],
-            "k--",
-            label="GT",
-        )
-        orientation_axis.plot(
-            frames[valid],
-            relative_estimate_euler[:, axis],
-            color="tab:blue",
-            label="Camera",
-        )
-        orientation_axis.set_ylabel(orientation_columns[axis])
-        orientation_axis.grid(True)
-        orientation_axis.legend()
-
-    distance_axis = axes[3, 0]
-    distance_axis.plot(frames[valid], errors, color="red")
-    distance_axis.set_title(
-        f"Euclidean Distance | MAE: {position_mae:.2f} mm | "
-        f"RMSE: {position_rmse:.2f} mm"
+    position_rmse = save_comparison_figure(
+        frames[valid],
+        relative_gt[valid],
+        relative_estimate[valid],
+        position_component_errors,
+        position_errors,
+        ["X", "Y", "Z"],
+        "mm",
+        "Euclidean distance",
+        position_output_path,
+        f"{DATASET_NAME}: camera position vs GT\n"
+        "Direct comparison; both trajectories start at their first measurement",
     )
-    distance_axis.set_ylabel("Distance [mm]")
-    distance_axis.set_xlabel("Frame")
-    distance_axis.grid(True)
 
-    angular_axis = axes[3, 1]
-    angular_axis.plot(frames[valid], angular_errors, color="red")
-    angular_axis.set_title(
-        f"Angular Distance | MAE: {orientation_mae:.2f} deg | "
-        f"RMSE: {orientation_rmse:.2f} deg"
+    orientation_rmse = save_comparison_figure(
+        frames[valid],
+        relative_gt_euler,
+        relative_estimate_euler,
+        orientation_component_errors,
+        angular_errors,
+        ["Roll", "Pitch", "Yaw"],
+        "deg",
+        "Angular distance",
+        orientation_output_path,
+        f"{DATASET_NAME}: camera orientation vs GT\n"
+        "Direct comparison; both orientations start at their first measurement",
     )
-    angular_axis.set_ylabel("Angle [deg]")
-    angular_axis.set_xlabel("Frame")
-    angular_axis.grid(True)
-
-    fig.suptitle(
-        f"{DATASET_NAME}: Camera vs GT, position RMSE = {position_rmse:.2f} mm, "
-        f"orientation RMSE = {orientation_rmse:.2f} deg\n"
-        "Direct comparison; both trajectories start at their first measurement"
-    )
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=160)
-    plt.close(fig)
     return position_rmse, orientation_rmse
 
 
@@ -824,12 +858,23 @@ def main():
     cv2.destroyAllWindows()
 
     csv_path = OUTPUT_DIR / f"{DATASET_NAME}_camera.csv"
-    plot_path = OUTPUT_DIR / f"{DATASET_NAME}_camera_vs_gt.png"
+    position_plot_path = (
+        OUTPUT_DIR / f"{DATASET_NAME}_camera_vs_gt_position.png"
+    )
+    orientation_plot_path = (
+        OUTPUT_DIR / f"{DATASET_NAME}_camera_vs_gt_orientation.png"
+    )
     save_results_csv(rows, csv_path)
-    position_rmse, orientation_rmse = create_comparison_plot(rows, gt_path, plot_path)
+    position_rmse, orientation_rmse = create_comparison_plots(
+        rows,
+        gt_path,
+        position_plot_path,
+        orientation_plot_path,
+    )
 
     print(f"Saved: {csv_path}")
-    print(f"Saved: {plot_path}")
+    print(f"Saved: {position_plot_path}")
+    print(f"Saved: {orientation_plot_path}")
     if SAVE_DIAGNOSTIC_VIDEO:
         print(f"Saved: {video_path_output}")
     print(f"Position RMSE: {position_rmse:.2f} mm")
