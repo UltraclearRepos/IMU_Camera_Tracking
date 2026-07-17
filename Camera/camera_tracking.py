@@ -20,7 +20,7 @@ from scipy.spatial.transform import Rotation
 # -----------------------------------------------------------------------------
 
 DATASET_NAME = "horizontal_line_1"
-SKIP_INITIAL_FRAMES = 30
+CAMERA_DELAY_TO_DOBOT_SECONDS = 0.084
 
 DEVICE = "cuda"
 MAX_KEYPOINTS = 2048
@@ -782,6 +782,7 @@ def diagnostic_frame(frame, tracker, result, relative_positions):
 def save_results_csv(rows, path):
     fields = [
         "frame",
+        "raw_time_s",
         "time_s",
         "x_mm",
         "y_mm",
@@ -885,7 +886,7 @@ def save_comparison_figure(
         f"RMSE: {overall_rmse:.2f} {unit}"
     )
     overall_axis.set_ylabel(f"Error [{unit}]")
-    overall_axis.set_xlabel("Frame")
+    overall_axis.set_xlabel("Corrected camera time [s]")
     overall_axis.grid(True)
 
     figure.suptitle(title)
@@ -898,10 +899,11 @@ def save_comparison_figure(
 def create_comparison_plots(
     rows,
     gt_path,
+    input_fps,
     position_output_path,
     orientation_output_path,
 ):
-    frames = np.array([row["frame"] for row in rows])
+    camera_time = np.array([row["time_s"] for row in rows])
     estimate = np.array(
         [[row["x_mm"], row["y_mm"], row["z_mm"]] for row in rows],
         dtype=float,
@@ -912,51 +914,39 @@ def create_comparison_plots(
     )
     gt_frames, gt_positions, gt_euler = load_ground_truth(gt_path)
 
+    gt_time = gt_frames / input_fps
     gt = np.column_stack(
-        [np.interp(frames, gt_frames, gt_positions[:, axis]) for axis in range(3)]
+        [
+            np.interp(camera_time, gt_time, gt_positions[:, axis])
+            for axis in range(3)
+        ]
     )
-    gt_euler = np.degrees(np.unwrap(np.radians(gt_euler), axis=0))
-    interpolated_gt_euler = np.column_stack(
-        [np.interp(frames, gt_frames, gt_euler[:, axis]) for axis in range(3)]
+    unwrapped_gt_euler = np.degrees(
+        np.unwrap(np.radians(gt_euler), axis=0)
     )
+    gt_euler = np.column_stack(
+        [
+            np.interp(camera_time, gt_time, unwrapped_gt_euler[:, axis])
+            for axis in range(3)
+        ]
+    )
+
     valid = np.isfinite(estimate).all(axis=1)
     valid &= np.isfinite(estimate_euler).all(axis=1)
-    valid &= frames >= gt_frames.min()
-    valid &= frames <= gt_frames.max()
+    valid &= camera_time >= gt_time[0]
+    valid &= camera_time <= gt_time[-1]
 
-    first_valid = np.flatnonzero(valid)[0]
-    relative_estimate = estimate - estimate[first_valid]
-    relative_gt = gt - gt[first_valid]
-    position_component_errors = (
-        relative_estimate[valid] - relative_gt[valid]
-    )
+    position_component_errors = estimate[valid] - gt[valid]
     position_errors = np.linalg.norm(position_component_errors, axis=1)
 
-    absolute_estimate_rotations = Rotation.from_euler(
+    estimate_rotations = Rotation.from_euler(
         "xyz", estimate_euler[valid], degrees=True
     ).as_matrix()
-    absolute_gt_rotations = Rotation.from_euler(
-        "xyz", interpolated_gt_euler[valid], degrees=True
+    gt_rotations = Rotation.from_euler(
+        "xyz", gt_euler[valid], degrees=True
     ).as_matrix()
-
-    estimate_rotations = (
-        absolute_estimate_rotations[0].T @ absolute_estimate_rotations
-    )
-    gt_rotations = absolute_gt_rotations[0].T @ absolute_gt_rotations
-    relative_estimate_euler = Rotation.from_matrix(estimate_rotations).as_euler(
-        "xyz", degrees=True
-    )
-    relative_estimate_euler = np.degrees(
-        np.unwrap(np.radians(relative_estimate_euler), axis=0)
-    )
-    relative_gt_euler = Rotation.from_matrix(gt_rotations).as_euler(
-        "xyz", degrees=True
-    )
-    relative_gt_euler = np.degrees(
-        np.unwrap(np.radians(relative_gt_euler), axis=0)
-    )
     orientation_component_errors = (
-        relative_estimate_euler - relative_gt_euler + 180.0
+        estimate_euler[valid] - gt_euler[valid] + 180.0
     ) % 360.0 - 180.0
     relative_rotations = np.transpose(gt_rotations, (0, 2, 1)) @ estimate_rotations
     angular_errors = np.degrees(
@@ -964,9 +954,9 @@ def create_comparison_plots(
     )
 
     position_rmse = save_comparison_figure(
-        frames[valid],
-        relative_gt[valid],
-        relative_estimate[valid],
+        camera_time[valid],
+        gt[valid],
+        estimate[valid],
         position_component_errors,
         position_errors,
         ["X", "Y", "Z"],
@@ -974,13 +964,13 @@ def create_comparison_plots(
         "Euclidean distance",
         position_output_path,
         f"{DATASET_NAME}: camera position vs GT\n"
-        "Direct comparison; both trajectories start at their first measurement",
+        "Camera timestamps corrected by -84 ms relative to Dobot",
     )
 
     orientation_rmse = save_comparison_figure(
-        frames[valid],
-        relative_gt_euler,
-        relative_estimate_euler,
+        camera_time[valid],
+        gt_euler[valid],
+        estimate_euler[valid],
         orientation_component_errors,
         angular_errors,
         ["Roll", "Pitch", "Yaw"],
@@ -988,7 +978,7 @@ def create_comparison_plots(
         "Angular distance",
         orientation_output_path,
         f"{DATASET_NAME}: camera orientation vs GT\n"
-        "Direct comparison; both orientations start at their first measurement",
+        "Camera timestamps corrected by -84 ms relative to Dobot",
     )
     return position_rmse, orientation_rmse
 
@@ -1017,8 +1007,6 @@ def main():
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    capture.set(cv2.CAP_PROP_POS_FRAMES, SKIP_INITIAL_FRAMES)
-
     video_writer = None
     if SAVE_DIAGNOSTIC_VIDEO:
         video_path_output = OUTPUT_DIR / f"{DATASET_NAME}_tracking.mp4"
@@ -1033,7 +1021,7 @@ def main():
     positions = []
     initial_position = None
     initial_rotation = None
-    frame_index = SKIP_INITIAL_FRAMES
+    frame_index = 0
 
     while True:
         success, frame = capture.read()
@@ -1066,7 +1054,11 @@ def main():
         rows.append(
             {
                 "frame": frame_index,
-                "time_s": frame_index / input_fps,
+                "raw_time_s": frame_index / input_fps,
+                "time_s": (
+                    frame_index / input_fps
+                    - CAMERA_DELAY_TO_DOBOT_SECONDS
+                ),
                 "x_mm": position[0],
                 "y_mm": position[1],
                 "z_mm": position[2],
@@ -1117,6 +1109,7 @@ def main():
     position_rmse, orientation_rmse = create_comparison_plots(
         rows,
         gt_path,
+        input_fps,
         position_plot_path,
         orientation_plot_path,
     )

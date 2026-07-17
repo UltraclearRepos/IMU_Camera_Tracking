@@ -1,6 +1,7 @@
 """IMU-only error-state Kalman filter and comparison with ground truth."""
 
 import csv
+import json
 import math
 from collections import deque
 from pathlib import Path
@@ -63,6 +64,11 @@ IMU_LOG_PATH = DATA_ROOT / DATASETS[DATASET_NAME]["imu"]
 GROUND_TRUTH_PATH = DATA_ROOT / DATASETS[DATASET_NAME]["gt"]
 OUTPUT_CSV_PATH = Path(f"eskf_{DATASET_NAME}.csv")
 OUTPUT_PLOT_PATH = Path(f"eskf_vs_gt_{DATASET_NAME}.png")
+CALIBRATION_PATH = (
+    Path(__file__).resolve().parent
+    / "calibration"
+    / "imu_calibration.json"
+)
 
 INITIALIZATION_SECONDS = 2.0
 AUTO_ZUPT = False
@@ -169,9 +175,13 @@ def initial_orientation(mean_acceleration):
 
 
 class EskfParameters:
-    def __init__(self):
-        self.accel_noise_std = 0.02
-        self.gyro_noise_std = math.radians(0.5)
+    def __init__(self, calibration):
+        self.accel_noise_std = np.array(
+            calibration["accel_noise_std_m_s2"]
+        )
+        self.gyro_noise_std = np.array(
+            calibration["gyro_noise_std_rad_s"]
+        )
         self.accel_bias_random_walk = 5e-4
         self.gyro_bias_random_walk = math.radians(0.01)
         self.zero_velocity_std = 0.01
@@ -180,8 +190,8 @@ class EskfParameters:
 
 
 class ErrorStateKalmanFilter:
-    def __init__(self):
-        self.parameters = EskfParameters()
+    def __init__(self, calibration):
+        self.parameters = EskfParameters(calibration)
         self.position = np.zeros(3)
         self.velocity = np.zeros(3)
         self.quaternion = np.array([1.0, 0.0, 0.0, 0.0])
@@ -251,8 +261,8 @@ class ErrorStateKalmanFilter:
         parameters = self.parameters
         noise_variance = np.concatenate(
             [
-                np.full(3, parameters.accel_noise_std**2),
-                np.full(3, parameters.gyro_noise_std**2),
+                parameters.accel_noise_std**2,
+                parameters.gyro_noise_std**2,
                 np.full(3, parameters.accel_bias_random_walk**2),
                 np.full(3, parameters.gyro_bias_random_walk**2),
             ]
@@ -373,28 +383,53 @@ class StationaryDetector:
         )
 
 
-def read_imu_log(path):
+def load_calibration(path):
+    with path.open(encoding="utf-8") as file:
+        return json.load(file)
+
+
+def read_imu_log(path, calibration):
     with path.open(newline="") as file:
-        rows = list(csv.DictReader(file))
+        reader = csv.reader(file)
+        columns = next(reader)
+        rows = list(reader)
+
+    accel_columns = [
+        len(columns) - 1 - columns[::-1].index(axis)
+        for axis in ("aX", "aY", "aZ")
+    ]
+    gyro_columns = [
+        len(columns) - 1 - columns[::-1].index(axis)
+        for axis in ("gX", "gY", "gZ")
+    ]
+    output_hz_column = columns.index("output_Hz")
 
     acceleration_mg = np.array(
         [
-            [float(row[key]) for key in ("aX", "aY", "aZ")]
+            [float(row[index]) for index in accel_columns]
             for row in rows
         ]
     )
     angular_rate_mdps = np.array(
         [
-            [float(row[key]) for key in ("gX", "gY", "gZ")]
+            [float(row[index]) for index in gyro_columns]
             for row in rows
         ]
     )
     sample_rate_hz = np.mean(
-        [float(row["output_Hz"]) for row in rows]
+        [float(row[output_hz_column]) for row in rows]
     )
 
     acceleration = acceleration_mg * GRAVITY / 1000.0
     angular_rate = np.radians(angular_rate_mdps / 1000.0)
+
+    accel_matrix = np.array(calibration["accel_matrix"])
+    accel_bias = np.array(calibration["accel_bias_m_s2"])
+    gyro_bias = np.array(calibration["gyro_bias_rad_s"])
+    acceleration = (
+        accel_matrix @ (acceleration - accel_bias).T
+    ).T
+    angular_rate = angular_rate - gyro_bias
     return acceleration, angular_rate, sample_rate_hz
 
 
@@ -403,7 +438,6 @@ def read_ground_truth(path):
         rows = list(csv.DictReader(file))
 
     time = np.array([float(row["timestamp"]) for row in rows])
-    time -= time[0]
 
     x = np.array([float(row["X"]) for row in rows])
     y = np.array([float(row["Y"]) for row in rows])
@@ -411,22 +445,26 @@ def read_ground_truth(path):
     yaw = np.array([float(row["R"]) for row in rows])
 
     values = {
-        "X": x - x[0],
-        "Y": y - y[0],
-        "Z": z - z[0],
+        "X": x,
+        "Y": y,
+        "Z": z,
         "Roll": np.zeros(len(rows)),
         "Pitch": np.zeros(len(rows)),
-        "Yaw": yaw - yaw[0],
+        "Yaw": yaw,
     }
     return time, values
 
 
 def run_filter():
-    acceleration, angular_rate, sample_rate_hz = read_imu_log(IMU_LOG_PATH)
+    calibration = load_calibration(CALIBRATION_PATH)
+    acceleration, angular_rate, sample_rate_hz = read_imu_log(
+        IMU_LOG_PATH,
+        calibration,
+    )
     dt = 1.0 / sample_rate_hz
     init_samples = round(INITIALIZATION_SECONDS * sample_rate_hz)
 
-    eskf = ErrorStateKalmanFilter()
+    eskf = ErrorStateKalmanFilter(calibration)
     eskf.initialize(
         acceleration[:init_samples],
         angular_rate[:init_samples],
@@ -553,7 +591,10 @@ def create_comparison_plot(imu_rows):
 
     axes[2, 0].set_xlabel("Time [s]")
     axes[2, 1].set_xlabel("Time [s]")
-    figure.suptitle(f"IMU ESKF vs ground truth: {DATASET_NAME}")
+    figure.suptitle(
+        f"IMU ESKF vs ground truth: {DATASET_NAME}\n"
+        "Direct comparison; no time or value alignment"
+    )
     figure.tight_layout()
     figure.savefig(OUTPUT_PLOT_PATH, dpi=160)
     plt.close(figure)
