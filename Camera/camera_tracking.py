@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from lightglue import LightGlue, SuperPoint
 from lightglue.utils import rbd
+from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 
 
@@ -33,6 +34,9 @@ KEYFRAME_INLIER_RATIO_THRESHOLD = 0.75
 KEYFRAME_MIN_PNP_INLIER_RATIO = 0.60
 KEYFRAME_MIN_NEW_FEATURES = 200
 NEW_MAP_POINT_MIN_DISTANCE_MM = 1.0
+LANDMARK_ASSOCIATION_DISTANCE_MM = 1.0
+LANDMARK_ASSOCIATION_REPROJECTION_ERROR_PX = 3.0
+LANDMARK_DESCRIPTOR_SIMILARITY = 0.80
 ARUCO_ID = 7
 ARUCO_SIZE_MM = 20.0
 
@@ -200,17 +204,128 @@ class SkinMapTracker:
             [landmark["position"] for landmark in self.landmarks.values()]
         )
 
-    def create_landmark(self, position, keyframe_id, feature_index):
+    def create_landmark(
+        self,
+        position,
+        descriptor,
+        keyframe_id,
+        feature_index,
+    ):
         landmark_id = self.next_landmark_id
         self.next_landmark_id += 1
+        descriptor = descriptor / np.linalg.norm(descriptor)
         self.landmarks[landmark_id] = {
             "position": position.copy(),
             "observations": {keyframe_id: feature_index},
+            "descriptor_sum": descriptor.copy(),
+            "descriptor": descriptor.copy(),
         }
         return landmark_id
 
-    def add_observation(self, landmark_id, keyframe_id, feature_index):
-        self.landmarks[landmark_id]["observations"][keyframe_id] = feature_index
+    def add_observation(
+        self,
+        landmark_id,
+        descriptor,
+        keyframe_id,
+        feature_index,
+    ):
+        landmark = self.landmarks[landmark_id]
+        landmark["observations"][keyframe_id] = feature_index
+        landmark["descriptor_sum"] += descriptor / np.linalg.norm(descriptor)
+        descriptor_sum = landmark["descriptor_sum"]
+        landmark["descriptor"] = descriptor_sum / np.linalg.norm(descriptor_sum)
+
+    def associate_nearby_landmarks(
+        self,
+        feature_indices,
+        map_points,
+        keypoints,
+        descriptors,
+        R_map_to_camera,
+        t_map_to_camera,
+        occupied_landmark_ids,
+    ):
+        if not self.landmarks or not len(feature_indices):
+            return {}
+
+        landmark_ids = np.array(list(self.landmarks), dtype=np.int64)
+        landmark_points = np.array(
+            [self.landmarks[landmark_id]["position"] for landmark_id in landmark_ids]
+        )
+        landmark_descriptors = np.array(
+            [self.landmarks[landmark_id]["descriptor"] for landmark_id in landmark_ids]
+        )
+        landmark_tree = cKDTree(landmark_points[:, :2])
+
+        rvec = cv2.Rodrigues(R_map_to_camera)[0]
+        projected_points, _ = cv2.projectPoints(
+            landmark_points,
+            rvec,
+            t_map_to_camera,
+            self.camera_matrix,
+            self.distortion,
+        )
+        projected_points = projected_points.reshape(-1, 2)
+        camera_points = (
+            R_map_to_camera @ landmark_points.T
+        ).T + t_map_to_camera.reshape(3)
+
+        candidates = []
+        for feature_index, map_point in zip(feature_indices, map_points):
+            nearby_indices = landmark_tree.query_ball_point(
+                map_point[:2],
+                LANDMARK_ASSOCIATION_DISTANCE_MM,
+            )
+            descriptor = descriptors[feature_index]
+            descriptor = descriptor / np.linalg.norm(descriptor)
+
+            for landmark_index in nearby_indices:
+                landmark_id = int(landmark_ids[landmark_index])
+                if landmark_id in occupied_landmark_ids:
+                    continue
+                if camera_points[landmark_index, 2] <= 0.0:
+                    continue
+
+                reprojection_error = np.linalg.norm(
+                    projected_points[landmark_index] - keypoints[feature_index]
+                )
+                if (
+                    reprojection_error
+                    > LANDMARK_ASSOCIATION_REPROJECTION_ERROR_PX
+                ):
+                    continue
+
+                similarity = float(
+                    descriptor @ landmark_descriptors[landmark_index]
+                )
+                if similarity < LANDMARK_DESCRIPTOR_SIMILARITY:
+                    continue
+
+                spatial_distance = np.linalg.norm(
+                    map_point[:2] - landmark_points[landmark_index, :2]
+                )
+                candidates.append(
+                    (
+                        similarity,
+                        -reprojection_error,
+                        -spatial_distance,
+                        int(feature_index),
+                        landmark_id,
+                    )
+                )
+
+        candidates.sort(reverse=True)
+        associations = {}
+        used_landmark_ids = set(occupied_landmark_ids)
+        for _, _, _, feature_index, landmark_id in candidates:
+            if feature_index in associations:
+                continue
+            if landmark_id in used_landmark_ids:
+                continue
+            associations[feature_index] = landmark_id
+            used_landmark_ids.add(landmark_id)
+
+        return associations
 
     def update_covisibility(self, keyframe_id):
         keyframe = self.keyframes[keyframe_id]
@@ -263,7 +378,9 @@ class SkinMapTracker:
         known_landmark_ids=None,
         new_feature_indices=None,
     ):
-        keypoints = rbd(features)["keypoints"].detach().cpu().numpy()
+        feature_data = rbd(features)
+        keypoints = feature_data["keypoints"].detach().cpu().numpy()
+        descriptors = feature_data["descriptors"].detach().cpu().numpy()
         landmark_ids = np.full(len(keypoints), -1, dtype=np.int64)
         keyframe_id = len(self.keyframes)
 
@@ -281,6 +398,34 @@ class SkinMapTracker:
         valid = np.isfinite(new_points).all(axis=1)
         new_feature_indices = new_feature_indices[valid]
         new_points = new_points[valid]
+
+        occupied_landmark_ids = set()
+        if known_landmark_ids is not None:
+            occupied_landmark_ids.update(
+                int(landmark_id) for landmark_id in known_landmark_ids
+            )
+
+        nearby_associations = self.associate_nearby_landmarks(
+            new_feature_indices,
+            new_points,
+            keypoints,
+            descriptors,
+            R_map_to_camera,
+            t_map_to_camera,
+            occupied_landmark_ids,
+        )
+        for feature_index, landmark_id in nearby_associations.items():
+            landmark_ids[feature_index] = landmark_id
+
+        if nearby_associations:
+            remains_new = np.array(
+                [
+                    feature_index not in nearby_associations
+                    for feature_index in new_feature_indices
+                ]
+            )
+            new_feature_indices = new_feature_indices[remains_new]
+            new_points = new_points[remains_new]
 
         if len(new_points):
             grid_cells = np.rint(
@@ -307,26 +452,26 @@ class SkinMapTracker:
         }
         self.keyframes.append(keyframe)
 
-        if known_feature_indices is not None:
-            for feature_index, landmark_id in zip(
-                known_feature_indices,
-                known_landmark_ids,
-            ):
-                self.add_observation(
-                    int(landmark_id),
-                    keyframe_id,
-                    int(feature_index),
-                )
+        observed_feature_indices = np.flatnonzero(landmark_ids >= 0)
+        for feature_index in observed_feature_indices:
+            self.add_observation(
+                int(landmark_ids[feature_index]),
+                descriptors[feature_index],
+                keyframe_id,
+                int(feature_index),
+            )
 
         for feature_index, point in zip(new_feature_indices, new_points):
             landmark_id = self.create_landmark(
                 point,
+                descriptors[feature_index],
                 keyframe_id,
                 int(feature_index),
             )
             keyframe["landmark_ids"][feature_index] = landmark_id
 
         self.update_covisibility(keyframe_id)
+        return len(nearby_associations)
 
     def should_add_keyframe(self, result):
         last_keyframe = self.keyframes[-1]
@@ -484,6 +629,7 @@ class SkinMapTracker:
                 "inlier_map_points": np.empty((0, 3)),
                 "outlier_points": np.empty((0, 2)),
                 "keyframe_frames": [frame_index],
+                "nearby_associations": 0,
             }
 
         result = self.match_local_map(features)
@@ -493,9 +639,10 @@ class SkinMapTracker:
 
         self.R_map_to_camera = result["R"]
         self.t_map_to_camera = result["t"]
+        result["nearby_associations"] = 0
 
         if self.should_add_keyframe(result):
-            self.add_keyframe(
+            result["nearby_associations"] = self.add_keyframe(
                 frame_index,
                 features,
                 self.R_map_to_camera,
@@ -594,7 +741,7 @@ def diagnostic_frame(frame, tracker, result, relative_positions):
             2,
         )
 
-        cv2.rectangle(output, (8, 84), (270, 158), (0, 0, 0), -1)
+        cv2.rectangle(output, (8, 84), (300, 181), (0, 0, 0), -1)
         legend = [
             (
                 f"Map not detected: {len(projected_map_points) - len(projected_inliers)}",
@@ -602,6 +749,10 @@ def diagnostic_frame(frame, tracker, result, relative_positions):
             ),
             (f"PnP inliers: {result['inliers']}", (0, 255, 0)),
             (f"PnP outliers: {len(result['outlier_points'])}", (0, 0, 255)),
+            (
+                f"Nearby associations: {result['nearby_associations']}",
+                (255, 180, 0),
+            ),
         ]
         for index, (text, text_color) in enumerate(legend):
             cv2.putText(
@@ -640,6 +791,7 @@ def save_results_csv(rows, path):
         "yaw_deg",
         "matches",
         "inliers",
+        "nearby_associations",
         "keyframes",
         "tracked",
     ]
@@ -923,6 +1075,9 @@ def main():
                 "yaw_deg": euler[2],
                 "matches": matches,
                 "inliers": inliers,
+                "nearby_associations": (
+                    result["nearby_associations"] if result is not None else 0
+                ),
                 "keyframes": len(tracker.keyframes),
                 "tracked": int(result is not None),
             }
