@@ -19,26 +19,40 @@ from scipy.spatial.transform import Rotation
 # Configuration
 # -----------------------------------------------------------------------------
 
-DATASET_NAME = "horizontal_line_1"
-CAMERA_DELAY_TO_DOBOT_SECONDS = 0.084
+RECORDING_NAME = "Speed-3_2026-07-17_14.38.43"
+CAMERA_NAME = "cam2"
+CAMERA_CALIBRATION = "camera_jabra_1920_1080"
+CAMERA_MAP_TO_DOBOT = np.array(
+    [
+        [0.0, 1.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ]
+)
 
 DEVICE = "cuda"
 MAX_KEYPOINTS = 2048
+FEATURE_ROI_BOTTOM_FRACTION = 0.70
 MIN_MATCHES = 30
 MIN_INLIERS = 20
 PNP_REPROJECTION_ERROR_PX = 3.0
 LOCAL_KEYFRAMES = 5
 KEYFRAME_TRANSLATION_MM = 8.0
 KEYFRAME_ROTATION_DEG = 5.0
-KEYFRAME_INLIER_RATIO_THRESHOLD = 0.75
-KEYFRAME_MIN_PNP_INLIER_RATIO = 0.60
-KEYFRAME_MIN_NEW_FEATURES = 200
+USE_PNP_CONDITIONS_FOR_KEYFRAMES = True
+KEYFRAME_LOW_PNP_INLIERS = 60
+KEYFRAME_MIN_PNP_INLIERS = 40
+KEYFRAME_MIN_NEW_FEATURES = 100
 NEW_MAP_POINT_MIN_DISTANCE_MM = 1.0
 LANDMARK_ASSOCIATION_DISTANCE_MM = 1.0
 LANDMARK_ASSOCIATION_REPROJECTION_ERROR_PX = 3.0
 LANDMARK_DESCRIPTOR_SIMILARITY = 0.80
 ARUCO_ID = 7
 ARUCO_SIZE_MM = 20.0
+INITIALIZATION_FRAMES = 5
+INITIALIZATION_MIN_OBSERVATIONS = 3
+INITIALIZATION_MIN_LANDMARKS = 60
+INITIALIZATION_POINT_MAX_DISTANCE_MM = 1.5
 
 SAVE_DIAGNOSTIC_VIDEO = True
 DIAGNOSTIC_VIDEO_FPS = 1.0
@@ -46,71 +60,32 @@ SHOW_PREVIEW = False
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+DATA_DIR = PROJECT_DIR / "Data2"
 OUTPUT_DIR = SCRIPT_DIR / "results"
+VIDEO_PATH = (
+    DATA_DIR
+    / "videos"
+    / f"{RECORDING_NAME}_{CAMERA_NAME}.mp4"
+)
+GROUND_TRUTH_PATH = DATA_DIR / "dobot" / f"{RECORDING_NAME}.csv"
+VIDEO_TIMESTAMP_PATH = (
+    DATA_DIR
+    / "video_timestamps"
+    / f"{RECORDING_NAME}.csv"
+)
 
 CAMERA_MATRIX_PATH = (
     SCRIPT_DIR
     / "calibrations"
-    / "camera_jabra_640_360"
+    / CAMERA_CALIBRATION
     / "camera_matrix.npy"
 )
 DISTORTION_PATH = (
     SCRIPT_DIR
     / "calibrations"
-    / "camera_jabra_640_360"
+    / CAMERA_CALIBRATION
     / "dist_coeffs.npy"
 )
-
-DATASETS = {
-    "horizontal_line_1": {
-        "video": "Data/horizontal_10x_5sp__x-005/horizontal_10x_5sp__x/probe_camera/video.mp4",
-        "gt": "Data/horizontal_10x_5sp__x-005/horizontal_10x_5sp__x/ground_truth/position.csv",
-    },
-    "horizontal_line_2": {
-        "video": "Data/horizontal_10x_8sp__x-003/horizontal_10x_8sp__x/probe_camera/video.mp4",
-        "gt": "Data/horizontal_10x_8sp__x-003/horizontal_10x_8sp__x/ground_truth/position.csv",
-    },
-    "vertical_line_1": {
-        "video": "Data/vertical_10x_5sp__y-001/vertical_10x_5sp__y/probe_camera/video.mp4",
-        "gt": "Data/vertical_10x_5sp__y-001/vertical_10x_5sp__y/ground_truth/position.csv",
-    },
-    "vertical_line_2": {
-        "video": "Data/vertical_10x_8sp__y-006/vertical_10x_8sp__y/probe_camera/video.mp4",
-        "gt": "Data/vertical_10x_8sp__y-006/vertical_10x_8sp__y/ground_truth/position.csv",
-    },
-    "square_1": {
-        "video": "Data/square_4x_5sp__x,y-002/square_4x_5sp__x,y/probe_camera/video.mp4",
-        "gt": "Data/square_4x_5sp__x,y-002/square_4x_5sp__x,y/ground_truth/position.csv",
-    },
-    "square_2": {
-        "video": "Data/square_4x_8sp__x,y/square_4x_8sp__x,y/probe_camera/video.mp4",
-        "gt": "Data/square_4x_8sp__x,y/square_4x_8sp__x,y/ground_truth/position.csv",
-    },
-    "triangle_1": {
-        "video": "Data/triangle_4x_5sp__x,y/probe_camera/video.mp4",
-        "gt": "Data/triangle_4x_5sp__x,y/ground_truth/position.csv",
-    },
-    "triangle_2": {
-        "video": "Data/triangle_4x_8sp__x,y/probe_camera/video.mp4",
-        "gt": "Data/triangle_4x_8sp__x,y/ground_truth/position.csv",
-    },
-    "cross_1": {
-        "video": "Data/cross_4x_5sp__x,y/probe_camera/video.mp4",
-        "gt": "Data/cross_4x_5sp__x,y/ground_truth/position.csv",
-    },
-    "cross_2": {
-        "video": "Data/cross_4x_8sp__x,y/probe_camera/video.mp4",
-        "gt": "Data/cross_4x_8sp__x,y/ground_truth/position.csv",
-    },
-    "rotation_1": {
-        "video": "Data/roration_4x_5sp__pitch/probe_camera/video.mp4",
-        "gt": "Data/roration_4x_5sp__pitch/ground_truth/position.csv",
-    },
-    "rotation_2": {
-        "video": "Data/roration_4x_8sp__pitch/roration_4x_8sp__pitch/probe_camera/video.mp4",
-        "gt": "Data/roration_4x_8sp__pitch/roration_4x_8sp__pitch/ground_truth/position.csv",
-    },
-}
 
 
 def frame_to_tensor(frame):
@@ -140,12 +115,20 @@ class SkinMapTracker:
         self.keyframes = []
         self.landmarks = {}
         self.next_landmark_id = 0
+        self.last_diagnostics = {}
         self.R_map_to_camera = None
         self.t_map_to_camera = None
+        self.initialization = None
 
     def extract_features(self, frame):
         with torch.inference_mode():
-            return self.extractor.extract(frame_to_tensor(frame))
+            features = self.extractor.extract(frame_to_tensor(frame))
+
+        roi_top = frame.shape[0] * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
+        keep = features["keypoints"][0, :, 1] >= roi_top
+        for name in ("keypoints", "keypoint_scores", "descriptors"):
+            features[name] = features[name][:, keep]
+        return features
 
     def find_initial_pose(self, frame):
         corners, ids, _ = self.aruco_detector.detectMarkers(frame)
@@ -195,6 +178,134 @@ class SkinMapTracker:
         map_points[scale <= 0.0] = np.nan
         map_points[:, 2] = 0.0
         return map_points
+
+    def start_initialization(
+        self,
+        frame_index,
+        features,
+        R_map_to_camera,
+        t_map_to_camera,
+    ):
+        keypoints = rbd(features)["keypoints"].detach().cpu().numpy()
+        map_points = self.pixels_to_skin_plane(
+            keypoints,
+            R_map_to_camera,
+            t_map_to_camera,
+        )
+        valid = np.isfinite(map_points).all(axis=1)
+        observations = np.zeros(len(keypoints), dtype=np.int32)
+        observations[valid] = 1
+
+        self.initialization = {
+            "frame": frame_index,
+            "features": features,
+            "R": R_map_to_camera,
+            "t": t_map_to_camera,
+            "map_points": map_points,
+            "observations": observations,
+            "frames": 1,
+        }
+        self.last_diagnostics["initialization_frames"] = 1
+        self.last_diagnostics["initialization_candidates"] = int(valid.sum())
+        self.last_diagnostics["initialization_confirmed"] = 0
+        self.last_diagnostics["initialization_matches"] = 0
+        self.last_diagnostics["initialization_points"] = keypoints[valid]
+
+    def update_initialization(
+        self,
+        features,
+        R_map_to_camera,
+        t_map_to_camera,
+    ):
+        initialization = self.initialization
+        current_keypoints = (
+            rbd(features)["keypoints"].detach().cpu().numpy()
+        )
+        current_map_points = self.pixels_to_skin_plane(
+            current_keypoints,
+            R_map_to_camera,
+            t_map_to_camera,
+        )
+
+        with torch.inference_mode():
+            output = self.matcher(
+                {
+                    "image0": initialization["features"],
+                    "image1": features,
+                }
+            )
+        matches = rbd(output)["matches"].detach().cpu().numpy()
+
+        consistent_points = []
+        for anchor_index, current_index in matches:
+            anchor_point = initialization["map_points"][anchor_index]
+            current_point = current_map_points[current_index]
+            if not np.isfinite(anchor_point).all():
+                continue
+            if not np.isfinite(current_point).all():
+                continue
+            if (
+                np.linalg.norm(anchor_point[:2] - current_point[:2])
+                > INITIALIZATION_POINT_MAX_DISTANCE_MM
+            ):
+                continue
+
+            initialization["observations"][anchor_index] += 1
+            consistent_points.append(current_keypoints[current_index])
+
+        initialization["frames"] += 1
+        confirmed_indices = np.flatnonzero(
+            initialization["observations"]
+            >= INITIALIZATION_MIN_OBSERVATIONS
+        )
+
+        self.last_diagnostics["initialization_frames"] = initialization[
+            "frames"
+        ]
+        self.last_diagnostics["initialization_candidates"] = int(
+            np.isfinite(initialization["map_points"]).all(axis=1).sum()
+        )
+        self.last_diagnostics["initialization_confirmed"] = len(
+            confirmed_indices
+        )
+        self.last_diagnostics["initialization_matches"] = len(
+            consistent_points
+        )
+        self.last_diagnostics["initialization_points"] = np.array(
+            consistent_points
+        ).reshape(-1, 2)
+
+        initialization_ready = (
+            initialization["frames"] >= INITIALIZATION_FRAMES
+            and len(confirmed_indices) >= INITIALIZATION_MIN_LANDMARKS
+        )
+        if not initialization_ready:
+            return None
+
+        map_update = self.add_keyframe(
+            initialization["frame"],
+            initialization["features"],
+            initialization["R"],
+            initialization["t"],
+            new_feature_indices=confirmed_indices,
+        )
+        initial_frame = initialization["frame"]
+        self.initialization = None
+        self.R_map_to_camera = R_map_to_camera
+        self.t_map_to_camera = t_map_to_camera
+        self.last_diagnostics["keyframe_added"] = 1
+        self.last_diagnostics.update(map_update)
+
+        return {
+            "R": R_map_to_camera,
+            "t": t_map_to_camera,
+            "matches": 0,
+            "inliers": 0,
+            "inlier_map_points": np.empty((0, 3)),
+            "outlier_points": np.empty((0, 2)),
+            "keyframe_frames": [initial_frame],
+            "nearby_associations": 0,
+        }
 
     def all_map_points(self):
         if not self.landmarks:
@@ -471,7 +582,10 @@ class SkinMapTracker:
             keyframe["landmark_ids"][feature_index] = landmark_id
 
         self.update_covisibility(keyframe_id)
-        return len(nearby_associations)
+        return {
+            "nearby_associations": len(nearby_associations),
+            "new_landmarks": len(new_points),
+        }
 
     def should_add_keyframe(self, result):
         last_keyframe = self.keyframes[-1]
@@ -487,17 +601,25 @@ class SkinMapTracker:
         rotation = np.degrees(
             Rotation.from_matrix(relative_rotation).magnitude()
         )
-        inlier_ratio = result["inliers"] / result["matches"]
+        pnp_inliers = result["inliers"]
 
-        pose_is_reliable = inlier_ratio >= KEYFRAME_MIN_PNP_INLIER_RATIO
         enough_new_features = (
             len(result["new_feature_indices"]) >= KEYFRAME_MIN_NEW_FEATURES
         )
         viewpoint_changed = (
             translation >= KEYFRAME_TRANSLATION_MM
             or rotation >= KEYFRAME_ROTATION_DEG
-            or inlier_ratio <= KEYFRAME_INLIER_RATIO_THRESHOLD
         )
+
+        if USE_PNP_CONDITIONS_FOR_KEYFRAMES:
+            pose_is_reliable = pnp_inliers >= KEYFRAME_MIN_PNP_INLIERS
+            viewpoint_changed = (
+                viewpoint_changed
+                or pnp_inliers <= KEYFRAME_LOW_PNP_INLIERS
+            )
+        else:
+            pose_is_reliable = True
+
         return pose_is_reliable and enough_new_features and viewpoint_changed
 
     def match_local_map(self, current_features):
@@ -542,6 +664,10 @@ class SkinMapTracker:
             used_landmarks.add(landmark_id)
             used_current_features.add(current_feature_index)
 
+        new_features = len(current_keypoints) - len(matched_current_indices)
+        self.last_diagnostics["matches"] = len(correspondences)
+        self.last_diagnostics["new_features"] = new_features
+
         if len(correspondences) < MIN_MATCHES:
             return None
 
@@ -571,6 +697,12 @@ class SkinMapTracker:
             reprojectionError=PNP_REPROJECTION_ERROR_PX,
             confidence=0.999,
             flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+
+        inlier_count = 0 if inliers is None else len(inliers)
+        self.last_diagnostics["inliers"] = inlier_count
+        self.last_diagnostics["pnp_inlier_ratio"] = (
+            inlier_count / len(map_points)
         )
 
         if not success or inliers is None or len(inliers) < MIN_INLIERS:
@@ -608,29 +740,61 @@ class SkinMapTracker:
 
     def track(self, frame_index, frame):
         features = self.extract_features(frame)
+        feature_count = len(
+            rbd(features)["keypoints"].detach().cpu().numpy()
+        )
+        self.last_diagnostics = {
+            "matches": 0,
+            "inliers": 0,
+            "pnp_inlier_ratio": np.nan,
+            "new_features": feature_count,
+            "keyframe_added": 0,
+            "nearby_associations": 0,
+            "new_landmarks": 0,
+            "initialization_frames": 0,
+            "initialization_candidates": 0,
+            "initialization_confirmed": 0,
+            "initialization_matches": 0,
+            "initialization_points": np.empty((0, 2)),
+            "initialization_aruco_detected": 0,
+        }
 
         if not self.keyframes:
             initial_pose = self.find_initial_pose(frame)
             if initial_pose is None:
+                if self.initialization is not None:
+                    self.last_diagnostics["initialization_frames"] = (
+                        self.initialization["frames"]
+                    )
+                    self.last_diagnostics["initialization_candidates"] = int(
+                        np.isfinite(
+                            self.initialization["map_points"]
+                        ).all(axis=1).sum()
+                    )
+                    self.last_diagnostics["initialization_confirmed"] = int(
+                        (
+                            self.initialization["observations"]
+                            >= INITIALIZATION_MIN_OBSERVATIONS
+                        ).sum()
+                    )
                 return None
 
-            self.R_map_to_camera, self.t_map_to_camera = initial_pose
-            self.add_keyframe(
-                frame_index,
+            R_map_to_camera, t_map_to_camera = initial_pose
+            self.last_diagnostics["initialization_aruco_detected"] = 1
+            if self.initialization is None:
+                self.start_initialization(
+                    frame_index,
+                    features,
+                    R_map_to_camera,
+                    t_map_to_camera,
+                )
+                return None
+
+            return self.update_initialization(
                 features,
-                self.R_map_to_camera,
-                self.t_map_to_camera,
+                R_map_to_camera,
+                t_map_to_camera,
             )
-            return {
-                "R": self.R_map_to_camera,
-                "t": self.t_map_to_camera,
-                "matches": 0,
-                "inliers": 0,
-                "inlier_map_points": np.empty((0, 3)),
-                "outlier_points": np.empty((0, 2)),
-                "keyframe_frames": [frame_index],
-                "nearby_associations": 0,
-            }
 
         result = self.match_local_map(features)
 
@@ -642,7 +806,7 @@ class SkinMapTracker:
         result["nearby_associations"] = 0
 
         if self.should_add_keyframe(result):
-            result["nearby_associations"] = self.add_keyframe(
+            map_update = self.add_keyframe(
                 frame_index,
                 features,
                 self.R_map_to_camera,
@@ -651,6 +815,11 @@ class SkinMapTracker:
                 known_landmark_ids=result["inlier_landmark_ids"],
                 new_feature_indices=result["new_feature_indices"],
             )
+            result["nearby_associations"] = map_update[
+                "nearby_associations"
+            ]
+            self.last_diagnostics["keyframe_added"] = 1
+            self.last_diagnostics.update(map_update)
 
         return result
 
@@ -674,7 +843,9 @@ def project_map_points(map_points, result, tracker, frame_shape):
     visible = camera_points[:, 2] > 0.0
     visible &= projected[:, 0] >= 0.0
     visible &= projected[:, 0] < width
-    visible &= projected[:, 1] >= 0.0
+    visible &= projected[:, 1] >= height * (
+        1.0 - FEATURE_ROI_BOTTOM_FRACTION
+    )
     visible &= projected[:, 1] < height
     return projected[visible]
 
@@ -685,9 +856,35 @@ def map_points_for_display(tracker):
 
 def diagnostic_frame(frame, tracker, result, relative_positions):
     output = frame.copy()
+    roi_top = round(frame.shape[0] * (1.0 - FEATURE_ROI_BOTTOM_FRACTION))
+    output[:roi_top] = 0
+    cv2.line(
+        output,
+        (0, roi_top),
+        (frame.shape[1] - 1, roi_top),
+        (255, 180, 0),
+        2,
+    )
+    cv2.putText(
+        output,
+        "Feature ROI below this line",
+        (12, roi_top + 24),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 180, 0),
+        2,
+    )
     tracked = result is not None
-    color = (40, 200, 40) if tracked else (30, 30, 220)
-    label = "TRACKING" if tracked else "LOST"
+    initializing = not tracker.keyframes and tracker.initialization is not None
+    if tracked:
+        color = (40, 200, 40)
+        label = "TRACKING"
+    elif initializing:
+        color = (0, 180, 255)
+        label = "INITIALIZING"
+    else:
+        color = (0, 180, 255)
+        label = "WAITING FOR ARUCO"
 
     if tracked:
         projected_map_points = project_map_points(
@@ -765,6 +962,61 @@ def diagnostic_frame(frame, tracker, result, relative_positions):
                 2,
             )
 
+    elif initializing:
+        diagnostics = tracker.last_diagnostics
+        for point in diagnostics["initialization_points"]:
+            cv2.circle(
+                output,
+                tuple(np.rint(point).astype(int)),
+                2,
+                (0, 255, 0),
+                -1,
+            )
+
+        cv2.putText(
+            output,
+            (
+                "ArUco: "
+                + (
+                    "detected"
+                    if diagnostics["initialization_aruco_detected"]
+                    else "not detected"
+                )
+            ),
+            (12, 52),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+        )
+        cv2.putText(
+            output,
+            (
+                f"Frames: {diagnostics['initialization_frames']}"
+                f"/{INITIALIZATION_FRAMES} | confirmed: "
+                f"{diagnostics['initialization_confirmed']}"
+                f"/{INITIALIZATION_MIN_LANDMARKS}"
+            ),
+            (12, 75),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+        )
+        cv2.putText(
+            output,
+            (
+                f"Candidates: {diagnostics['initialization_candidates']}"
+                f" | consistent now: "
+                f"{diagnostics['initialization_matches']}"
+            ),
+            (12, 98),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+        )
+
     cv2.putText(output, label, (12, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
     cv2.putText(
         output,
@@ -782,8 +1034,8 @@ def diagnostic_frame(frame, tracker, result, relative_positions):
 def save_results_csv(rows, path):
     fields = [
         "frame",
-        "raw_time_s",
         "time_s",
+        "timestamp",
         "x_mm",
         "y_mm",
         "z_mm",
@@ -792,7 +1044,16 @@ def save_results_csv(rows, path):
         "yaw_deg",
         "matches",
         "inliers",
+        "pnp_inlier_ratio",
+        "new_features",
         "nearby_associations",
+        "new_landmarks",
+        "initialization_frames",
+        "initialization_candidates",
+        "initialization_confirmed",
+        "initialization_matches",
+        "landmarks",
+        "keyframe_added",
         "keyframes",
         "tracked",
     ]
@@ -803,27 +1064,28 @@ def save_results_csv(rows, path):
 
 
 def load_ground_truth(path):
-    frames = []
+    timestamps = []
     positions = []
     orientations = []
     with path.open(newline="", encoding="utf-8") as file:
         for row in csv.DictReader(file):
-            values = [
-                row["X"],
-                row["Y"],
-                row["Z"],
-                row["Roll"],
-                row["Pitch"],
-                row["Yaw"],
-            ]
-            if not all(values):
-                continue
-            frames.append(int(row["Frame"]))
-            positions.append([float(row["X"]), float(row["Y"]), float(row["Z"])])
-            orientations.append(
-                [float(row["Roll"]), float(row["Pitch"]), float(row["Yaw"])]
+            timestamps.append(float(row["timestamp"]))
+            positions.append(
+                [float(row[axis]) for axis in ("x", "y", "z")]
             )
-    return np.array(frames), np.array(positions), np.array(orientations)
+            orientations.append(
+                [float(row[axis]) for axis in ("roll", "pitch", "yaw")]
+            )
+
+    positions = np.array(positions)
+    positions = positions - positions[0]
+    return np.array(timestamps), positions, np.array(orientations)
+
+
+def load_video_start_timestamp(path):
+    with path.open(newline="", encoding="utf-8") as file:
+        row = next(csv.DictReader(file))
+    return float(row["start_timestamp"])
 
 
 def save_comparison_figure(
@@ -862,7 +1124,7 @@ def save_comparison_figure(
         comparison_axis.legend()
 
         component_rmse = np.sqrt(
-            np.mean(component_errors[:, component] ** 2)
+            np.nanmean(component_errors[:, component] ** 2)
         )
         error_axis = figure.add_subplot(grid[component, 1])
         error_axis.plot(
@@ -877,8 +1139,8 @@ def save_comparison_figure(
         error_axis.set_ylabel(f"Absolute error [{unit}]")
         error_axis.grid(True)
 
-    overall_mae = np.mean(overall_errors)
-    overall_rmse = np.sqrt(np.mean(overall_errors**2))
+    overall_mae = np.nanmean(overall_errors)
+    overall_rmse = np.sqrt(np.nanmean(overall_errors**2))
     overall_axis = figure.add_subplot(grid[3, :])
     overall_axis.plot(frames, overall_errors, color="red")
     overall_axis.set_title(
@@ -899,11 +1161,10 @@ def save_comparison_figure(
 def create_comparison_plots(
     rows,
     gt_path,
-    input_fps,
     position_output_path,
     orientation_output_path,
 ):
-    camera_time = np.array([row["time_s"] for row in rows])
+    camera_time = np.array([row["timestamp"] for row in rows])
     estimate = np.array(
         [[row["x_mm"], row["y_mm"], row["z_mm"]] for row in rows],
         dtype=float,
@@ -912,9 +1173,8 @@ def create_comparison_plots(
         [[row["roll_deg"], row["pitch_deg"], row["yaw_deg"]] for row in rows],
         dtype=float,
     )
-    gt_frames, gt_positions, gt_euler = load_ground_truth(gt_path)
+    gt_time, gt_positions, gt_euler = load_ground_truth(gt_path)
 
-    gt_time = gt_frames / input_fps
     gt = np.column_stack(
         [
             np.interp(camera_time, gt_time, gt_positions[:, axis])
@@ -931,13 +1191,25 @@ def create_comparison_plots(
         ]
     )
 
+    within_ground_truth = camera_time >= gt_time[0]
+    within_ground_truth &= camera_time <= gt_time[-1]
+    camera_time = camera_time[within_ground_truth]
+    estimate = estimate[within_ground_truth]
+    estimate_euler = estimate_euler[within_ground_truth]
+    gt = gt[within_ground_truth]
+    gt_euler = gt_euler[within_ground_truth]
+
     valid = np.isfinite(estimate).all(axis=1)
     valid &= np.isfinite(estimate_euler).all(axis=1)
-    valid &= camera_time >= gt_time[0]
-    valid &= camera_time <= gt_time[-1]
+    plot_time = camera_time - min(camera_time[0], gt_time[0])
 
-    position_component_errors = estimate[valid] - gt[valid]
-    position_errors = np.linalg.norm(position_component_errors, axis=1)
+    position_component_errors = np.full_like(estimate, np.nan)
+    position_component_errors[valid] = estimate[valid] - gt[valid]
+    position_errors = np.full(len(estimate), np.nan)
+    position_errors[valid] = np.linalg.norm(
+        position_component_errors[valid],
+        axis=1,
+    )
 
     estimate_rotations = Rotation.from_euler(
         "xyz", estimate_euler[valid], degrees=True
@@ -945,62 +1217,158 @@ def create_comparison_plots(
     gt_rotations = Rotation.from_euler(
         "xyz", gt_euler[valid], degrees=True
     ).as_matrix()
-    orientation_component_errors = (
+    valid_orientation_errors = (
         estimate_euler[valid] - gt_euler[valid] + 180.0
     ) % 360.0 - 180.0
+    orientation_component_errors = np.full_like(estimate_euler, np.nan)
+    orientation_component_errors[valid] = valid_orientation_errors
     relative_rotations = np.transpose(gt_rotations, (0, 2, 1)) @ estimate_rotations
-    angular_errors = np.degrees(
+    valid_angular_errors = np.degrees(
         Rotation.from_matrix(relative_rotations).magnitude()
     )
+    angular_errors = np.full(len(estimate), np.nan)
+    angular_errors[valid] = valid_angular_errors
+    tracking_coverage = 100.0 * np.mean(valid)
 
     position_rmse = save_comparison_figure(
-        camera_time[valid],
-        gt[valid],
-        estimate[valid],
+        plot_time,
+        gt,
+        estimate,
         position_component_errors,
         position_errors,
         ["X", "Y", "Z"],
         "mm",
-        "Euclidean distance",
+        "Euclidean distance on tracked frames",
         position_output_path,
-        f"{DATASET_NAME}: camera position vs GT\n"
-        "Camera timestamps corrected by -84 ms relative to Dobot",
+        f"{RECORDING_NAME}: camera position vs GT\n"
+        "Data2 timestamps synchronized to Dobot | "
+        f"tracked: {tracking_coverage:.1f}%",
     )
 
     orientation_rmse = save_comparison_figure(
-        camera_time[valid],
-        gt_euler[valid],
-        estimate_euler[valid],
+        plot_time,
+        gt_euler,
+        estimate_euler,
         orientation_component_errors,
         angular_errors,
         ["Roll", "Pitch", "Yaw"],
         "deg",
-        "Angular distance",
+        "Angular distance on tracked frames",
         orientation_output_path,
-        f"{DATASET_NAME}: camera orientation vs GT\n"
-        "Camera timestamps corrected by -84 ms relative to Dobot",
+        f"{RECORDING_NAME}: camera orientation vs GT\n"
+        "Data2 timestamps synchronized to Dobot | "
+        f"tracked: {tracking_coverage:.1f}%",
     )
     return position_rmse, orientation_rmse
 
 
+def save_mapping_diagnostics(rows, output_path):
+    frames = np.array([row["frame"] for row in rows])
+    matches = np.array([row["matches"] for row in rows])
+    inliers = np.array([row["inliers"] for row in rows])
+    new_features = np.array([row["new_features"] for row in rows])
+    nearby_associations = np.array(
+        [row["nearby_associations"] for row in rows]
+    )
+    new_landmarks = np.array([row["new_landmarks"] for row in rows])
+    landmarks = np.array([row["landmarks"] for row in rows])
+    keyframe_added = np.array([row["keyframe_added"] for row in rows]) == 1
+
+    figure, axes = plt.subplots(4, 1, figsize=(15, 13), sharex=True)
+
+    axes[0].plot(frames, matches, label="PnP correspondences")
+    axes[0].plot(frames, inliers, label="PnP inliers")
+    axes[0].set_ylabel("Points")
+    axes[0].grid(True)
+    axes[0].legend()
+
+    axes[1].plot(frames, inliers, color="tab:green")
+    if USE_PNP_CONDITIONS_FOR_KEYFRAMES:
+        axes[1].axhline(
+            KEYFRAME_MIN_PNP_INLIERS,
+            color="red",
+            linestyle="--",
+            label="Reliable pose threshold",
+        )
+        axes[1].axhline(
+            KEYFRAME_LOW_PNP_INLIERS,
+            color="orange",
+            linestyle="--",
+            label="Map expansion threshold",
+        )
+    axes[1].set_ylabel("PnP inliers")
+    axes[1].set_ylim(bottom=0.0)
+    axes[1].grid(True)
+    axes[1].legend()
+
+    axes[2].plot(frames, new_features, label="New features")
+    axes[2].plot(
+        frames,
+        nearby_associations,
+        label="Associated with nearby landmarks",
+    )
+    axes[2].axhline(
+        KEYFRAME_MIN_NEW_FEATURES,
+        color="orange",
+        linestyle="--",
+        label="New feature threshold",
+    )
+    axes[2].scatter(
+        frames[keyframe_added],
+        new_features[keyframe_added],
+        color="red",
+        s=18,
+        label="Keyframe added",
+        zorder=3,
+    )
+    axes[2].set_ylabel("Features")
+    axes[2].grid(True)
+    axes[2].legend()
+
+    axes[3].bar(
+        frames,
+        new_landmarks,
+        width=1.0,
+        color="tab:blue",
+        label="New landmarks",
+    )
+    axes[3].set_ylabel("New landmarks")
+    axes[3].set_xlabel("Frame")
+    axes[3].grid(True)
+    axes[3].legend(loc="upper left")
+
+    landmarks_axis = axes[3].twinx()
+    landmarks_axis.plot(
+        frames,
+        landmarks,
+        color="black",
+        label="Total landmarks",
+    )
+    landmarks_axis.set_ylabel("Total landmarks")
+    landmarks_axis.legend(loc="upper right")
+
+    figure.suptitle(f"{RECORDING_NAME}: map expansion diagnostics")
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+
+
 def main():
-    if DATASET_NAME not in DATASETS:
-        raise ValueError(f"Unknown dataset: {DATASET_NAME}")
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
 
     OUTPUT_DIR.mkdir(exist_ok=True)
-    dataset = DATASETS[DATASET_NAME]
-    video_path = SCRIPT_DIR / dataset["video"]
-    gt_path = SCRIPT_DIR / dataset["gt"]
+    video_start_timestamp = load_video_start_timestamp(
+        VIDEO_TIMESTAMP_PATH
+    )
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
     distortion = np.load(DISTORTION_PATH)
     tracker = SkinMapTracker(camera_matrix, distortion)
 
-    capture = cv2.VideoCapture(str(video_path))
+    capture = cv2.VideoCapture(str(VIDEO_PATH))
     if not capture.isOpened():
-        raise FileNotFoundError(video_path)
+        raise FileNotFoundError(VIDEO_PATH)
 
     input_fps = capture.get(cv2.CAP_PROP_FPS)
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -1009,7 +1377,7 @@ def main():
 
     video_writer = None
     if SAVE_DIAGNOSTIC_VIDEO:
-        video_path_output = OUTPUT_DIR / f"{DATASET_NAME}_tracking.mp4"
+        video_path_output = OUTPUT_DIR / f"{RECORDING_NAME}_tracking.mp4"
         video_writer = cv2.VideoWriter(
             str(video_path_output),
             cv2.VideoWriter_fourcc(*"mp4v"),
@@ -1029,11 +1397,10 @@ def main():
             break
 
         result = tracker.track(frame_index, frame)
+        diagnostics = tracker.last_diagnostics
         if result is None:
             position = np.full(3, np.nan)
             euler = np.full(3, np.nan)
-            matches = 0
-            inliers = 0
         else:
             absolute_position, _ = camera_pose(result["R"], result["t"])
             camera_rotation = result["R"].T
@@ -1042,23 +1409,24 @@ def main():
                 initial_position = absolute_position.copy()
                 initial_rotation = camera_rotation.copy()
 
-            position = absolute_position - initial_position
+            position = CAMERA_MAP_TO_DOBOT @ (
+                absolute_position - initial_position
+            )
             relative_rotation = initial_rotation.T @ camera_rotation
             euler = Rotation.from_matrix(relative_rotation).as_euler(
                 "xyz", degrees=True
             )
-            matches = result["matches"]
-            inliers = result["inliers"]
+
+        matches = diagnostics["matches"]
+        inliers = diagnostics["inliers"]
 
         positions.append(position)
+        time_s = frame_index / input_fps
         rows.append(
             {
                 "frame": frame_index,
-                "raw_time_s": frame_index / input_fps,
-                "time_s": (
-                    frame_index / input_fps
-                    - CAMERA_DELAY_TO_DOBOT_SECONDS
-                ),
+                "time_s": time_s,
+                "timestamp": video_start_timestamp + time_s,
                 "x_mm": position[0],
                 "y_mm": position[1],
                 "z_mm": position[2],
@@ -1067,9 +1435,24 @@ def main():
                 "yaw_deg": euler[2],
                 "matches": matches,
                 "inliers": inliers,
-                "nearby_associations": (
-                    result["nearby_associations"] if result is not None else 0
-                ),
+                "pnp_inlier_ratio": diagnostics["pnp_inlier_ratio"],
+                "new_features": diagnostics["new_features"],
+                "nearby_associations": diagnostics["nearby_associations"],
+                "new_landmarks": diagnostics["new_landmarks"],
+                "initialization_frames": diagnostics[
+                    "initialization_frames"
+                ],
+                "initialization_candidates": diagnostics[
+                    "initialization_candidates"
+                ],
+                "initialization_confirmed": diagnostics[
+                    "initialization_confirmed"
+                ],
+                "initialization_matches": diagnostics[
+                    "initialization_matches"
+                ],
+                "landmarks": len(tracker.landmarks),
+                "keyframe_added": diagnostics["keyframe_added"],
                 "keyframes": len(tracker.keyframes),
                 "tracked": int(result is not None),
             }
@@ -1098,18 +1481,21 @@ def main():
         video_writer.release()
     cv2.destroyAllWindows()
 
-    csv_path = OUTPUT_DIR / f"{DATASET_NAME}_camera.csv"
+    csv_path = OUTPUT_DIR / f"{RECORDING_NAME}_camera.csv"
     position_plot_path = (
-        OUTPUT_DIR / f"{DATASET_NAME}_camera_vs_gt_position.png"
+        OUTPUT_DIR / f"{RECORDING_NAME}_camera_vs_gt_position.png"
     )
     orientation_plot_path = (
-        OUTPUT_DIR / f"{DATASET_NAME}_camera_vs_gt_orientation.png"
+        OUTPUT_DIR / f"{RECORDING_NAME}_camera_vs_gt_orientation.png"
+    )
+    diagnostics_plot_path = (
+        OUTPUT_DIR / f"{RECORDING_NAME}_mapping_diagnostics.png"
     )
     save_results_csv(rows, csv_path)
+    save_mapping_diagnostics(rows, diagnostics_plot_path)
     position_rmse, orientation_rmse = create_comparison_plots(
         rows,
-        gt_path,
-        input_fps,
+        GROUND_TRUTH_PATH,
         position_plot_path,
         orientation_plot_path,
     )
@@ -1117,6 +1503,7 @@ def main():
     print(f"Saved: {csv_path}")
     print(f"Saved: {position_plot_path}")
     print(f"Saved: {orientation_plot_path}")
+    print(f"Saved: {diagnostics_plot_path}")
     if SAVE_DIAGNOSTIC_VIDEO:
         print(f"Saved: {video_path_output}")
     print(f"Position RMSE: {position_rmse:.2f} mm")

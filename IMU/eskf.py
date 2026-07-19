@@ -14,56 +14,15 @@ import numpy as np
 # Configuration
 # -----------------------------------------------------------------------------
 
-DATA_ROOT = Path("Data")
+RECORDING_NAME = "table_line_Speed-3_2026-07-16_17.56.25"
 
-DATASETS = {
-    "horizontal_line_1": {
-        "imu": "IMU/dataLog00075.TXT",
-        "gt": "dobot/horizontal_line_1774951923.csv",
-    },
-    "horizontal_line_2": {
-        "imu": "IMU/dataLog00077.TXT",
-        "gt": "dobot/horizontal_line_1774952687.csv",
-    },
-    "vertical_line_1": {
-        "imu": "IMU/dataLog00079.TXT",
-        "gt": "dobot/vertical_line_1774953045.csv",
-    },
-    "vertical_line_2": {
-        "imu": "IMU/dataLog00081.TXT",
-        "gt": "dobot/vertical_line_1774953360.csv",
-    },
-    "square_1": {
-        "imu": "IMU/dataLog00083.TXT",
-        "gt": "dobot/square_1774953674.csv",
-    },
-    "square_2": {
-        "imu": "IMU/dataLog00085.TXT",
-        "gt": "dobot/square_1774953882.csv",
-    },
-    "triangle_1": {
-        "imu": "IMU/dataLog00087.TXT",
-        "gt": "dobot/triangle_1774954203.csv",
-    },
-    "triangle_2": {
-        "imu": "IMU/dataLog00089.TXT",
-        "gt": "dobot/triangle_1774954436.csv",
-    },
-    "cross_1": {
-        "imu": "IMU/dataLog00091.TXT",
-        "gt": "dobot/cross_1774954750.csv",
-    },
-    "cross_2": {
-        "imu": "IMU/dataLog00093.TXT",
-        "gt": "dobot/cross_1774954990.csv",
-    },
-}
-
-DATASET_NAME = "horizontal_line_1"
-IMU_LOG_PATH = DATA_ROOT / DATASETS[DATASET_NAME]["imu"]
-GROUND_TRUTH_PATH = DATA_ROOT / DATASETS[DATASET_NAME]["gt"]
-OUTPUT_CSV_PATH = Path(f"eskf_{DATASET_NAME}.csv")
-OUTPUT_PLOT_PATH = Path(f"eskf_vs_gt_{DATASET_NAME}.png")
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_DIR / "Data2"
+IMU_LOG_PATH = DATA_DIR / "imu" / f"{RECORDING_NAME}.csv"
+GROUND_TRUTH_PATH = DATA_DIR / "dobot" / f"{RECORDING_NAME}.csv"
+OUTPUT_DIR = Path(__file__).resolve().parent / "results"
+OUTPUT_CSV_PATH = OUTPUT_DIR / f"{RECORDING_NAME}_eskf.csv"
+OUTPUT_PLOT_PATH = OUTPUT_DIR / f"{RECORDING_NAME}_eskf_vs_gt.png"
 CALIBRATION_PATH = (
     Path(__file__).resolve().parent
     / "calibration"
@@ -390,34 +349,31 @@ def load_calibration(path):
 
 def read_imu_log(path, calibration):
     with path.open(newline="") as file:
-        reader = csv.reader(file)
-        columns = next(reader)
-        rows = list(reader)
+        rows = list(csv.DictReader(file))
 
-    accel_columns = [
-        len(columns) - 1 - columns[::-1].index(axis)
-        for axis in ("aX", "aY", "aZ")
-    ]
-    gyro_columns = [
-        len(columns) - 1 - columns[::-1].index(axis)
-        for axis in ("gX", "gY", "gZ")
-    ]
-    output_hz_column = columns.index("output_Hz")
-
+    timestamps = np.array([float(row["timestamp"]) for row in rows])
     acceleration_mg = np.array(
         [
-            [float(row[index]) for index in accel_columns]
+            [
+                float(row["imu2_ax_mg"]),
+                float(row["imu2_ay_mg"]),
+                float(row["imu2_az_mg"]),
+            ]
             for row in rows
         ]
     )
     angular_rate_mdps = np.array(
         [
-            [float(row[index]) for index in gyro_columns]
+            [
+                float(row["imu2_gx_mdps"]),
+                float(row["imu2_gy_mdps"]),
+                float(row["imu2_gz_mdps"]),
+            ]
             for row in rows
         ]
     )
     sample_rate_hz = np.mean(
-        [float(row[output_hz_column]) for row in rows]
+        [float(row["output_hz"]) for row in rows]
     )
 
     acceleration = acceleration_mg * GRAVITY / 1000.0
@@ -430,7 +386,7 @@ def read_imu_log(path, calibration):
         accel_matrix @ (acceleration - accel_bias).T
     ).T
     angular_rate = angular_rate - gyro_bias
-    return acceleration, angular_rate, sample_rate_hz
+    return timestamps, acceleration, angular_rate, sample_rate_hz
 
 
 def read_ground_truth(path):
@@ -439,17 +395,19 @@ def read_ground_truth(path):
 
     time = np.array([float(row["timestamp"]) for row in rows])
 
-    x = np.array([float(row["X"]) for row in rows])
-    y = np.array([float(row["Y"]) for row in rows])
-    z = np.array([float(row["Z"]) for row in rows])
-    yaw = np.array([float(row["R"]) for row in rows])
+    x = np.array([float(row["x"]) for row in rows])
+    y = np.array([float(row["y"]) for row in rows])
+    z = np.array([float(row["z"]) for row in rows])
+    roll = np.array([float(row["roll"]) for row in rows])
+    pitch = np.array([float(row["pitch"]) for row in rows])
+    yaw = np.array([float(row["yaw"]) for row in rows])
 
     values = {
-        "X": x,
-        "Y": y,
-        "Z": z,
-        "Roll": np.zeros(len(rows)),
-        "Pitch": np.zeros(len(rows)),
+        "X": x - x[0],
+        "Y": y - y[0],
+        "Z": z - z[0],
+        "Roll": roll,
+        "Pitch": pitch,
         "Yaw": yaw,
     }
     return time, values
@@ -457,12 +415,14 @@ def read_ground_truth(path):
 
 def run_filter():
     calibration = load_calibration(CALIBRATION_PATH)
-    acceleration, angular_rate, sample_rate_hz = read_imu_log(
+    timestamps, acceleration, angular_rate, sample_rate_hz = read_imu_log(
         IMU_LOG_PATH,
         calibration,
     )
-    dt = 1.0 / sample_rate_hz
-    init_samples = round(INITIALIZATION_SECONDS * sample_rate_hz)
+    init_samples = np.searchsorted(
+        timestamps,
+        timestamps[0] + INITIALIZATION_SECONDS,
+    )
 
     eskf = ErrorStateKalmanFilter(calibration)
     eskf.initialize(
@@ -477,6 +437,7 @@ def run_filter():
         stationary_update = index < init_samples
 
         if index >= init_samples:
+            dt = timestamps[index] - timestamps[index - 1]
             eskf.predict(
                 acceleration[index],
                 angular_rate[index],
@@ -502,7 +463,8 @@ def run_filter():
 
         output.append(
             {
-                "time_s": index * dt,
+                "timestamp": timestamps[index],
+                "time_s": timestamps[index] - timestamps[0],
                 "x_mm": 1000.0 * eskf.position[0],
                 "y_mm": 1000.0 * eskf.position[1],
                 "z_mm": 1000.0 * eskf.position[2],
@@ -541,7 +503,10 @@ def write_output(rows):
 
 def create_comparison_plot(imu_rows):
     ground_truth_time, ground_truth = read_ground_truth(GROUND_TRUTH_PATH)
-    imu_time = np.array([row["time_s"] for row in imu_rows])
+    imu_time = np.array([row["timestamp"] for row in imu_rows])
+    time_origin = min(imu_time[0], ground_truth_time[0])
+    imu_time = imu_time - time_origin
+    ground_truth_time = ground_truth_time - time_origin
 
     figure, axes = plt.subplots(3, 2, figsize=(14, 10), sharex=True)
     position_columns = (
@@ -592,8 +557,8 @@ def create_comparison_plot(imu_rows):
     axes[2, 0].set_xlabel("Time [s]")
     axes[2, 1].set_xlabel("Time [s]")
     figure.suptitle(
-        f"IMU ESKF vs ground truth: {DATASET_NAME}\n"
-        "Direct comparison; no time or value alignment"
+        f"IMU ESKF vs ground truth: {RECORDING_NAME}\n"
+        "Data2 timestamps synchronized to Dobot"
     )
     figure.tight_layout()
     figure.savefig(OUTPUT_PLOT_PATH, dpi=160)
@@ -601,6 +566,7 @@ def create_comparison_plot(imu_rows):
 
 
 def main():
+    OUTPUT_DIR.mkdir(exist_ok=True)
     rows = run_filter()
     write_output(rows)
     create_comparison_plot(rows)

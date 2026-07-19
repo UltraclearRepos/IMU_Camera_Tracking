@@ -1,0 +1,106 @@
+{
+  "recordings": {
+    "phantom_no_touch_line_better_resolution_Speed-3_2026-07-16_18.02.24": {
+      "imu_delay_to_dobot_seconds": 0.11,
+      "correlation": 0.7326889409688344,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "phantom_no_touch_line_better_resolution_Speed-3_2026-07-16_18.16.19": {
+      "imu_delay_to_dobot_seconds": 0.09,
+      "correlation": 0.7069515982235525,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "phantom_no_touch_line_Speed-3_2026-07-16_18.00.04": {
+      "imu_delay_to_dobot_seconds": 0.11,
+      "correlation": 0.726429598821924,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "phantom_with_touch_line_better_res_Speed-3_2026-07-16_17.25.56": {
+      "imu_delay_to_dobot_seconds": 0.1,
+      "correlation": 0.5877371110885315,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "phantom_with_touch_line_Speed-3_2026-07-16_17.18.52": {
+      "imu_delay_to_dobot_seconds": 0.1,
+      "correlation": 0.6144386768118164,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "phantom_without_touch_line_better_res_Speed-3_2026-07-16_17.25.10": {
+      "imu_delay_to_dobot_seconds": 0.09,
+      "correlation": 0.766445806083752,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "phantom_without_touch_line_Speed-3_2026-07-16_17.20.45": {
+      "imu_delay_to_dobot_seconds": 0.09,
+      "correlation": 0.7345428775074428,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "Speed-3_2026-07-17_14.31.08": {
+      "imu_delay_to_dobot_seconds": 0.1,
+      "correlation": 0.7096174064745056,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "Speed-3_2026-07-17_14.38.43": {
+      "imu_delay_to_dobot_seconds": 0.1,
+      "correlation": 0.7611268374137511,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "table_line_better_res_Speed-3_2026-07-16_17.36.30": {
+      "imu_delay_to_dobot_seconds": 0.09,
+      "correlation": 0.7649712534728058,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "table_line_better_res_Speed-3_2026-07-16_17.38.59": {
+      "imu_delay_to_dobot_seconds": 0.11,
+      "correlation": 0.6624459932569808,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "table_line_Speed-3_2026-07-16_17.39.36": {
+      "imu_delay_to_dobot_seconds": 0.1,
+      "correlation": 0.7210702333477117,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "table_line_Speed-3_2026-07-16_17.40.06": {
+      "imu_delay_to_dobot_seconds": 0.1,
+      "correlation": 0.7751637475322704,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "table_line_Speed-3_2026-07-16_17.56.25": {
+      "imu_delay_to_dobot_seconds": 0.11,
+      "correlation": 0.7354273320414555,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "table_line_with_light_Speed-3_2026-07-16_17.41.04": {
+      "imu_delay_to_dobot_seconds": 0.1,
+      "correlation": 0.7752892779396128,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "tracking_aruco_Speed-3_2026-07-16_18.21.12": {
+      "imu_delay_to_dobot_seconds": 0.1,
+      "correlation": 0.7093031148532681,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    },
+    "tracking_aruco_worse_res_Speed-3_2026-07-16_18.21.45": {
+      "imu_delay_to_dobot_seconds": 0.1,
+      "correlation": 0.7259028220319034,
+      "at_search_boundary": false,
+      "camera_delay_to_dobot_seconds": 0.084
+    }
+  }
+}

@@ -14,7 +14,6 @@ from scipy.ndimage import gaussian_filter1d
 
 RECORDING_NAME = "tracking_aruco_Speed-3_2026-07-16_18.21.12"
 
-CAMERA_DELAY_TO_DOBOT_SECONDS = 0.084
 MAX_IMU_DELAY_SECONDS = 1.0
 RESAMPLE_HZ = 100.0
 ACCEL_BASELINE_SECONDS = 0.40
@@ -27,7 +26,6 @@ DOBOT_PATH = DATA_DIR / "dobot" / f"{RECORDING_NAME}.csv"
 OUTPUT_PATH = Path(__file__).resolve().parent / f"{RECORDING_NAME}_delay.png"
 
 GRAVITY = 9.80665
-IMU2_ACCEL_INDICES = (12, 13, 14)
 
 
 def read_imu(path):
@@ -36,10 +34,13 @@ def read_imu(path):
 
     with path.open(newline="", encoding="utf-8") as file:
         for row in csv.DictReader(file):
-            values = row["data"].split(",")
             timestamps.append(float(row["timestamp"]))
             acceleration.append(
-                [float(values[index]) for index in IMU2_ACCEL_INDICES]
+                [
+                    float(row["imu2_ax_mg"]),
+                    float(row["imu2_ay_mg"]),
+                    float(row["imu2_az_mg"]),
+                ]
             )
 
     timestamps = np.array(timestamps)
@@ -205,8 +206,6 @@ def main():
         imu_motion,
         dobot_motion,
     )
-    imu_delay_to_camera = imu_delay - CAMERA_DELAY_TO_DOBOT_SECONDS
-
     save_plot(
         time,
         imu_motion,
@@ -217,8 +216,8 @@ def main():
     )
 
     print(f"IMU relative to Dobot: {imu_delay * 1000.0:+.0f} ms")
-    print(f"Camera relative to Dobot: {CAMERA_DELAY_TO_DOBOT_SECONDS * 1000.0:+.0f} ms")
-    print(f"IMU relative to camera: {imu_delay_to_camera * 1000.0:+.0f} ms")
+    print("Camera relative to Dobot: +0 ms (stored timestamps are synchronized)")
+    print(f"IMU relative to camera: {imu_delay * 1000.0:+.0f} ms")
     print("Positive means that the signal appears later.")
     print(f"Saved: {OUTPUT_PATH}")
 
