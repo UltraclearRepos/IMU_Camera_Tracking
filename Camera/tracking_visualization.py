@@ -239,6 +239,137 @@ def diagnostic_frame(
     return output
 
 
+def optical_flow_diagnostic_frame(
+    frame,
+    tracker,
+    result,
+    position,
+    feature_roi_bottom_fraction,
+    tracking_time_ms,
+):
+    output = frame.copy()
+    roi_top = round(frame.shape[0] * (1.0 - feature_roi_bottom_fraction))
+    output[:roi_top] = 0
+    cv2.line(
+        output,
+        (0, roi_top),
+        (frame.shape[1] - 1, roi_top),
+        (255, 180, 0),
+        2,
+    )
+    cv2.putText(
+        output,
+        (
+            f"Optical flow: {tracking_time_ms:.1f} ms | "
+            f"{1000.0 / tracking_time_ms:.1f} FPS"
+        ),
+        (max(12, frame.shape[1] - 380), 27),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2,
+    )
+
+    if result is None:
+        label = "WAITING FOR ARUCO" if not tracker.keyframes else "LOST"
+        color = (0, 180, 255) if not tracker.keyframes else (30, 30, 220)
+    else:
+        label = "TRACKING"
+        color = (40, 200, 40)
+        projected_map_points = project_map_points(
+            tracker.all_map_points(),
+            result,
+            tracker,
+            frame.shape,
+            feature_roi_bottom_fraction,
+        )
+        for point in projected_map_points:
+            cv2.circle(
+                output,
+                tuple(np.rint(point).astype(int)),
+                1,
+                (0, 255, 255),
+                -1,
+            )
+        for point in result["outlier_points"]:
+            cv2.circle(
+                output,
+                tuple(np.rint(point).astype(int)),
+                2,
+                (0, 0, 255),
+                -1,
+            )
+        for point in result["inlier_image_points"]:
+            cv2.circle(
+                output,
+                tuple(np.rint(point).astype(int)),
+                2,
+                (0, 255, 0),
+                -1,
+            )
+
+        if tracker.last_diagnostics["keyframe_added"]:
+            for point in tracker.last_diagnostics["new_landmark_points"]:
+                cv2.circle(
+                    output,
+                    tuple(np.rint(point).astype(int)),
+                    3,
+                    (255, 0, 255),
+                    -1,
+                )
+
+        cv2.putText(
+            output,
+            f"XYZ: {position[0]:.1f}, {position[1]:.1f}, {position[2]:.1f} mm",
+            (12, 52),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+        )
+
+    diagnostics = tracker.last_diagnostics
+    cv2.rectangle(output, (8, 76), (280, 151), (0, 0, 0), -1)
+    cv2.putText(
+        output,
+        f"Flow tracks: {diagnostics['flow_tracks']}",
+        (15, 98),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2,
+    )
+    cv2.putText(
+        output,
+        f"PnP inliers: {diagnostics['inliers']}",
+        (15, 121),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 255, 0),
+        2,
+    )
+    cv2.putText(
+        output,
+        f"Keyframes: {len(tracker.keyframes)}",
+        (15, 144),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2,
+    )
+    cv2.putText(output, label, (12, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    cv2.putText(
+        output,
+        f"landmarks: {len(tracker.landmarks)}",
+        (12, output.shape[0] - 15),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2,
+    )
+    return output
+
+
 def load_ground_truth(path):
     timestamps = []
     positions = []
@@ -437,10 +568,7 @@ def save_mapping_diagnostics(
     rows,
     output_path,
     recording_name,
-    use_pnp_conditions,
-    min_pnp_inliers,
-    low_pnp_inliers,
-    min_new_features,
+    keyframe_interval,
 ):
     frames = np.array([row["frame"] for row in rows])
     matches = np.array([row["matches"] for row in rows])
@@ -461,20 +589,20 @@ def save_mapping_diagnostics(
     axes[0].grid(True)
     axes[0].legend()
 
-    axes[1].plot(frames, inliers, color="tab:green")
-    if use_pnp_conditions:
-        axes[1].axhline(
-            min_pnp_inliers,
-            color="red",
-            linestyle="--",
-            label="Reliable pose threshold",
-        )
-        axes[1].axhline(
-            low_pnp_inliers,
-            color="orange",
-            linestyle="--",
-            label="Map expansion threshold",
-        )
+    axes[1].plot(
+        frames,
+        inliers,
+        color="tab:green",
+        label="PnP inliers",
+    )
+    axes[1].scatter(
+        frames[keyframe_added],
+        inliers[keyframe_added],
+        color="red",
+        s=18,
+        label="Keyframe added",
+        zorder=3,
+    )
     axes[1].set_ylabel("PnP inliers")
     axes[1].set_ylim(bottom=0.0)
     axes[1].grid(True)
@@ -485,12 +613,6 @@ def save_mapping_diagnostics(
         frames,
         nearby_associations,
         label="Associated with nearby landmarks",
-    )
-    axes[2].axhline(
-        min_new_features,
-        color="orange",
-        linestyle="--",
-        label="New feature threshold",
     )
     axes[2].scatter(
         frames[keyframe_added],
@@ -526,7 +648,116 @@ def save_mapping_diagnostics(
     landmarks_axis.set_ylabel("Total landmarks")
     landmarks_axis.legend(loc="upper right")
 
-    figure.suptitle(f"{recording_name}: map expansion diagnostics")
+    figure.suptitle(
+        f"{recording_name}: map expansion diagnostics | "
+        f"keyframe every {keyframe_interval} frames"
+    )
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+
+
+def save_optical_flow_diagnostics(
+    rows,
+    output_path,
+    recording_name,
+    min_pnp_inliers,
+    keyframe_search_trigger_inliers,
+    keyframe_candidate_min_inliers,
+):
+    frames = np.array([row["frame"] for row in rows])
+    flow_tracks = np.array([row["flow_tracks"] for row in rows])
+    pnp_inliers = np.array([row["pnp_inliers"] for row in rows])
+    inlier_ratio = np.array([row["pnp_inlier_ratio"] for row in rows])
+    new_features = np.array([row["new_features"] for row in rows])
+    nearby_associations = np.array(
+        [row["nearby_associations"] for row in rows]
+    )
+    new_landmarks = np.array([row["new_landmarks"] for row in rows])
+    landmarks = np.array([row["landmarks"] for row in rows])
+    tracking_time = np.array([row["tracking_time_ms"] for row in rows])
+    keyframe_added = np.array([row["keyframe_added"] for row in rows]) == 1
+
+    figure, axes = plt.subplots(4, 1, figsize=(15, 14), sharex=True)
+
+    axes[0].plot(frames, flow_tracks, label="KLT tracks")
+    axes[0].plot(frames, pnp_inliers, label="PnP inliers")
+    axes[0].axhline(
+        min_pnp_inliers,
+        color="red",
+        linestyle="--",
+        label="Minimum valid pose",
+    )
+    axes[0].axhline(
+        keyframe_search_trigger_inliers,
+        color="orange",
+        linestyle="--",
+        label="Keyframe search trigger",
+    )
+    axes[0].axhline(
+        keyframe_candidate_min_inliers,
+        color="green",
+        linestyle="--",
+        label="Keyframe candidate minimum",
+    )
+    axes[0].set_ylabel("Points")
+    axes[0].grid(True)
+    axes[0].legend()
+
+    axes[1].plot(frames, inlier_ratio, color="tab:green")
+    axes[1].scatter(
+        frames[keyframe_added],
+        inlier_ratio[keyframe_added],
+        color="red",
+        s=22,
+        label="Keyframe added",
+        zorder=3,
+    )
+    axes[1].set_ylabel("PnP inlier ratio")
+    axes[1].set_ylim(0.0, 1.0)
+    axes[1].grid(True)
+    axes[1].legend()
+
+    axes[2].plot(frames, new_features, label="Detected new features")
+    axes[2].plot(
+        frames,
+        nearby_associations,
+        label="Associated with existing landmarks",
+    )
+    axes[2].bar(
+        frames,
+        new_landmarks,
+        width=1.0,
+        alpha=0.45,
+        label="New landmarks",
+    )
+    axes[2].set_ylabel("Map update")
+    axes[2].grid(True)
+    axes[2].legend(loc="upper left")
+
+    landmarks_axis = axes[2].twinx()
+    landmarks_axis.plot(
+        frames,
+        landmarks,
+        color="black",
+        label="Total landmarks",
+    )
+    landmarks_axis.set_ylabel("Total landmarks")
+    landmarks_axis.legend(loc="upper right")
+
+    axes[3].plot(frames, tracking_time, color="tab:blue")
+    axes[3].axhline(
+        1000.0 / 30.0,
+        color="red",
+        linestyle="--",
+        label="30 FPS limit: 33.3 ms",
+    )
+    axes[3].set_ylabel("Tracking time [ms]")
+    axes[3].set_xlabel("Frame")
+    axes[3].grid(True)
+    axes[3].legend()
+
+    figure.suptitle(f"{recording_name}: optical flow diagnostics")
     figure.tight_layout()
     figure.savefig(output_path, dpi=160)
     plt.close(figure)

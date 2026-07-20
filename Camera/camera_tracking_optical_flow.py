@@ -1,26 +1,22 @@
 import csv
-import os
 import time
 from pathlib import Path
 
-PROJECT_DIR = Path(__file__).resolve().parent.parent
-os.environ["TORCH_HOME"] = str(PROJECT_DIR / ".venv" / "torch_cache")
-
 import cv2
 import numpy as np
-import torch
 from scipy.spatial.transform import Rotation
-from skin_map_tracker import (
-    DEVICE,
+
+from optical_flow_tracker import (
     FEATURE_ROI_BOTTOM_FRACTION,
-    INITIALIZATION_FRAMES,
-    INITIALIZATION_MIN_LANDMARKS,
-    SkinMapTracker,
+    KEYFRAME_CANDIDATE_MIN_INLIERS,
+    KEYFRAME_SEARCH_TRIGGER_INLIERS,
+    MIN_PNP_INLIERS,
+    OpticalFlowMapTracker,
 )
 from tracking_visualization import (
     create_comparison_plots,
-    diagnostic_frame,
-    save_mapping_diagnostics,
+    optical_flow_diagnostic_frame,
+    save_optical_flow_diagnostics,
 )
 
 
@@ -38,31 +34,22 @@ CAMERA_MAP_TO_DOBOT = np.array(
         [0.0, 0.0, 1.0],
     ]
 )
-KEYFRAME_INTERVAL = 30
-MASK_ARUCO_FEATURES = False
-MAX_FRAMES = 400
-
 
 SAVE_DIAGNOSTIC_VIDEO = True
 DIAGNOSTIC_VIDEO_FPS = 1.0
 SHOW_PREVIEW = False
+MAX_FRAMES = 1000000
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = SCRIPT_DIR.parent
 DATA_DIR = PROJECT_DIR / "Data2"
-OUTPUT_DIR = SCRIPT_DIR / "results" / RECORDING_NAME
-VIDEO_PATH = (
-    DATA_DIR
-    / "videos"
-    / f"{RECORDING_NAME}_{CAMERA_NAME}.mp4"
-)
+OUTPUT_DIR = SCRIPT_DIR / "results" / RECORDING_NAME / "optical_flow"
+VIDEO_PATH = DATA_DIR / "videos" / f"{RECORDING_NAME}_{CAMERA_NAME}.mp4"
 GROUND_TRUTH_PATH = DATA_DIR / "dobot" / f"{RECORDING_NAME}.csv"
 VIDEO_TIMESTAMP_PATH = (
-    DATA_DIR
-    / "video_timestamps"
-    / f"{RECORDING_NAME}.csv"
+    DATA_DIR / "video_timestamps" / f"{RECORDING_NAME}.csv"
 )
-
 CAMERA_MATRIX_PATH = (
     SCRIPT_DIR
     / "calibrations"
@@ -82,61 +69,25 @@ def camera_position(R_map_to_camera, t_map_to_camera):
     return -R_camera_to_map @ t_map_to_camera.reshape(3)
 
 
-def save_results_csv(rows, path):
-    fields = [
-        "frame",
-        "time_s",
-        "timestamp",
-        "tracking_time_ms",
-        "x_mm",
-        "y_mm",
-        "z_mm",
-        "roll_deg",
-        "pitch_deg",
-        "yaw_deg",
-        "matches",
-        "inliers",
-        "pnp_inlier_ratio",
-        "new_features",
-        "nearby_associations",
-        "new_landmarks",
-        "initialization_frames",
-        "initialization_candidates",
-        "initialization_confirmed",
-        "initialization_matches",
-        "landmarks",
-        "keyframe_added",
-        "keyframes",
-        "tracked",
-    ]
-    with path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
 def load_video_start_timestamp(path):
     with path.open(newline="", encoding="utf-8") as file:
         row = next(csv.DictReader(file))
     return float(row["start_timestamp"])
 
 
+def save_results(rows, path):
+    with path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def main():
-    if not torch.cuda.is_available() and DEVICE == "cuda":
-        raise RuntimeError("CUDA is not available in the project .venv")
-
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    video_start_timestamp = load_video_start_timestamp(
-        VIDEO_TIMESTAMP_PATH
-    )
-
-    camera_matrix = np.load(CAMERA_MATRIX_PATH)
-    distortion = np.load(DISTORTION_PATH)
-    tracker = SkinMapTracker(
-        camera_matrix,
-        distortion,
-        KEYFRAME_INTERVAL,
-        MASK_ARUCO_FEATURES,
+    video_start_timestamp = load_video_start_timestamp(VIDEO_TIMESTAMP_PATH)
+    tracker = OpticalFlowMapTracker(
+        np.load(CAMERA_MATRIX_PATH),
+        np.load(DISTORTION_PATH),
     )
 
     capture = cv2.VideoCapture(str(VIDEO_PATH))
@@ -145,17 +96,19 @@ def main():
 
     input_fps = capture.get(cv2.CAP_PROP_FPS)
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frame_size = (
+        int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
+        int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+    )
 
+    diagnostic_video_path = OUTPUT_DIR / f"{RECORDING_NAME}_optical_flow.mp4"
     video_writer = None
     if SAVE_DIAGNOSTIC_VIDEO:
-        video_path_output = OUTPUT_DIR / f"{RECORDING_NAME}_tracking.mp4"
         video_writer = cv2.VideoWriter(
-            str(video_path_output),
+            str(diagnostic_video_path),
             cv2.VideoWriter_fourcc(*"mp4v"),
             DIAGNOSTIC_VIDEO_FPS,
-            (width, height),
+            frame_size,
         )
 
     rows = []
@@ -170,24 +123,18 @@ def main():
         if not success:
             break
 
-        if DEVICE == "cuda":
-            torch.cuda.synchronize()
         tracking_started = time.perf_counter()
         result = tracker.track(frame)
-        if DEVICE == "cuda":
-            torch.cuda.synchronize()
-        tracking_time_ms = 1000.0 * (
-            time.perf_counter() - tracking_started
-        )
+        tracking_time_ms = 1000.0 * (time.perf_counter() - tracking_started)
         tracking_times_ms.append(tracking_time_ms)
         diagnostics = tracker.last_diagnostics
+
         if result is None:
             position = np.full(3, np.nan)
             euler = np.full(3, np.nan)
         else:
             absolute_position = camera_position(result["R"], result["t"])
             camera_rotation = result["R"].T
-
             if initial_position is None:
                 initial_position = absolute_position.copy()
                 initial_rotation = camera_rotation.copy()
@@ -197,7 +144,8 @@ def main():
             )
             relative_rotation = initial_rotation.T @ camera_rotation
             euler = Rotation.from_matrix(relative_rotation).as_euler(
-                "xyz", degrees=True
+                "xyz",
+                degrees=True,
             )
 
         positions.append(position)
@@ -214,24 +162,14 @@ def main():
                 "roll_deg": euler[0],
                 "pitch_deg": euler[1],
                 "yaw_deg": euler[2],
-                "matches": diagnostics["matches"],
-                "inliers": diagnostics["inliers"],
+                "flow_tracks": diagnostics["flow_tracks"],
+                "pnp_inliers": diagnostics["inliers"],
                 "pnp_inlier_ratio": diagnostics["pnp_inlier_ratio"],
                 "new_features": diagnostics["new_features"],
-                "nearby_associations": diagnostics["nearby_associations"],
+                "nearby_associations": diagnostics[
+                    "nearby_associations"
+                ],
                 "new_landmarks": diagnostics["new_landmarks"],
-                "initialization_frames": diagnostics[
-                    "initialization_frames"
-                ],
-                "initialization_candidates": diagnostics[
-                    "initialization_candidates"
-                ],
-                "initialization_confirmed": diagnostics[
-                    "initialization_confirmed"
-                ],
-                "initialization_matches": diagnostics[
-                    "initialization_matches"
-                ],
                 "landmarks": len(tracker.landmarks),
                 "keyframe_added": diagnostics["keyframe_added"],
                 "keyframes": len(tracker.keyframes),
@@ -240,25 +178,26 @@ def main():
         )
 
         if SAVE_DIAGNOSTIC_VIDEO or SHOW_PREVIEW:
-            preview = diagnostic_frame(
+            preview = optical_flow_diagnostic_frame(
                 frame,
                 tracker,
                 result,
-                positions,
+                position,
                 FEATURE_ROI_BOTTOM_FRACTION,
-                INITIALIZATION_FRAMES,
-                INITIALIZATION_MIN_LANDMARKS,
                 tracking_time_ms,
             )
             if video_writer is not None:
                 video_writer.write(preview)
             if SHOW_PREVIEW:
-                cv2.imshow("Camera skin tracking", preview)
+                cv2.imshow("Optical flow skin tracking", preview)
                 if cv2.waitKey(1) == 27:
                     break
 
         if frame_index % 100 == 0:
-            print(f"Frame {frame_index}/{frame_count}, keyframes: {len(tracker.keyframes)}")
+            print(
+                f"Frame {frame_index}/{frame_count}, "
+                f"keyframes: {len(tracker.keyframes)}"
+            )
         frame_index += 1
 
     capture.release()
@@ -266,49 +205,48 @@ def main():
         video_writer.release()
     cv2.destroyAllWindows()
 
-    average_tracking_time_ms = np.mean(tracking_times_ms)
-    median_tracking_time_ms = np.median(tracking_times_ms)
-    p95_tracking_time_ms = np.percentile(tracking_times_ms, 95)
-    tracking_fps = 1000.0 / average_tracking_time_ms
-
-    csv_path = OUTPUT_DIR / f"{RECORDING_NAME}_camera.csv"
-    position_plot_path = (
-        OUTPUT_DIR / f"{RECORDING_NAME}_camera_vs_gt_position.png"
+    csv_path = OUTPUT_DIR / f"{RECORDING_NAME}_optical_flow.csv"
+    position_plot_path = OUTPUT_DIR / (
+        f"{RECORDING_NAME}_optical_flow_vs_gt_position.png"
     )
-    orientation_plot_path = (
-        OUTPUT_DIR / f"{RECORDING_NAME}_camera_vs_gt_orientation.png"
+    orientation_plot_path = OUTPUT_DIR / (
+        f"{RECORDING_NAME}_optical_flow_vs_gt_orientation.png"
     )
-    diagnostics_plot_path = (
-        OUTPUT_DIR / f"{RECORDING_NAME}_mapping_diagnostics.png"
+    diagnostics_plot_path = OUTPUT_DIR / (
+        f"{RECORDING_NAME}_optical_flow_diagnostics.png"
     )
-    save_results_csv(rows, csv_path)
-    save_mapping_diagnostics(
+    save_results(rows, csv_path)
+    save_optical_flow_diagnostics(
         rows,
         diagnostics_plot_path,
         RECORDING_NAME,
-        KEYFRAME_INTERVAL,
+        MIN_PNP_INLIERS,
+        KEYFRAME_SEARCH_TRIGGER_INLIERS,
+        KEYFRAME_CANDIDATE_MIN_INLIERS,
     )
     position_rmse, orientation_rmse = create_comparison_plots(
         rows,
         GROUND_TRUTH_PATH,
         position_plot_path,
         orientation_plot_path,
-        RECORDING_NAME,
+        f"{RECORDING_NAME} optical flow",
     )
 
+    mean_time = np.mean(tracking_times_ms)
+    median_time = np.median(tracking_times_ms)
+    p95_time = np.percentile(tracking_times_ms, 95)
     print(f"Saved: {csv_path}")
     print(f"Saved: {position_plot_path}")
     print(f"Saved: {orientation_plot_path}")
     print(f"Saved: {diagnostics_plot_path}")
     if SAVE_DIAGNOSTIC_VIDEO:
-        print(f"Saved: {video_path_output}")
+        print(f"Saved: {diagnostic_video_path}")
     print(f"Position RMSE: {position_rmse:.2f} mm")
     print(f"Orientation RMSE: {orientation_rmse:.2f} deg")
     print(
-        f"Tracking time: mean {average_tracking_time_ms:.1f} ms/frame | "
-        f"median {median_tracking_time_ms:.1f} ms | "
-        f"p95 {p95_tracking_time_ms:.1f} ms | "
-        f"{tracking_fps:.1f} FPS"
+        f"Tracking time: mean {mean_time:.1f} ms/frame | "
+        f"median {median_time:.1f} ms | p95 {p95_time:.1f} ms | "
+        f"{1000.0 / mean_time:.1f} FPS"
     )
 
 

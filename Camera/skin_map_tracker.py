@@ -4,7 +4,6 @@ import torch
 from lightglue import LightGlue, SuperPoint
 from lightglue.utils import rbd
 from scipy.spatial import cKDTree
-from scipy.spatial.transform import Rotation
 
 
 DEVICE = "cuda"
@@ -14,12 +13,6 @@ MIN_MATCHES = 30
 MIN_INLIERS = 20
 PNP_REPROJECTION_ERROR_PX = 3.0
 LOCAL_KEYFRAMES = 5
-KEYFRAME_TRANSLATION_MM = 8.0
-KEYFRAME_ROTATION_DEG = 5.0
-USE_PNP_CONDITIONS_FOR_KEYFRAMES = True
-KEYFRAME_LOW_PNP_INLIERS = 40
-KEYFRAME_MIN_PNP_INLIERS = 20
-KEYFRAME_MIN_NEW_FEATURES = 50
 NEW_MAP_POINT_MIN_DISTANCE_MM = 1.0
 LANDMARK_ASSOCIATION_DISTANCE_MM = 1.0
 LANDMARK_ASSOCIATION_REPROJECTION_ERROR_PX = 3.0
@@ -39,9 +32,17 @@ def frame_to_tensor(frame):
 
 
 class SkinMapTracker:
-    def __init__(self, camera_matrix, distortion):
+    def __init__(
+        self,
+        camera_matrix,
+        distortion,
+        keyframe_interval,
+        mask_aruco_features,
+    ):
         self.camera_matrix = camera_matrix
         self.distortion = distortion
+        self.keyframe_interval = keyframe_interval
+        self.mask_aruco_features = mask_aruco_features
 
         self.extractor = SuperPoint(max_num_keypoints=MAX_KEYPOINTS).eval().to(DEVICE)
         self.matcher = LightGlue(features="superpoint").eval().to(DEVICE)
@@ -54,6 +55,8 @@ class SkinMapTracker:
         self.next_landmark_id = 0
         self.last_diagnostics = {}
         self.initialization = None
+        self.frame_index = -1
+        self.last_keyframe_frame = -1
 
     def extract_features(self, frame):
         with torch.inference_mode():
@@ -61,6 +64,25 @@ class SkinMapTracker:
 
         roi_top = frame.shape[0] * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
         keep = features["keypoints"][0, :, 1] >= roi_top
+
+        if self.mask_aruco_features:
+            corners, _, _ = self.aruco_detector.detectMarkers(frame)
+            keypoints = features["keypoints"][0].detach().cpu().numpy()
+            for marker_corners in corners:
+                polygon = marker_corners.reshape(4, 2).astype(np.float32)
+                inside_marker = np.array(
+                    [
+                        cv2.pointPolygonTest(
+                            polygon,
+                            tuple(map(float, point)),
+                            False,
+                        )
+                        >= 0
+                        for point in keypoints
+                    ]
+                )
+                keep &= torch.from_numpy(~inside_marker).to(keep.device)
+
         for name in ("keypoints", "keypoint_scores", "descriptors"):
             features[name] = features[name][:, keep]
         return features
@@ -474,6 +496,7 @@ class SkinMapTracker:
             "covisibility": {},
         }
         self.keyframes.append(keyframe)
+        self.last_keyframe_frame = self.frame_index
 
         observed_feature_indices = np.flatnonzero(landmark_ids >= 0)
         for feature_index in observed_feature_indices:
@@ -499,40 +522,11 @@ class SkinMapTracker:
             "new_landmarks": len(new_points),
         }
 
-    def should_add_keyframe(self, result):
-        last_keyframe = self.keyframes[-1]
-        camera_rotation = result["R"].T
-        camera_position = -camera_rotation @ result["t"]
-
-        translation = np.linalg.norm(
-            camera_position - last_keyframe["camera_position"]
+    def should_add_keyframe(self):
+        return (
+            self.frame_index - self.last_keyframe_frame
+            >= self.keyframe_interval
         )
-        relative_rotation = (
-            last_keyframe["camera_rotation"].T @ camera_rotation
-        )
-        rotation = np.degrees(
-            Rotation.from_matrix(relative_rotation).magnitude()
-        )
-        pnp_inliers = result["inliers"]
-
-        enough_new_features = (
-            len(result["new_feature_indices"]) >= KEYFRAME_MIN_NEW_FEATURES
-        )
-        viewpoint_changed = (
-            translation >= KEYFRAME_TRANSLATION_MM
-            or rotation >= KEYFRAME_ROTATION_DEG
-        )
-
-        if USE_PNP_CONDITIONS_FOR_KEYFRAMES:
-            pose_is_reliable = pnp_inliers >= KEYFRAME_MIN_PNP_INLIERS
-            viewpoint_changed = (
-                viewpoint_changed
-                or pnp_inliers <= KEYFRAME_LOW_PNP_INLIERS
-            )
-        else:
-            pose_is_reliable = True
-
-        return pose_is_reliable and enough_new_features and viewpoint_changed
 
     def match_local_map(self, current_features):
         current_keypoints = rbd(current_features)["keypoints"].detach().cpu().numpy()
@@ -647,6 +641,7 @@ class SkinMapTracker:
         }
 
     def track(self, frame):
+        self.frame_index += 1
         features = self.extract_features(frame)
         feature_count = features["keypoints"].shape[1]
         self.last_diagnostics = {
@@ -708,7 +703,7 @@ class SkinMapTracker:
 
         result["nearby_associations"] = 0
 
-        if self.should_add_keyframe(result):
+        if self.should_add_keyframe():
             map_update = self.add_keyframe(
                 features,
                 result["R"],
