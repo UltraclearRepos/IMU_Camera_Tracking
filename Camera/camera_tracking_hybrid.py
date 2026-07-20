@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
+from hybrid_skin_map_tracker import HybridSkinMapTracker
 from skin_map_tracker import (
     DEVICE,
     FEATURE_ROI_BOTTOM_FRACTION,
@@ -17,7 +18,6 @@ from skin_map_tracker import (
     INITIALIZATION_MIN_LANDMARKS,
     KEYFRAME_ROTATION_DEG,
     KEYFRAME_TRANSLATION_MM,
-    SkinMapTracker,
 )
 from tracking_visualization import (
     create_comparison_plots,
@@ -41,6 +41,7 @@ CAMERA_MAP_TO_DOBOT = np.array(
     ]
 )
 MAX_FRAMES = 100000
+LIGHTGLUE_INTERVAL_FRAMES = 10
 
 
 SAVE_DIAGNOSTIC_VIDEO = True
@@ -106,7 +107,11 @@ def main():
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
     distortion = np.load(DISTORTION_PATH)
-    tracker = SkinMapTracker(camera_matrix, distortion)
+    tracker = HybridSkinMapTracker(
+        camera_matrix,
+        distortion,
+        LIGHTGLUE_INTERVAL_FRAMES,
+    )
 
     capture = cv2.VideoCapture(str(VIDEO_PATH))
     if not capture.isOpened():
@@ -119,7 +124,10 @@ def main():
 
     video_writer = None
     if SAVE_DIAGNOSTIC_VIDEO:
-        video_path_output = OUTPUT_DIR / f"{RECORDING_NAME}_tracking.mp4"
+        video_path_output = (
+            OUTPUT_DIR
+            / f"{RECORDING_NAME}_hybrid_tracking.mp4"
+        )
         video_writer = cv2.VideoWriter(
             str(video_path_output),
             cv2.VideoWriter_fourcc(*"mp4v"),
@@ -150,6 +158,7 @@ def main():
         )
         tracking_times_ms.append(tracking_time_ms)
         diagnostics = tracker.last_diagnostics
+
         if result is None:
             position = np.full(3, np.nan)
             euler = np.full(3, np.nan)
@@ -166,7 +175,8 @@ def main():
             )
             relative_rotation = initial_rotation.T @ camera_rotation
             euler = Rotation.from_matrix(relative_rotation).as_euler(
-                "xyz", degrees=True
+                "xyz",
+                degrees=True,
             )
 
         positions.append(position)
@@ -189,9 +199,13 @@ def main():
                 "inliers": diagnostics["inliers"],
                 "pnp_inlier_ratio": diagnostics["pnp_inlier_ratio"],
                 "new_features": diagnostics["new_features"],
-                "nearby_associations": diagnostics["nearby_associations"],
+                "nearby_associations": diagnostics[
+                    "nearby_associations"
+                ],
                 "new_landmarks": diagnostics["new_landmarks"],
-                "removed_landmarks": diagnostics["removed_landmarks"],
+                "removed_landmarks": diagnostics[
+                    "removed_landmarks"
+                ],
                 "keyframe_inlier_threshold": diagnostics[
                     "keyframe_inlier_threshold"
                 ],
@@ -228,12 +242,16 @@ def main():
             if video_writer is not None:
                 video_writer.write(preview)
             if SHOW_PREVIEW:
-                cv2.imshow("Camera skin tracking", preview)
+                cv2.imshow("Hybrid camera skin tracking", preview)
                 if cv2.waitKey(1) == 27:
                     break
 
         if frame_index % 100 == 0:
-            print(f"Frame {frame_index}/{frame_count}, keyframes: {len(tracker.keyframes)}")
+            print(
+                f"Frame {frame_index}/{frame_count}, "
+                f"method: {diagnostics['tracking_method']}, "
+                f"keyframes: {len(tracker.keyframes)}"
+            )
         frame_index += 1
 
     capture.release()
@@ -246,21 +264,24 @@ def main():
     p95_tracking_time_ms = np.percentile(tracking_times_ms, 95)
     tracking_fps = 1000.0 / average_tracking_time_ms
 
-    csv_path = OUTPUT_DIR / f"{RECORDING_NAME}_camera.csv"
+    csv_path = OUTPUT_DIR / f"{RECORDING_NAME}_camera_hybrid.csv"
     position_plot_path = (
-        OUTPUT_DIR / f"{RECORDING_NAME}_camera_vs_gt_position.png"
+        OUTPUT_DIR
+        / f"{RECORDING_NAME}_camera_hybrid_vs_gt_position.png"
     )
     orientation_plot_path = (
-        OUTPUT_DIR / f"{RECORDING_NAME}_camera_vs_gt_orientation.png"
+        OUTPUT_DIR
+        / f"{RECORDING_NAME}_camera_hybrid_vs_gt_orientation.png"
     )
     diagnostics_plot_path = (
-        OUTPUT_DIR / f"{RECORDING_NAME}_mapping_diagnostics.png"
+        OUTPUT_DIR
+        / f"{RECORDING_NAME}_hybrid_mapping_diagnostics.png"
     )
     save_results_csv(rows, csv_path)
     save_mapping_diagnostics(
         rows,
         diagnostics_plot_path,
-        RECORDING_NAME,
+        f"{RECORDING_NAME}_hybrid",
         KEYFRAME_TRANSLATION_MM,
         KEYFRAME_ROTATION_DEG,
     )
@@ -269,7 +290,7 @@ def main():
         GROUND_TRUTH_PATH,
         position_plot_path,
         orientation_plot_path,
-        RECORDING_NAME,
+        f"{RECORDING_NAME}_hybrid",
     )
 
     print(f"Saved: {csv_path}")

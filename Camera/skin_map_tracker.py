@@ -4,25 +4,42 @@ import torch
 from lightglue import LightGlue, SuperPoint
 from lightglue.utils import rbd
 from scipy.spatial import cKDTree
+from scipy.spatial.transform import Rotation
 
 
-DEVICE = "cuda"
-MAX_KEYPOINTS = 2048
-FEATURE_ROI_BOTTOM_FRACTION = 0.70
-MIN_MATCHES = 30
-MIN_INLIERS = 20
-PNP_REPROJECTION_ERROR_PX = 3.0
-LOCAL_KEYFRAMES = 5
-NEW_MAP_POINT_MIN_DISTANCE_MM = 1.0
-LANDMARK_ASSOCIATION_DISTANCE_MM = 1.0
-LANDMARK_ASSOCIATION_REPROJECTION_ERROR_PX = 3.0
-LANDMARK_DESCRIPTOR_SIMILARITY = 0.80
-ARUCO_ID = 7
-ARUCO_SIZE_MM = 20.0
-INITIALIZATION_FRAMES = 5
-INITIALIZATION_MIN_OBSERVATIONS = 3
-INITIALIZATION_MIN_LANDMARKS = 60
-INITIALIZATION_POINT_MAX_DISTANCE_MM = 1.5
+# Model and feature extraction
+DEVICE = "cuda"  # Device used by SuperPoint and LightGlue.
+MAX_FEATURES = 268  # Maximum number of SuperPoint features in the current frame.
+FEATURE_ROI_BOTTOM_FRACTION = 0.70  # Bottom fraction of the image used for features.
+
+# Global map matching and pose estimation
+MIN_MATCHES = 60  # Minimum LightGlue matches required to run PnP.
+MIN_INLIERS = 50  # Minimum PnP inliers required to accept the pose.
+MAX_REPROJECTION_ERROR_PX = 3.0  # Maximum point reprojection error in pixels.
+GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80  # Projection margin outside the image.
+
+# Keyframe creation
+KEYFRAME_TRANSLATION_MM = 8.0  # Translation from the last keyframe required for a new one.
+KEYFRAME_ROTATION_DEG = 5.0  # Rotation from the last keyframe required for a new one.
+
+# Landmark creation and association
+LANDMARK_MIN_DISTANCE_MM = 1.0  # Minimum spacing between global map points.
+LANDMARK_DESCRIPTOR_SIMILARITY = 0.80  # Minimum descriptor similarity for one landmark.
+MAX_GLOBAL_LANDMARKS = 512  # Map size that triggers landmark pruning.
+GLOBAL_MAP_PRUNE_TARGET = 430  # Map size retained after pruning.
+LANDMARK_PROTECTION_VISIBLE_COUNT = 10  # Visibility opportunities protecting a new landmark.
+LANDMARK_INLIER_QUALITY_WEIGHT = 0.70  # PnP quality weight versus matching frequency.
+
+# ArUco
+MASK_ARUCO_FEATURES = False  # Exclude features located inside the ArUco marker.
+ARUCO_ID = 7  # Marker identifier used to determine the initial pose.
+ARUCO_SIZE_MM = 20.0  # Physical marker side length.
+
+# Initial map creation
+INITIALIZATION_FRAMES = 5  # Number of frames used to initialize the map.
+INITIALIZATION_MIN_OBSERVATIONS = 3  # Minimum observations during initialization.
+INITIALIZATION_MIN_LANDMARKS = 60  # Minimum stable landmarks in the initial map.
+INITIALIZATION_POINT_MAX_DISTANCE_MM = 1.5  # Maximum point spread during initialization.
 
 
 def frame_to_tensor(frame):
@@ -32,19 +49,11 @@ def frame_to_tensor(frame):
 
 
 class SkinMapTracker:
-    def __init__(
-        self,
-        camera_matrix,
-        distortion,
-        keyframe_interval,
-        mask_aruco_features,
-    ):
+    def __init__(self, camera_matrix, distortion):
         self.camera_matrix = camera_matrix
         self.distortion = distortion
-        self.keyframe_interval = keyframe_interval
-        self.mask_aruco_features = mask_aruco_features
 
-        self.extractor = SuperPoint(max_num_keypoints=MAX_KEYPOINTS).eval().to(DEVICE)
+        self.extractor = SuperPoint(max_num_keypoints=MAX_FEATURES).eval().to(DEVICE)
         self.matcher = LightGlue(features="superpoint").eval().to(DEVICE)
 
         dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
@@ -55,8 +64,10 @@ class SkinMapTracker:
         self.next_landmark_id = 0
         self.last_diagnostics = {}
         self.initialization = None
-        self.frame_index = -1
-        self.last_keyframe_frame = -1
+        self.R_map_to_camera = None
+        self.t_map_to_camera = None
+        self.inlier_history = []
+        self.keyframe_inlier_threshold = np.nan
 
     def extract_features(self, frame):
         with torch.inference_mode():
@@ -65,7 +76,7 @@ class SkinMapTracker:
         roi_top = frame.shape[0] * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
         keep = features["keypoints"][0, :, 1] >= roi_top
 
-        if self.mask_aruco_features:
+        if MASK_ARUCO_FEATURES:
             corners, _, _ = self.aruco_detector.detectMarkers(frame)
             keypoints = features["keypoints"][0].detach().cpu().numpy()
             for marker_corners in corners:
@@ -280,8 +291,103 @@ class SkinMapTracker:
             "observations": {keyframe_id: feature_index},
             "descriptor_sum": descriptor.copy(),
             "descriptor": descriptor.copy(),
+            "visible_count": 0,
+            "match_count": 0,
+            "inlier_count": 0,
         }
         return landmark_id
+
+    def landmark_quality(self, landmark):
+        match_rate = (
+            landmark["match_count"] / landmark["visible_count"]
+        )
+        inlier_rate = (
+            (landmark["inlier_count"] + 1.0)
+            / (landmark["match_count"] + 2.0)
+        )
+        return (
+            LANDMARK_INLIER_QUALITY_WEIGHT * inlier_rate
+            + (1.0 - LANDMARK_INLIER_QUALITY_WEIGHT) * match_rate
+        )
+
+    def update_landmark_quality(
+        self,
+        candidate_landmark_ids,
+        candidate_map_points,
+        matches,
+        inlier_indices,
+        R_map_to_camera,
+        t_map_to_camera,
+        image_size,
+    ):
+        rvec = cv2.Rodrigues(R_map_to_camera)[0]
+        projected_points, _ = cv2.projectPoints(
+            candidate_map_points,
+            rvec,
+            t_map_to_camera,
+            self.camera_matrix,
+            self.distortion,
+        )
+        projected_points = projected_points.reshape(-1, 2)
+        camera_points = (
+            R_map_to_camera @ candidate_map_points.T
+        ).T + t_map_to_camera.reshape(3)
+
+        width, height = image_size[0].detach().cpu().numpy()
+        roi_top = height * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
+        visible = camera_points[:, 2] > 0.0
+        visible &= projected_points[:, 0] >= 0.0
+        visible &= projected_points[:, 0] < width
+        visible &= projected_points[:, 1] >= roi_top
+        visible &= projected_points[:, 1] < height
+
+        for landmark_id in candidate_landmark_ids[visible]:
+            self.landmarks[int(landmark_id)]["visible_count"] += 1
+
+        matched_visible = visible[matches[:, 0]]
+        matched_landmark_ids = candidate_landmark_ids[matches[:, 0]]
+        for landmark_id in matched_landmark_ids[matched_visible]:
+            self.landmarks[int(landmark_id)]["match_count"] += 1
+
+        for inlier_index in inlier_indices:
+            if matched_visible[inlier_index]:
+                landmark_id = int(matched_landmark_ids[inlier_index])
+                self.landmarks[landmark_id]["inlier_count"] += 1
+
+    def remove_landmark(self, landmark_id):
+        landmark = self.landmarks[landmark_id]
+        for keyframe_id, feature_index in landmark["observations"].items():
+            keyframe = self.keyframes[keyframe_id]
+            if keyframe["landmark_ids"][feature_index] == landmark_id:
+                keyframe["landmark_ids"][feature_index] = -1
+        del self.landmarks[landmark_id]
+
+    def prune_global_map(self):
+        if len(self.landmarks) <= MAX_GLOBAL_LANDMARKS:
+            return 0
+
+        points_to_remove = (
+            len(self.landmarks) - GLOBAL_MAP_PRUNE_TARGET
+        )
+
+        candidates = [
+            landmark_id
+            for landmark_id, landmark in self.landmarks.items()
+            if landmark["visible_count"]
+            >= LANDMARK_PROTECTION_VISIBLE_COUNT
+        ]
+        candidates.sort(
+            key=lambda landmark_id: (
+                self.landmark_quality(self.landmarks[landmark_id]),
+                self.landmarks[landmark_id]["inlier_count"],
+                len(self.landmarks[landmark_id]["observations"]),
+            )
+        )
+
+        removed_landmark_ids = candidates[:points_to_remove]
+        for landmark_id in removed_landmark_ids:
+            self.remove_landmark(landmark_id)
+        return len(removed_landmark_ids)
 
     def add_observation(
         self,
@@ -335,7 +441,7 @@ class SkinMapTracker:
         for feature_index, map_point in zip(feature_indices, map_points):
             nearby_indices = landmark_tree.query_ball_point(
                 map_point[:2],
-                LANDMARK_ASSOCIATION_DISTANCE_MM,
+                LANDMARK_MIN_DISTANCE_MM,
             )
             descriptor = descriptors[feature_index]
             descriptor = descriptor / np.linalg.norm(descriptor)
@@ -352,7 +458,7 @@ class SkinMapTracker:
                 )
                 if (
                     reprojection_error
-                    > LANDMARK_ASSOCIATION_REPROJECTION_ERROR_PX
+                    > MAX_REPROJECTION_ERROR_PX
                 ):
                     continue
 
@@ -387,47 +493,6 @@ class SkinMapTracker:
             used_landmark_ids.add(landmark_id)
 
         return associations
-
-    def update_covisibility(self, keyframe_id):
-        keyframe = self.keyframes[keyframe_id]
-        shared_landmarks = {}
-
-        for landmark_id in np.unique(keyframe["landmark_ids"]):
-            if landmark_id < 0:
-                continue
-            for other_keyframe_id in self.landmarks[landmark_id]["observations"]:
-                if other_keyframe_id == keyframe_id:
-                    continue
-                shared_landmarks[other_keyframe_id] = (
-                    shared_landmarks.get(other_keyframe_id, 0) + 1
-                )
-
-        keyframe["covisibility"] = shared_landmarks
-        for other_keyframe_id, count in shared_landmarks.items():
-            self.keyframes[other_keyframe_id]["covisibility"][keyframe_id] = count
-
-    def local_keyframes(self):
-        reference_id = len(self.keyframes) - 1
-        reference = self.keyframes[reference_id]
-        keyframe_ids = [reference_id]
-
-        covisible = sorted(
-            reference["covisibility"],
-            key=reference["covisibility"].get,
-            reverse=True,
-        )
-        for keyframe_id in covisible:
-            if len(keyframe_ids) == LOCAL_KEYFRAMES:
-                break
-            keyframe_ids.append(keyframe_id)
-
-        for keyframe_id in range(reference_id - 1, -1, -1):
-            if len(keyframe_ids) == LOCAL_KEYFRAMES:
-                break
-            if keyframe_id not in keyframe_ids:
-                keyframe_ids.append(keyframe_id)
-
-        return [self.keyframes[keyframe_id] for keyframe_id in keyframe_ids]
 
     def add_keyframe(
         self,
@@ -480,7 +545,7 @@ class SkinMapTracker:
         new_points = new_points[remains_new]
 
         grid_cells = np.rint(
-            new_points[:, :2] / NEW_MAP_POINT_MIN_DISTANCE_MM
+            new_points[:, :2] / LANDMARK_MIN_DISTANCE_MM
         ).astype(np.int32)
         _, unique_indices = np.unique(grid_cells, axis=0, return_index=True)
         new_feature_indices = new_feature_indices[unique_indices]
@@ -489,14 +554,11 @@ class SkinMapTracker:
         camera_rotation = R_map_to_camera.T
         camera_position = -camera_rotation @ t_map_to_camera.reshape(3)
         keyframe = {
-            "features": features,
             "landmark_ids": landmark_ids,
             "camera_position": camera_position,
             "camera_rotation": camera_rotation,
-            "covisibility": {},
         }
         self.keyframes.append(keyframe)
-        self.last_keyframe_frame = self.frame_index
 
         observed_feature_indices = np.flatnonzero(landmark_ids >= 0)
         for feature_index in observed_feature_indices:
@@ -516,77 +578,133 @@ class SkinMapTracker:
             )
             keyframe["landmark_ids"][feature_index] = landmark_id
 
-        self.update_covisibility(keyframe_id)
         return {
             "nearby_associations": len(nearby_associations),
             "new_landmarks": len(new_points),
         }
 
-    def should_add_keyframe(self):
+    def should_add_keyframe(self, result):
+        last_keyframe = self.keyframes[-1]
+        camera_rotation = result["R"].T
+        camera_position = -camera_rotation @ result["t"]
+        translation = np.linalg.norm(
+            camera_position - last_keyframe["camera_position"]
+        )
+        relative_rotation = (
+            last_keyframe["camera_rotation"].T @ camera_rotation
+        )
+        rotation = np.degrees(
+            Rotation.from_matrix(relative_rotation).magnitude()
+        )
+        viewpoint_changed = (
+            translation >= KEYFRAME_TRANSLATION_MM
+            or rotation >= KEYFRAME_ROTATION_DEG
+        )
         return (
-            self.frame_index - self.last_keyframe_frame
-            >= self.keyframe_interval
+            result["inliers"] >= self.keyframe_inlier_threshold
+            and viewpoint_changed
         )
 
-    def match_local_map(self, current_features):
-        current_keypoints = rbd(current_features)["keypoints"].detach().cpu().numpy()
-        candidates = []
-        matched_current_indices = set()
+    def update_keyframe_inlier_threshold(self, inliers):
+        self.inlier_history.append(inliers)
+        mean_inliers = np.mean(self.inlier_history)
+        max_inliers = np.max(self.inlier_history)
+        self.keyframe_inlier_threshold = (
+            mean_inliers + max_inliers
+        ) / 2.0
+        self.last_diagnostics["keyframe_inlier_threshold"] = (
+            self.keyframe_inlier_threshold
+        )
 
-        for keyframe in self.local_keyframes():
-            with torch.inference_mode():
-                output = self.matcher(
-                    {
-                        "image0": keyframe["features"],
-                        "image1": current_features,
-                    }
-                )
-
-            output = rbd(output)
-            matches = output["matches"].detach().cpu().numpy()
-            scores = output["scores"].detach().cpu().numpy()
-
-            for match, score in zip(matches, scores):
-                keyframe_feature_index = match[0]
-                current_feature_index = match[1]
-                landmark_id = keyframe["landmark_ids"][keyframe_feature_index]
-                if landmark_id < 0:
-                    continue
-                candidates.append(
-                    (float(score), int(landmark_id), int(current_feature_index))
-                )
-                matched_current_indices.add(int(current_feature_index))
-
-        candidates.sort(reverse=True)
-        correspondences = []
-        used_landmarks = set()
-        used_current_features = set()
-        for score, landmark_id, current_feature_index in candidates:
-            if landmark_id in used_landmarks:
-                continue
-            if current_feature_index in used_current_features:
-                continue
-            correspondences.append((landmark_id, current_feature_index))
-            used_landmarks.add(landmark_id)
-            used_current_features.add(current_feature_index)
-
-        new_features = len(current_keypoints) - len(matched_current_indices)
-        self.last_diagnostics["matches"] = len(correspondences)
-        self.last_diagnostics["new_features"] = new_features
-
-        if len(correspondences) < MIN_MATCHES:
+    def visible_global_map(self, current_features):
+        if not self.landmarks or self.R_map_to_camera is None:
             return None
 
-        landmark_ids = np.array(
-            [correspondence[0] for correspondence in correspondences],
-            dtype=np.int64,
+        landmark_ids = np.array(list(self.landmarks), dtype=np.int64)
+        map_points = np.array(
+            [self.landmarks[landmark_id]["position"] for landmark_id in landmark_ids]
         )
-        current_feature_indices = np.array(
-            [correspondence[1] for correspondence in correspondences],
-            dtype=np.int64,
+        descriptors = np.array(
+            [self.landmarks[landmark_id]["descriptor"] for landmark_id in landmark_ids]
         )
+
+        rvec = cv2.Rodrigues(self.R_map_to_camera)[0]
+        projected_points, _ = cv2.projectPoints(
+            map_points,
+            rvec,
+            self.t_map_to_camera,
+            self.camera_matrix,
+            self.distortion,
+        )
+        projected_points = projected_points.reshape(-1, 2)
+        camera_points = (
+            self.R_map_to_camera @ map_points.T
+        ).T + self.t_map_to_camera.reshape(3)
+
+        width, height = (
+            current_features["image_size"][0].detach().cpu().numpy()
+        )
+        margin = GLOBAL_MAP_VISIBILITY_MARGIN_PX
+        roi_top = height * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
+        visible = camera_points[:, 2] > 0.0
+        visible &= projected_points[:, 0] >= -margin
+        visible &= projected_points[:, 0] < width + margin
+        visible &= projected_points[:, 1] >= roi_top - margin
+        visible &= projected_points[:, 1] < height + margin
+
+        landmark_ids = landmark_ids[visible]
+        map_points = map_points[visible]
+        projected_points = projected_points[visible]
+        descriptors = descriptors[visible]
+        if not len(landmark_ids):
+            return None
+
+        descriptor_tensor = current_features["descriptors"]
+        global_features = {
+            "keypoints": torch.as_tensor(
+                projected_points,
+                device=descriptor_tensor.device,
+                dtype=descriptor_tensor.dtype,
+            )[None],
+            "descriptors": torch.as_tensor(
+                descriptors,
+                device=descriptor_tensor.device,
+                dtype=descriptor_tensor.dtype,
+            )[None],
+            "image_size": current_features["image_size"],
+        }
+        return landmark_ids, map_points, global_features
+
+    def match_global_map(self, current_features):
+        current_keypoints = (
+            rbd(current_features)["keypoints"].detach().cpu().numpy()
+        )
+        visible_map = self.visible_global_map(current_features)
+        if visible_map is None:
+            return None
+
+        visible_landmark_ids, visible_map_points, global_features = visible_map
+        with torch.inference_mode():
+            output = self.matcher(
+                {
+                    "image0": global_features,
+                    "image1": current_features,
+                }
+            )
+        matches = rbd(output)["matches"].detach().cpu().numpy()
+        matched_landmark_ids = visible_landmark_ids[matches[:, 0]]
+        matched_current_indices = set(map(int, matches[:, 1]))
+        self.last_diagnostics["matches"] = len(matches)
+        self.last_diagnostics["new_features"] = (
+            len(current_keypoints) - len(matched_current_indices)
+        )
+        if len(matches) < MIN_MATCHES:
+            return None
+
+        landmark_ids = matched_landmark_ids
+        current_feature_indices = matches[:, 1]
         map_points = np.ascontiguousarray(
-            [self.landmarks[landmark_id]["position"] for landmark_id in landmark_ids],
+            visible_map_points[matches[:, 0]],
             dtype=np.float64,
         )
         image_points = np.ascontiguousarray(
@@ -594,13 +712,18 @@ class SkinMapTracker:
             dtype=np.float64,
         )
 
+        rvec = cv2.Rodrigues(self.R_map_to_camera)[0]
+        tvec = self.t_map_to_camera.reshape(3, 1).copy()
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
             map_points,
             image_points,
             self.camera_matrix,
             self.distortion,
+            rvec=rvec,
+            tvec=tvec,
+            useExtrinsicGuess=True,
             iterationsCount=200,
-            reprojectionError=PNP_REPROJECTION_ERROR_PX,
+            reprojectionError=MAX_REPROJECTION_ERROR_PX,
             confidence=0.999,
             flags=cv2.SOLVEPNP_ITERATIVE,
         )
@@ -625,6 +748,15 @@ class SkinMapTracker:
         )
 
         R_map_to_camera = cv2.Rodrigues(rvec)[0]
+        self.update_landmark_quality(
+            visible_landmark_ids,
+            visible_map_points,
+            matches,
+            inlier_indices,
+            R_map_to_camera,
+            tvec.reshape(3),
+            current_features["image_size"],
+        )
         inlier_mask = np.zeros(len(image_points), dtype=bool)
         inlier_mask[inlier_indices] = True
         unmatched_mask = np.ones(len(current_keypoints), dtype=bool)
@@ -634,24 +766,26 @@ class SkinMapTracker:
             "t": tvec.reshape(3),
             "inliers": len(inlier_indices),
             "inlier_map_points": map_points[inlier_indices],
+            "inlier_image_points": image_points[inlier_indices],
             "inlier_landmark_ids": landmark_ids[inlier_indices],
             "inlier_current_indices": current_feature_indices[inlier_indices],
             "new_feature_indices": np.flatnonzero(unmatched_mask),
             "outlier_points": image_points[~inlier_mask],
         }
 
-    def track(self, frame):
-        self.frame_index += 1
-        features = self.extract_features(frame)
-        feature_count = features["keypoints"].shape[1]
+    def reset_diagnostics(self, feature_count, tracking_method):
         self.last_diagnostics = {
+            "tracking_method": tracking_method,
             "matches": 0,
+            "flow_tracks": 0,
             "inliers": 0,
             "pnp_inlier_ratio": np.nan,
             "new_features": feature_count,
             "keyframe_added": 0,
             "nearby_associations": 0,
             "new_landmarks": 0,
+            "removed_landmarks": 0,
+            "keyframe_inlier_threshold": self.keyframe_inlier_threshold,
             "initialization_frames": 0,
             "initialization_candidates": 0,
             "initialization_confirmed": 0,
@@ -659,6 +793,11 @@ class SkinMapTracker:
             "initialization_points": np.empty((0, 2)),
             "initialization_aruco_detected": 0,
         }
+
+    def track(self, frame):
+        features = self.extract_features(frame)
+        feature_count = features["keypoints"].shape[1]
+        self.reset_diagnostics(feature_count, "lightglue")
 
         if not self.keyframes:
             initial_pose = self.find_initial_pose(frame)
@@ -690,20 +829,30 @@ class SkinMapTracker:
                 )
                 return None
 
-            return self.update_initialization(
+            result = self.update_initialization(
                 features,
                 R_map_to_camera,
                 t_map_to_camera,
             )
+            if result is not None:
+                self.R_map_to_camera = result["R"]
+                self.t_map_to_camera = result["t"]
+            return result
 
-        result = self.match_local_map(features)
+        result = self.match_global_map(features)
 
         if result is None:
+            self.last_diagnostics["removed_landmarks"] = (
+                self.prune_global_map()
+            )
             return None
 
+        self.R_map_to_camera = result["R"]
+        self.t_map_to_camera = result["t"]
+        self.update_keyframe_inlier_threshold(result["inliers"])
         result["nearby_associations"] = 0
 
-        if self.should_add_keyframe():
+        if self.should_add_keyframe(result):
             map_update = self.add_keyframe(
                 features,
                 result["R"],
@@ -717,5 +866,9 @@ class SkinMapTracker:
             ]
             self.last_diagnostics["keyframe_added"] = 1
             self.last_diagnostics.update(map_update)
+
+        self.last_diagnostics["removed_landmarks"] = (
+            self.prune_global_map()
+        )
 
         return result

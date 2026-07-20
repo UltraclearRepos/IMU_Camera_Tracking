@@ -84,7 +84,11 @@ def diagnostic_frame(
     initializing = not tracker.keyframes and tracker.initialization is not None
     if tracked:
         color = (40, 200, 40)
-        label = "TRACKING"
+        method = tracker.last_diagnostics.get(
+            "tracking_method",
+            "lightglue",
+        )
+        label = f"TRACKING - {method.replace('_', ' ').upper()}"
     elif initializing:
         color = (0, 180, 255)
         label = "INITIALIZING"
@@ -568,16 +572,23 @@ def save_mapping_diagnostics(
     rows,
     output_path,
     recording_name,
-    keyframe_interval,
+    keyframe_translation_mm,
+    keyframe_rotation_deg,
 ):
     frames = np.array([row["frame"] for row in rows])
     matches = np.array([row["matches"] for row in rows])
     inliers = np.array([row["inliers"] for row in rows])
+    keyframe_inlier_threshold = np.array(
+        [row["keyframe_inlier_threshold"] for row in rows]
+    )
     new_features = np.array([row["new_features"] for row in rows])
     nearby_associations = np.array(
         [row["nearby_associations"] for row in rows]
     )
     new_landmarks = np.array([row["new_landmarks"] for row in rows])
+    removed_landmarks = np.array(
+        [row["removed_landmarks"] for row in rows]
+    )
     landmarks = np.array([row["landmarks"] for row in rows])
     keyframe_added = np.array([row["keyframe_added"] for row in rows]) == 1
 
@@ -602,6 +613,13 @@ def save_mapping_diagnostics(
         s=18,
         label="Keyframe added",
         zorder=3,
+    )
+    axes[1].plot(
+        frames,
+        keyframe_inlier_threshold,
+        color="orange",
+        linestyle="--",
+        label="Dynamic keyframe inlier threshold",
     )
     axes[1].set_ylabel("PnP inliers")
     axes[1].set_ylim(bottom=0.0)
@@ -633,7 +651,14 @@ def save_mapping_diagnostics(
         color="tab:blue",
         label="New landmarks",
     )
-    axes[3].set_ylabel("New landmarks")
+    axes[3].bar(
+        frames,
+        -removed_landmarks,
+        width=1.0,
+        color="tab:orange",
+        label="Removed landmarks",
+    )
+    axes[3].set_ylabel("Landmark change")
     axes[3].set_xlabel("Frame")
     axes[3].grid(True)
     axes[3].legend(loc="upper left")
@@ -650,7 +675,8 @@ def save_mapping_diagnostics(
 
     figure.suptitle(
         f"{recording_name}: map expansion diagnostics | "
-        f"keyframe every {keyframe_interval} frames"
+        f"keyframe after {keyframe_translation_mm:g} mm or "
+        f"{keyframe_rotation_deg:g} deg"
     )
     figure.tight_layout()
     figure.savefig(output_path, dpi=160)
