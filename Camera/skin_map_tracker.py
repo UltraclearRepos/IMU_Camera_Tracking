@@ -70,11 +70,26 @@ class SkinMapTracker:
         self.keyframe_inlier_threshold = np.nan
 
     def extract_features(self, frame):
-        with torch.inference_mode():
-            features = self.extractor.extract(frame_to_tensor(frame))
+        height, width = frame.shape[:2]
+        roi_top = round(
+            height * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
+        )
+        roi = frame[roi_top:]
 
-        roi_top = frame.shape[0] * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
-        keep = features["keypoints"][0, :, 1] >= roi_top
+        with torch.inference_mode():
+            features = self.extractor.extract(frame_to_tensor(roi))
+
+        keypoints = features["keypoints"].clone()
+        keypoints[0, :, 1] += roi_top
+        features["keypoints"] = keypoints
+        features["image_size"] = features["image_size"].new_tensor(
+            [[width, height]]
+        )
+        keep = torch.ones(
+            features["keypoints"].shape[1],
+            dtype=torch.bool,
+            device=features["keypoints"].device,
+        )
 
         if MASK_ARUCO_FEATURES:
             corners, _, _ = self.aruco_detector.detectMarkers(frame)

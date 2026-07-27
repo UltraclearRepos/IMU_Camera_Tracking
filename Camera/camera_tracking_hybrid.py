@@ -30,7 +30,7 @@ from tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "horizontal_line_1"
+RECORDING_NAME = "square_1"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 CAMERA_MAP_TO_DOBOT = np.array(
