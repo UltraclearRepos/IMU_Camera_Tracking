@@ -31,7 +31,7 @@ from tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "square_1"
+RECORDING_NAME = "tattoo_low_res_Speed-3_2026-07-21_13.27.00"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 CAMERA_MAP_TO_DOBOT = CAMERA_MAP_TO_DOBOT_BY_RECORDING[RECORDING_NAME]

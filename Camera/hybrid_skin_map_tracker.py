@@ -183,9 +183,6 @@ class HybridSkinMapTracker(SkinMapTracker):
         tracked_points = self.track_points(gray)
         if tracked_points is None:
             self.force_lightglue = True
-            self.last_diagnostics["removed_landmarks"] = (
-                self.prune_global_map()
-            )
             return None
 
         image_points, landmark_ids = tracked_points
@@ -196,16 +193,10 @@ class HybridSkinMapTracker(SkinMapTracker):
         result = self.estimate_flow_pose(image_points, landmark_ids)
         if result is None:
             self.force_lightglue = True
-            self.last_diagnostics["removed_landmarks"] = (
-                self.prune_global_map()
-            )
             return None
 
         self.R_map_to_camera = result["R"]
         self.t_map_to_camera = result["t"]
-        self.last_diagnostics["removed_landmarks"] = (
-            self.prune_global_map()
-        )
         self.store_active_tracks(
             gray,
             result["inlier_image_points"],

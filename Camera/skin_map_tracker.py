@@ -22,7 +22,7 @@ GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80  # Projection margin outside the image.
 KEYFRAME_TRANSLATION_MM = 8.0  # Translation from the last keyframe required for a new one.
 KEYFRAME_ROTATION_DEG = 5.0  # Rotation from the last keyframe required for a new one.
 KEYFRAME_INLIER_THRESHOLD_MODE = "mean"  # "mean_max": midpoint of history mean and maximum; "mean": history mean.
-KEYFRAME_INLIER_THRESHOLD_START_RATIO = 0.60  # Initial fraction of the dynamic PnP inlier threshold.
+KEYFRAME_INLIER_THRESHOLD_START_RATIO = 0.40  # Initial fraction of the dynamic PnP inlier threshold.
 KEYFRAME_INLIER_THRESHOLD_RAMP_FRAMES = 100  # Successful PnP frames needed to reach the full threshold.
 
 # Landmark creation and association
@@ -882,9 +882,6 @@ class SkinMapTracker:
         result = self.match_global_map(features)
 
         if result is None:
-            self.last_diagnostics["removed_landmarks"] = (
-                self.prune_global_map()
-            )
             return None
 
         self.R_map_to_camera = result["R"]
@@ -906,9 +903,9 @@ class SkinMapTracker:
             ]
             self.last_diagnostics["keyframe_added"] = 1
             self.last_diagnostics.update(map_update)
-
-        self.last_diagnostics["removed_landmarks"] = (
-            self.prune_global_map()
-        )
+            if map_update["new_landmarks"] > 0:
+                self.last_diagnostics["removed_landmarks"] = (
+                    self.prune_global_map()
+                )
 
         return result
