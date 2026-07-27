@@ -13,6 +13,7 @@ from optical_flow_tracker import (
     MIN_PNP_INLIERS,
     OpticalFlowMapTracker,
 )
+from recording_axes import CAMERA_MAP_TO_DOBOT_BY_RECORDING
 from tracking_visualization import (
     create_comparison_plots,
     optical_flow_diagnostic_frame,
@@ -27,13 +28,7 @@ from tracking_visualization import (
 RECORDING_NAME = "horizontal_line_1"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
-CAMERA_MAP_TO_DOBOT = np.array(
-    [
-        [1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [0.0, 0.0, 1.0],
-    ]
-)
+CAMERA_MAP_TO_DOBOT = CAMERA_MAP_TO_DOBOT_BY_RECORDING[RECORDING_NAME]
 
 SAVE_DIAGNOSTIC_VIDEO = True
 DIAGNOSTIC_VIDEO_FPS = 1.0
@@ -45,7 +40,17 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
 DATA_DIR = PROJECT_DIR / "Data2"
 OUTPUT_DIR = SCRIPT_DIR / "results" / RECORDING_NAME / "optical_flow"
-VIDEO_PATH = DATA_DIR / "videos" / f"{RECORDING_NAME}_{CAMERA_NAME}.mp4"
+VIDEO_PATHS = list(
+    (DATA_DIR / "videos").glob(
+        f"{RECORDING_NAME}_{CAMERA_NAME}.*"
+    )
+)
+if len(VIDEO_PATHS) != 1:
+    raise RuntimeError(
+        f"Expected one video for {RECORDING_NAME} {CAMERA_NAME}, "
+        f"found {len(VIDEO_PATHS)}"
+    )
+VIDEO_PATH = VIDEO_PATHS[0]
 GROUND_TRUTH_PATH = DATA_DIR / "dobot" / f"{RECORDING_NAME}.csv"
 VIDEO_TIMESTAMP_PATH = (
     DATA_DIR / "video_timestamps" / f"{RECORDING_NAME}.csv"
@@ -94,7 +99,6 @@ def main():
     if not capture.isOpened():
         raise FileNotFoundError(VIDEO_PATH)
 
-    input_fps = capture.get(cv2.CAP_PROP_FPS)
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_size = (
         int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
@@ -149,7 +153,7 @@ def main():
             )
 
         positions.append(position)
-        time_s = frame_index / input_fps
+        time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
         rows.append(
             {
                 "frame": frame_index,

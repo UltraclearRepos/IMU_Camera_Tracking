@@ -9,7 +9,7 @@ from scipy.spatial.transform import Rotation
 
 # Model and feature extraction
 DEVICE = "cuda"  # Device used by SuperPoint and LightGlue.
-MAX_FEATURES = 268  # Maximum number of SuperPoint features in the current frame.
+MAX_FEATURES = 512  # Maximum number of SuperPoint features in the current frame.
 FEATURE_ROI_BOTTOM_FRACTION = 0.70  # Bottom fraction of the image used for features.
 
 # Global map matching and pose estimation
@@ -21,12 +21,15 @@ GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80  # Projection margin outside the image.
 # Keyframe creation
 KEYFRAME_TRANSLATION_MM = 8.0  # Translation from the last keyframe required for a new one.
 KEYFRAME_ROTATION_DEG = 5.0  # Rotation from the last keyframe required for a new one.
+KEYFRAME_INLIER_THRESHOLD_MODE = "mean"  # "mean_max": midpoint of history mean and maximum; "mean": history mean.
+KEYFRAME_INLIER_THRESHOLD_START_RATIO = 0.60  # Initial fraction of the dynamic PnP inlier threshold.
+KEYFRAME_INLIER_THRESHOLD_RAMP_FRAMES = 100  # Successful PnP frames needed to reach the full threshold.
 
 # Landmark creation and association
 LANDMARK_MIN_DISTANCE_MM = 1.0  # Minimum spacing between global map points.
 LANDMARK_DESCRIPTOR_SIMILARITY = 0.80  # Minimum descriptor similarity for one landmark.
-MAX_GLOBAL_LANDMARKS = 512  # Map size that triggers landmark pruning.
-GLOBAL_MAP_PRUNE_TARGET = 430  # Map size retained after pruning.
+MAX_GLOBAL_LANDMARKS = 1024  # Map size that triggers landmark pruning.
+GLOBAL_MAP_PRUNE_TARGET = 930  # Map size retained after pruning.
 LANDMARK_PROTECTION_VISIBLE_COUNT = 10  # Visibility opportunities protecting a new landmark.
 LANDMARK_INLIER_QUALITY_WEIGHT = 0.70  # PnP quality weight versus matching frequency.
 
@@ -623,10 +626,32 @@ class SkinMapTracker:
     def update_keyframe_inlier_threshold(self, inliers):
         self.inlier_history.append(inliers)
         mean_inliers = np.mean(self.inlier_history)
-        max_inliers = np.max(self.inlier_history)
-        self.keyframe_inlier_threshold = (
-            mean_inliers + max_inliers
-        ) / 2.0
+
+        if KEYFRAME_INLIER_THRESHOLD_MODE == "mean":
+            self.keyframe_inlier_threshold = mean_inliers
+        elif KEYFRAME_INLIER_THRESHOLD_MODE == "mean_max":
+            max_inliers = np.max(self.inlier_history)
+            self.keyframe_inlier_threshold = (
+                mean_inliers + max_inliers
+            ) / 2.0
+        else:
+            raise ValueError(
+                "KEYFRAME_INLIER_THRESHOLD_MODE must be "
+                "'mean' or 'mean_max'"
+            )
+
+        ramp_progress = min(
+            (len(self.inlier_history) - 1)
+            / (KEYFRAME_INLIER_THRESHOLD_RAMP_FRAMES - 1),
+            1.0,
+        )
+        threshold_ratio = (
+            KEYFRAME_INLIER_THRESHOLD_START_RATIO
+            + (1.0 - KEYFRAME_INLIER_THRESHOLD_START_RATIO)
+            * ramp_progress
+        )
+        self.keyframe_inlier_threshold *= threshold_ratio
+
         self.last_diagnostics["keyframe_inlier_threshold"] = (
             self.keyframe_inlier_threshold
         )

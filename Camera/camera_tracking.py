@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
+from recording_axes import CAMERA_MAP_TO_DOBOT_BY_RECORDING
 from skin_map_tracker import (
     DEVICE,
     FEATURE_ROI_BOTTOM_FRACTION,
@@ -30,16 +31,10 @@ from tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "horizontal_line_1"
+RECORDING_NAME = "skin_low_res_Speed-3_2026-07-21_13.15.30"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
-CAMERA_MAP_TO_DOBOT = np.array(
-    [
-        [1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [0.0, 0.0, 1.0],
-    ]
-)
+CAMERA_MAP_TO_DOBOT = CAMERA_MAP_TO_DOBOT_BY_RECORDING[RECORDING_NAME]
 MAX_FRAMES = 100000
 
 
@@ -51,11 +46,17 @@ SHOW_PREVIEW = False
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_DIR / "Data2"
 OUTPUT_DIR = SCRIPT_DIR / "results" / RECORDING_NAME
-VIDEO_PATH = (
-    DATA_DIR
-    / "videos"
-    / f"{RECORDING_NAME}_{CAMERA_NAME}.mp4"
+VIDEO_PATHS = list(
+    (DATA_DIR / "videos").glob(
+        f"{RECORDING_NAME}_{CAMERA_NAME}.*"
+    )
 )
+if len(VIDEO_PATHS) != 1:
+    raise RuntimeError(
+        f"Expected one video for {RECORDING_NAME} {CAMERA_NAME}, "
+        f"found {len(VIDEO_PATHS)}"
+    )
+VIDEO_PATH = VIDEO_PATHS[0]
 GROUND_TRUTH_PATH = DATA_DIR / "dobot" / f"{RECORDING_NAME}.csv"
 VIDEO_TIMESTAMP_PATH = (
     DATA_DIR
@@ -112,7 +113,6 @@ def main():
     if not capture.isOpened():
         raise FileNotFoundError(VIDEO_PATH)
 
-    input_fps = capture.get(cv2.CAP_PROP_FPS)
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -170,7 +170,7 @@ def main():
             )
 
         positions.append(position)
-        time_s = frame_index / input_fps
+        time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
         rows.append(
             {
                 "frame": frame_index,

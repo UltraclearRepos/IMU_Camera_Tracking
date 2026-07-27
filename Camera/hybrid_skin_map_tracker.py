@@ -20,16 +20,19 @@ class HybridSkinMapTracker(SkinMapTracker):
         self,
         camera_matrix,
         distortion,
-        lightglue_interval_frames,
+        max_optical_flow_frames,
+        min_optical_flow_track_ratio,
     ):
         super().__init__(camera_matrix, distortion)
-        self.lightglue_interval_frames = lightglue_interval_frames
+        self.max_optical_flow_frames = max_optical_flow_frames
+        self.min_optical_flow_track_ratio = min_optical_flow_track_ratio
         self.frame_index = -1
         self.last_lightglue_frame = None
         self.force_lightglue = True
         self.previous_gray = None
         self.active_points = np.empty((0, 2), dtype=np.float32)
         self.active_landmark_ids = np.empty(0, dtype=np.int64)
+        self.lightglue_track_count = 0
 
     def store_active_tracks(self, gray, image_points, landmark_ids):
         existing = np.array(
@@ -63,6 +66,7 @@ class HybridSkinMapTracker(SkinMapTracker):
             result["inlier_image_points"],
             result["inlier_landmark_ids"],
         )
+        self.lightglue_track_count = len(self.active_points)
         self.last_lightglue_frame = self.frame_index
         self.force_lightglue = False
         return result
@@ -174,7 +178,7 @@ class HybridSkinMapTracker(SkinMapTracker):
             "nearby_associations": 0,
         }
 
-    def track_with_optical_flow(self, gray):
+    def track_with_optical_flow(self, frame, gray):
         self.reset_diagnostics(0, "optical_flow")
         tracked_points = self.track_points(gray)
         if tracked_points is None:
@@ -185,6 +189,10 @@ class HybridSkinMapTracker(SkinMapTracker):
             return None
 
         image_points, landmark_ids = tracked_points
+        track_ratio = len(image_points) / self.lightglue_track_count
+        if track_ratio <= self.min_optical_flow_track_ratio:
+            return self.track_with_lightglue(frame, gray)
+
         result = self.estimate_flow_pose(image_points, landmark_ids)
         if result is None:
             self.force_lightglue = True
@@ -208,19 +216,19 @@ class HybridSkinMapTracker(SkinMapTracker):
     def track(self, frame):
         self.frame_index += 1
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        interval_reached = (
+        maximum_flow_frames_reached = (
             self.last_lightglue_frame is None
             or self.frame_index - self.last_lightglue_frame
-            >= self.lightglue_interval_frames
+            > self.max_optical_flow_frames
         )
         insufficient_tracks = len(self.active_points) < MIN_MATCHES
 
         if (
             not self.keyframes
             or self.force_lightglue
-            or interval_reached
+            or maximum_flow_frames_reached
             or insufficient_tracks
         ):
             return self.track_with_lightglue(frame, gray)
 
-        return self.track_with_optical_flow(gray)
+        return self.track_with_optical_flow(frame, gray)
