@@ -23,14 +23,14 @@ KEYFRAME_TRANSLATION_MM = 8.0  # Translation from the last keyframe required for
 KEYFRAME_ROTATION_DEG = 5.0  # Rotation from the last keyframe required for a new one.
 KEYFRAME_INLIER_THRESHOLD_MODE = "mean"  # "mean_max": midpoint of history mean and maximum; "mean": history mean.
 KEYFRAME_INLIER_THRESHOLD_START_RATIO = 0.60  # Initial fraction of the dynamic PnP inlier threshold.
-KEYFRAME_INLIER_THRESHOLD_RAMP_FRAMES = 200  # Successful PnP frames needed to reach the full threshold.
-KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.5  # Constant multiplier applied to the dynamic threshold.
+KEYFRAME_INLIER_THRESHOLD_RAMP_FRAMES = 300  # Successful PnP frames needed to reach the full threshold.
+KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.8  # Constant multiplier applied to the dynamic threshold.
 
 # Landmark creation and association
 LANDMARK_MIN_DISTANCE_MM = 1.0  # Minimum spacing between global map points.
 LANDMARK_DESCRIPTOR_SIMILARITY = 0.80  # Minimum descriptor similarity for one landmark.
-MAX_GLOBAL_LANDMARKS = 1024  # Map size that triggers landmark pruning.
-GLOBAL_MAP_PRUNE_TARGET = 930  # Map size retained after pruning.
+MAX_GLOBAL_LANDMARKS = 1024  # Hard maximum number of global map points.
+GLOBAL_MAP_PRUNE_TARGET = 930  # Map size retained before adding new points.
 LANDMARK_PROTECTION_VISIBLE_COUNT = 10  # Visibility opportunities protecting a new landmark.
 LANDMARK_INLIER_QUALITY_WEIGHT = 0.70  # PnP quality weight versus matching frequency.
 
@@ -381,8 +381,8 @@ class SkinMapTracker:
                 keyframe["landmark_ids"][feature_index] = -1
         del self.landmarks[landmark_id]
 
-    def prune_global_map(self):
-        if len(self.landmarks) <= MAX_GLOBAL_LANDMARKS:
+    def prune_global_map(self, protected_landmark_ids):
+        if len(self.landmarks) < MAX_GLOBAL_LANDMARKS:
             return 0
 
         points_to_remove = (
@@ -394,6 +394,7 @@ class SkinMapTracker:
             for landmark_id, landmark in self.landmarks.items()
             if landmark["visible_count"]
             >= LANDMARK_PROTECTION_VISIBLE_COUNT
+            and landmark_id not in protected_landmark_ids
         ]
         candidates.sort(
             key=lambda landmark_id: (
@@ -570,6 +571,31 @@ class SkinMapTracker:
         new_feature_indices = new_feature_indices[unique_indices]
         new_points = new_points[unique_indices]
 
+        protected_landmark_ids = set(
+            map(int, landmark_ids[landmark_ids >= 0])
+        )
+        removed_landmarks = 0
+        if len(new_points) > 0:
+            removed_landmarks = self.prune_global_map(
+                protected_landmark_ids
+            )
+
+        available_landmark_slots = (
+            MAX_GLOBAL_LANDMARKS - len(self.landmarks)
+        )
+        if len(new_points) > available_landmark_slots:
+            keypoint_scores = (
+                feature_data["keypoint_scores"]
+                .detach()
+                .cpu()
+                .numpy()
+            )
+            best_new_indices = np.argsort(
+                keypoint_scores[new_feature_indices]
+            )[::-1][:available_landmark_slots]
+            new_feature_indices = new_feature_indices[best_new_indices]
+            new_points = new_points[best_new_indices]
+
         camera_rotation = R_map_to_camera.T
         camera_position = -camera_rotation @ t_map_to_camera.reshape(3)
         keyframe = {
@@ -600,6 +626,7 @@ class SkinMapTracker:
         return {
             "nearby_associations": len(nearby_associations),
             "new_landmarks": len(new_points),
+            "removed_landmarks": removed_landmarks,
         }
 
     def should_add_keyframe(self, result):
@@ -907,9 +934,5 @@ class SkinMapTracker:
             ]
             self.last_diagnostics["keyframe_added"] = 1
             self.last_diagnostics.update(map_update)
-            if map_update["new_landmarks"] > 0:
-                self.last_diagnostics["removed_landmarks"] = (
-                    self.prune_global_map()
-                )
 
         return result

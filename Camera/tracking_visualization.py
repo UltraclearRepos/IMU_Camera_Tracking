@@ -38,6 +38,248 @@ def project_map_points(
     return projected[visible]
 
 
+def camera_view_on_skin_plane(result, camera_matrix, distortion, frame_shape):
+    height, width = frame_shape[:2]
+    image_corners = np.array(
+        [
+            [0.0, 0.0],
+            [width - 1.0, 0.0],
+            [width - 1.0, height - 1.0],
+            [0.0, height - 1.0],
+        ],
+        dtype=np.float64,
+    )
+    normalized_corners = cv2.undistortPoints(
+        image_corners.reshape(-1, 1, 2),
+        camera_matrix,
+        distortion,
+    ).reshape(-1, 2)
+    camera_rays = np.column_stack(
+        [normalized_corners, np.ones(4)]
+    )
+
+    camera_to_map = result["R"].T
+    camera_position = (
+        -camera_to_map @ result["t"].reshape(3)
+    )
+    map_rays = (camera_to_map @ camera_rays.T).T
+    distances = -camera_position[2] / map_rays[:, 2]
+    return camera_position + distances[:, None] * map_rays
+
+
+def create_top_view_state(tracker, result, frame_shape, frame_index):
+    state = {
+        "frame_index": frame_index,
+        "map_points": tracker.all_map_points().copy(),
+        "inlier_map_points": np.empty((0, 3)),
+        "camera_position": None,
+        "view_polygon": np.empty((0, 3)),
+        "landmarks": len(tracker.landmarks),
+        "inliers": 0,
+        "status": (
+            "INITIALIZING"
+            if not tracker.keyframes
+            else "LOST"
+        ),
+    }
+    if result is None:
+        return state
+
+    state["inlier_map_points"] = result["inlier_map_points"].copy()
+    state["camera_position"] = (
+        -result["R"].T @ result["t"].reshape(3)
+    )
+    state["view_polygon"] = camera_view_on_skin_plane(
+        result,
+        tracker.camera_matrix,
+        tracker.distortion,
+        frame_shape,
+    )
+    state["inliers"] = result["inliers"]
+    state["status"] = "TRACKING"
+    return state
+
+
+def top_view_bounds(states, padding_mm):
+    viewed_areas = [
+        state["view_polygon"][:, :2]
+        for state in states
+        if len(state["view_polygon"]) > 0
+    ]
+    if viewed_areas:
+        points = np.vstack(viewed_areas)
+    else:
+        mapped_areas = [
+            state["map_points"][:, :2]
+            for state in states
+            if len(state["map_points"]) > 0
+        ]
+        points = (
+            np.vstack(mapped_areas)
+            if mapped_areas
+            else np.zeros((1, 2))
+        )
+
+    minimum = np.min(points, axis=0)
+    maximum = np.max(points, axis=0)
+    center = (minimum + maximum) / 2.0
+    view_size_mm = np.max(maximum - minimum) + 2.0 * padding_mm
+    half_size = view_size_mm / 2.0
+    return np.array(
+        [
+            center[0] - half_size,
+            center[0] + half_size,
+            center[1] - half_size,
+            center[1] + half_size,
+        ]
+    )
+
+
+def top_view_frame(state, bounds, view_size_pixels):
+    output = np.full(
+        (view_size_pixels, view_size_pixels, 3),
+        24,
+        dtype=np.uint8,
+    )
+    margin = 55
+    drawing_size = view_size_pixels - 2 * margin
+    x_min, x_max, y_min, y_max = bounds
+    view_size_mm = x_max - x_min
+    scale = drawing_size / view_size_mm
+
+    def to_pixels(points):
+        points = np.asarray(points).reshape(-1, 2)
+        pixels = np.empty_like(points)
+        pixels[:, 0] = margin + (points[:, 0] - x_min) * scale
+        pixels[:, 1] = margin + (y_max - points[:, 1]) * scale
+        return np.rint(pixels).astype(np.int32)
+
+    grid_step_mm = 50.0
+    grid_x = np.arange(
+        np.ceil(x_min / grid_step_mm) * grid_step_mm,
+        x_max,
+        grid_step_mm,
+    )
+    grid_y = np.arange(
+        np.ceil(y_min / grid_step_mm) * grid_step_mm,
+        y_max,
+        grid_step_mm,
+    )
+    for value in grid_x:
+        vertical = to_pixels([[value, y_min], [value, y_max]])
+        cv2.line(output, vertical[0], vertical[1], (55, 55, 55), 1)
+    for value in grid_y:
+        horizontal = to_pixels([[x_min, value], [x_max, value]])
+        cv2.line(output, horizontal[0], horizontal[1], (55, 55, 55), 1)
+
+    if y_min <= 0.0 <= y_max:
+        axis_x = to_pixels([[x_min, 0.0], [x_max, 0.0]])
+        cv2.line(output, axis_x[0], axis_x[1], (40, 80, 230), 2)
+    if x_min <= 0.0 <= x_max:
+        axis_y = to_pixels([[0.0, y_min], [0.0, y_max]])
+        cv2.line(output, axis_y[0], axis_y[1], (40, 210, 80), 2)
+
+    map_points = state["map_points"]
+    if len(map_points) > 0:
+        for point in to_pixels(map_points[:, :2]):
+            cv2.circle(output, tuple(point), 2, (0, 220, 220), -1)
+
+    camera_position = state["camera_position"]
+    if camera_position is not None:
+        polygon_pixels = to_pixels(state["view_polygon"][:, :2])
+
+        overlay = output.copy()
+        cv2.fillPoly(
+            overlay,
+            [polygon_pixels],
+            (120, 75, 20),
+        )
+        output = cv2.addWeighted(overlay, 0.25, output, 0.75, 0.0)
+        cv2.polylines(
+            output,
+            [polygon_pixels],
+            True,
+            (255, 180, 40),
+            2,
+        )
+
+        for point in to_pixels(state["inlier_map_points"][:, :2]):
+            cv2.circle(output, tuple(point), 3, (0, 255, 0), -1)
+
+        camera_pixel = to_pixels([camera_position[:2]])[0]
+        cv2.circle(output, tuple(camera_pixel), 7, (255, 100, 30), -1)
+        cv2.putText(
+            output,
+            f"Camera Z: {camera_position[2]:.1f} mm",
+            (15, 52),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+
+    status = state["status"]
+    if status == "TRACKING":
+        status_color = (0, 220, 0)
+    elif status == "INITIALIZING":
+        status_color = (0, 180, 255)
+    else:
+        status_color = (30, 30, 220)
+
+    cv2.putText(
+        output,
+        f"Frame: {state['frame_index']} | {status}",
+        (15, 27),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        status_color,
+        2,
+    )
+    cv2.putText(
+        output,
+        (
+            f"Landmarks: {state['landmarks']} | "
+            f"PnP inliers: {state['inliers']}"
+        ),
+        (15, view_size_pixels - 18),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 255, 255),
+        2,
+    )
+    cv2.putText(
+        output,
+        f"View: {view_size_mm:.0f} x {view_size_mm:.0f} mm",
+        (view_size_pixels - 275, 27),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (180, 180, 180),
+        2,
+    )
+    return output
+
+
+def save_top_view_video(
+    states,
+    output_path,
+    fps,
+    view_size_pixels,
+    padding_mm,
+):
+    bounds = top_view_bounds(states, padding_mm)
+    writer = cv2.VideoWriter(
+        str(output_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (view_size_pixels, view_size_pixels),
+    )
+    for state in states:
+        writer.write(
+            top_view_frame(state, bounds, view_size_pixels)
+        )
+    writer.release()
+
+
 def diagnostic_frame(
     frame,
     tracker,

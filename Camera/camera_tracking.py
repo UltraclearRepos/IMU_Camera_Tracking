@@ -21,11 +21,16 @@ from skin_map_tracker import (
     SkinMapTracker,
 )
 from tracking_visualization import (
+    create_top_view_state,
     create_comparison_plots,
     diagnostic_frame,
     save_mapping_diagnostics,
+    save_top_view_video,
 )
 
+# 1. Moze premiowac punkty w kierunku ktorych idziemy w konetkscie dodania do mapy globalnej. Np jesli idziemy po osi X w gore czyli jakby obraz przesuwa sie w kamerze w dol to dodawac punkty bardziej na gorze obrazu
+# 2. Moze nie usuwac najgorszych punktow, tylko dbac zeby gestosc tez sie zgadzala, zeby nie wywalic np wszysytkich punktow znalezionych na poczatku w pierwszej fazie ruchu, bo jak potem wrocimy do tego miejsca to punktow
+#    nie bedzie i trzeba bedzie dodawac jako nowe, a tak mielibysmy juz dobrze sprawdzone punkty tam
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -40,6 +45,10 @@ MAX_FRAMES = 100000
 
 SAVE_DIAGNOSTIC_VIDEO = True
 DIAGNOSTIC_VIDEO_FPS = 1.0
+SAVE_TOP_VIEW_VIDEO = True
+TOP_VIEW_VIDEO_FPS = 1.0
+TOP_VIEW_VIDEO_SIZE_PX = 800
+TOP_VIEW_PADDING_MM = 20.0
 SHOW_PREVIEW = False
 
 
@@ -129,6 +138,7 @@ def main():
 
     rows = []
     positions = []
+    top_view_states = []
     tracking_times_ms = []
     initial_position = None
     initial_rotation = None
@@ -214,6 +224,16 @@ def main():
             }
         )
 
+        if SAVE_TOP_VIEW_VIDEO:
+            top_view_states.append(
+                create_top_view_state(
+                    tracker,
+                    result,
+                    frame.shape,
+                    frame_index,
+                )
+            )
+
         if SAVE_DIAGNOSTIC_VIDEO or SHOW_PREVIEW:
             preview = diagnostic_frame(
                 frame,
@@ -240,6 +260,15 @@ def main():
     if video_writer is not None:
         video_writer.release()
     cv2.destroyAllWindows()
+
+    if SAVE_TOP_VIEW_VIDEO:
+        save_top_view_video(
+            top_view_states,
+            OUTPUT_DIR / f"{RECORDING_NAME}_map_top_view.mp4",
+            TOP_VIEW_VIDEO_FPS,
+            TOP_VIEW_VIDEO_SIZE_PX,
+            TOP_VIEW_PADDING_MM,
+        )
 
     average_tracking_time_ms = np.mean(tracking_times_ms)
     median_tracking_time_ms = np.median(tracking_times_ms)
