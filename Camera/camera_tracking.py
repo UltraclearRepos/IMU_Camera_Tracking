@@ -31,7 +31,7 @@ from tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "skin_low_res_Speed-3_2026-07-21_13.15.30"
+RECORDING_NAME = "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 CAMERA_MAP_TO_DOBOT = CAMERA_MAP_TO_DOBOT_BY_RECORDING[RECORDING_NAME]
@@ -44,7 +44,7 @@ SHOW_PREVIEW = False
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_DIR = PROJECT_DIR / "Data2"
+DATA_DIR = PROJECT_DIR / "Data3"
 OUTPUT_DIR = SCRIPT_DIR / "results" / RECORDING_NAME
 VIDEO_PATHS = list(
     (DATA_DIR / "videos").glob(

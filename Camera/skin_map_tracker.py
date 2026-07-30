@@ -22,8 +22,9 @@ GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80  # Projection margin outside the image.
 KEYFRAME_TRANSLATION_MM = 8.0  # Translation from the last keyframe required for a new one.
 KEYFRAME_ROTATION_DEG = 5.0  # Rotation from the last keyframe required for a new one.
 KEYFRAME_INLIER_THRESHOLD_MODE = "mean"  # "mean_max": midpoint of history mean and maximum; "mean": history mean.
-KEYFRAME_INLIER_THRESHOLD_START_RATIO = 0.40  # Initial fraction of the dynamic PnP inlier threshold.
-KEYFRAME_INLIER_THRESHOLD_RAMP_FRAMES = 100  # Successful PnP frames needed to reach the full threshold.
+KEYFRAME_INLIER_THRESHOLD_START_RATIO = 0.60  # Initial fraction of the dynamic PnP inlier threshold.
+KEYFRAME_INLIER_THRESHOLD_RAMP_FRAMES = 200  # Successful PnP frames needed to reach the full threshold.
+KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.5  # Constant multiplier applied to the dynamic threshold.
 
 # Landmark creation and association
 LANDMARK_MIN_DISTANCE_MM = 1.0  # Minimum spacing between global map points.
@@ -650,7 +651,10 @@ class SkinMapTracker:
             + (1.0 - KEYFRAME_INLIER_THRESHOLD_START_RATIO)
             * ramp_progress
         )
-        self.keyframe_inlier_threshold *= threshold_ratio
+        self.keyframe_inlier_threshold *= (
+            threshold_ratio
+            * KEYFRAME_INLIER_THRESHOLD_MULTIPLIER
+        )
 
         self.last_diagnostics["keyframe_inlier_threshold"] = (
             self.keyframe_inlier_threshold

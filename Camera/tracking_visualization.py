@@ -380,7 +380,7 @@ def load_ground_truth(path):
     orientations = []
     with path.open(newline="", encoding="utf-8") as file:
         for row in csv.DictReader(file):
-            timestamps.append(float(row["timestamp"]))
+            timestamps.append(float(row["sync_timestamp"]))
             positions.append(
                 [float(row[axis]) for axis in ("x", "y", "z")]
             )
@@ -547,7 +547,7 @@ def create_comparison_plots(
         "Euclidean distance on tracked frames",
         position_output_path,
         f"{recording_name}: camera position vs GT\n"
-        "Data2 timestamps synchronized to Dobot | "
+        "Timestamps synchronized to Dobot | "
         f"tracked: {tracking_coverage:.1f}%",
     )
 
@@ -562,7 +562,7 @@ def create_comparison_plots(
         "Angular distance on tracked frames",
         orientation_output_path,
         f"{recording_name}: camera orientation vs GT\n"
-        "Data2 timestamps synchronized to Dobot | "
+        "Timestamps synchronized to Dobot | "
         f"tracked: {tracking_coverage:.1f}%",
     )
     return position_rmse, orientation_rmse

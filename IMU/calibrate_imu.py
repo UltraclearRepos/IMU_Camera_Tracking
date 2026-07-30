@@ -1,4 +1,4 @@
-"""Create an IMU calibration file from six stationary orientations."""
+"""Calibrate IMU2 accelerometer and gyroscope from six static poses."""
 
 import csv
 import json
@@ -12,9 +12,11 @@ import numpy as np
 # -----------------------------------------------------------------------------
 
 GRAVITY = 9.80665
-TRIM_SECONDS = 1.0
+TRIM_SECONDS = 0.05
+MAX_ACCEL_STD_M_S2 = 0.05
+MAX_GYRO_STD_RAD_S = np.radians(0.5)
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_DIR = Path(__file__).absolute().parent
 CALIBRATION_DIR = SCRIPT_DIR / "calibration"
 OUTPUT_PATH = CALIBRATION_DIR / "imu_calibration.json"
 
@@ -27,7 +29,7 @@ RECORDINGS = {
     "-Z": "g_-Z_2026-07-16_16.12.26.csv",
 }
 
-TARGET_ACCELERATION = {
+EXPECTED_ACCELERATION = {
     "+X": np.array([GRAVITY, 0.0, 0.0]),
     "-X": np.array([-GRAVITY, 0.0, 0.0]),
     "+Y": np.array([0.0, GRAVITY, 0.0]),
@@ -41,197 +43,222 @@ def read_recording(path):
     timestamps = []
     acceleration = []
     angular_rate = []
-    magnetic_field = []
     sample_rates = []
 
     with path.open(newline="", encoding="utf-8") as file:
         for row in csv.DictReader(file):
             timestamps.append(float(row["timestamp"]))
             acceleration.append(
-                [float(row[axis]) for axis in (
-                    "imu2_ax_mg",
-                    "imu2_ay_mg",
-                    "imu2_az_mg",
-                )]
+                [
+                    float(row["imu2_ax_mg"]),
+                    float(row["imu2_ay_mg"]),
+                    float(row["imu2_az_mg"]),
+                ]
             )
             angular_rate.append(
-                [float(row[axis]) for axis in (
-                    "imu2_gx_mdps",
-                    "imu2_gy_mdps",
-                    "imu2_gz_mdps",
-                )]
-            )
-            magnetic_field.append(
-                [float(row[axis]) for axis in (
-                    "mag_x_uT",
-                    "mag_y_uT",
-                    "mag_z_uT",
-                )]
+                [
+                    float(row["imu2_gx_mdps"]),
+                    float(row["imu2_gy_mdps"]),
+                    float(row["imu2_gz_mdps"]),
+                ]
             )
             sample_rates.append(float(row["output_hz"]))
 
     timestamps = np.array(timestamps)
     acceleration = np.array(acceleration) * GRAVITY / 1000.0
     angular_rate = np.radians(np.array(angular_rate) / 1000.0)
-    magnetic_field = np.array(magnetic_field)
     sample_rates = np.array(sample_rates)
 
     stationary = timestamps >= timestamps[0] + TRIM_SECONDS
     stationary &= timestamps <= timestamps[-1] - TRIM_SECONDS
-    return (
-        acceleration[stationary],
-        angular_rate[stationary],
-        magnetic_field[stationary],
-        sample_rates[stationary],
-    )
+
+    return {
+        "acceleration": acceleration[stationary],
+        "angular_rate": angular_rate[stationary],
+        "sample_rate_hz": sample_rates[stationary],
+    }
 
 
-def accelerometer_calibration(measured_means, target_means):
-    design_matrix = np.column_stack(
-        (measured_means, np.ones(len(measured_means)))
-    )
-    affine_parameters = np.linalg.lstsq(
-        design_matrix,
-        target_means,
-        rcond=None,
-    )[0]
-
-    accel_matrix = affine_parameters[:3].T
-    affine_offset = affine_parameters[3]
-    accel_bias = -np.linalg.solve(accel_matrix, affine_offset)
-    return accel_matrix, accel_bias
-
-
-def magnetometer_calibration(magnetic_field):
-    minimum = np.min(magnetic_field, axis=0)
-    maximum = np.max(magnetic_field, axis=0)
-    mag_bias = 0.5 * (maximum + minimum)
-    half_ranges = 0.5 * (maximum - minimum)
-    mean_half_range = np.mean(half_ranges)
-    mag_matrix = np.diag(mean_half_range / half_ranges)
-    return mag_matrix, mag_bias
-
-
-def main():
+def load_recordings():
     recordings = {}
     for orientation, filename in RECORDINGS.items():
         recordings[orientation] = read_recording(
             CALIBRATION_DIR / filename
         )
+    return recordings
 
-    orientations = list(RECORDINGS)
+def calculate_accelerometer_calibration(recordings):
+    orientations = list(recordings)
     measured_means = np.array(
-        [np.mean(recordings[name][0], axis=0) for name in orientations]
+        [
+            np.mean(recordings[name]["acceleration"], axis=0)
+            for name in orientations
+        ]
     )
-    target_means = np.array(
-        [TARGET_ACCELERATION[name] for name in orientations]
+    expected_means = np.array(
+        [EXPECTED_ACCELERATION[name] for name in orientations]
     )
 
-    accel_matrix, accel_bias = accelerometer_calibration(
-        measured_means,
-        target_means,
+    # Find expected = matrix @ measured + offset.
+    design_matrix = np.column_stack(
+        [measured_means, np.ones(len(measured_means))]
     )
-    corrected_means = (
-        accel_matrix @ (measured_means - accel_bias).T
-    ).T
+    parameters = np.linalg.lstsq(
+        design_matrix,
+        expected_means,
+        rcond=None,
+    )[0]
+    matrix = parameters[:3].T
+    offset = parameters[3]
+    bias = -np.linalg.solve(matrix, offset)
 
-    acceleration_residuals = []
-    angular_rate_residuals = []
-    magnetic_field_residuals = []
-    all_angular_rates = []
-    all_magnetic_fields = []
-    all_sample_rates = []
-    for (
-        acceleration,
-        angular_rate,
-        magnetic_field,
-        sample_rate,
-    ) in recordings.values():
-        corrected_acceleration = (
-            accel_matrix @ (acceleration - accel_bias).T
-        ).T
-        acceleration_residuals.append(
-            corrected_acceleration - np.mean(corrected_acceleration, axis=0)
+    noise_residuals = []
+    for recording in recordings.values():
+        corrected = apply_accelerometer_calibration(
+            recording["acceleration"],
+            matrix,
+            bias,
         )
-        angular_rate_residuals.append(
+        noise_residuals.append(corrected - np.mean(corrected, axis=0))
+
+    noise = np.std(np.vstack(noise_residuals), axis=0, ddof=1)
+    corrected_means = apply_accelerometer_calibration(
+        measured_means,
+        matrix,
+        bias,
+    )
+    errors = corrected_means - expected_means
+    calibration_rms = float(np.sqrt(np.mean(errors**2)))
+    return matrix, bias, noise, calibration_rms
+
+
+def apply_accelerometer_calibration(acceleration, matrix, bias):
+    return (matrix @ (acceleration - bias).T).T
+
+
+def calculate_gyroscope_calibration(recordings):
+    recording_means = np.array(
+        [
+            np.mean(recording["angular_rate"], axis=0)
+            for recording in recordings.values()
+        ]
+    )
+    bias = np.mean(recording_means, axis=0)
+
+    noise_residuals = []
+    for recording in recordings.values():
+        angular_rate = recording["angular_rate"]
+        noise_residuals.append(
             angular_rate - np.mean(angular_rate, axis=0)
         )
-        magnetic_field_residuals.append(
-            magnetic_field - np.mean(magnetic_field, axis=0)
+    noise = np.std(np.vstack(noise_residuals), axis=0, ddof=1)
+    return bias, noise
+
+
+def save_calibration(calibration):
+    with OUTPUT_PATH.open("w", encoding="utf-8") as file:
+        json.dump(calibration, file, indent=2)
+        file.write("\n")
+
+
+def print_axis_values(
+    name,
+    values,
+    unit,
+    source_values,
+    source_unit,
+):
+    print(name)
+    print(
+        f"  X: {values[0]:.9f} {unit}"
+        f" | {source_values[0]:.6f} {source_unit}"
+    )
+    print(
+        f"  Y: {values[1]:.9f} {unit}"
+        f" | {source_values[1]:.6f} {source_unit}"
+    )
+    print(
+        f"  Z: {values[2]:.9f} {unit}"
+        f" | {source_values[2]:.6f} {source_unit}"
+    )
+
+
+def main():
+    recordings = load_recordings()
+
+    (
+        accelerometer_matrix,
+        accelerometer_bias,
+        accelerometer_noise,
+        accelerometer_rms,
+    ) = calculate_accelerometer_calibration(recordings)
+    gyroscope_bias, gyroscope_noise = (
+        calculate_gyroscope_calibration(recordings)
+    )
+    sample_rate_hz = np.mean(
+        np.concatenate(
+            [
+                recording["sample_rate_hz"]
+                for recording in recordings.values()
+            ]
         )
-        all_angular_rates.append(angular_rate)
-        all_magnetic_fields.append(magnetic_field)
-        all_sample_rates.append(sample_rate)
+    )
 
-    acceleration_residuals = np.vstack(acceleration_residuals)
-    angular_rate_residuals = np.vstack(angular_rate_residuals)
-    magnetic_field_residuals = np.vstack(magnetic_field_residuals)
-    all_angular_rates = np.vstack(all_angular_rates)
-    all_magnetic_fields = np.vstack(all_magnetic_fields)
-    all_sample_rates = np.concatenate(all_sample_rates)
-
-    gyro_bias = np.mean(all_angular_rates, axis=0)
-    mag_matrix, mag_bias = magnetometer_calibration(all_magnetic_fields)
-    corrected_magnetic_field = (
-        mag_matrix @ (all_magnetic_fields - mag_bias).T
-    ).T
-    accel_noise_std = np.std(acceleration_residuals, axis=0, ddof=1)
-    gyro_noise_std = np.std(angular_rate_residuals, axis=0, ddof=1)
-    mag_noise_std = np.std(magnetic_field_residuals, axis=0, ddof=1)
-    calibration_error = corrected_means - target_means
-
-    result = {
+    calibration = {
+        "calibration_version": 1,
         "imu_sensor": "imu2",
-        "accel_columns": ["imu2_ax_mg", "imu2_ay_mg", "imu2_az_mg"],
-        "gyro_columns": [
-            "imu2_gx_mdps",
-            "imu2_gy_mdps",
-            "imu2_gz_mdps",
-        ],
-        "mag_columns": ["mag_x_uT", "mag_y_uT", "mag_z_uT"],
         "gravity_m_s2": GRAVITY,
-        "accel_matrix": accel_matrix.tolist(),
-        "accel_bias_m_s2": accel_bias.tolist(),
-        "gyro_bias_rad_s": gyro_bias.tolist(),
-        "gyro_bias_deg_s": np.degrees(gyro_bias).tolist(),
-        "accel_noise_std_m_s2": accel_noise_std.tolist(),
-        "gyro_noise_std_rad_s": gyro_noise_std.tolist(),
-        "gyro_noise_std_deg_s": np.degrees(gyro_noise_std).tolist(),
-        "mag_matrix": mag_matrix.tolist(),
-        "mag_bias_uT": mag_bias.tolist(),
-        "mag_noise_std_uT": mag_noise_std.tolist(),
-        "mag_field_strength_uT": float(
-            np.mean(np.linalg.norm(corrected_magnetic_field, axis=1))
-        ),
-        "mag_calibration": "approximate_six_position_min_max",
-        "sample_rate_hz": float(np.mean(all_sample_rates)),
-        "calibration_error_rms_m_s2": float(
-            np.sqrt(np.mean(calibration_error**2))
-        ),
+        "sample_rate_hz": float(sample_rate_hz),
+        "accel_model": "matrix_times_raw_minus_bias",
+        "accel_matrix": accelerometer_matrix.tolist(),
+        "accel_bias_m_s2": accelerometer_bias.tolist(),
+        "gyro_bias_rad_s": gyroscope_bias.tolist(),
+        "accel_noise_std_m_s2": accelerometer_noise.tolist(),
+        "gyro_noise_std_rad_s": gyroscope_noise.tolist(),
+        "accel_calibration_rms_m_s2": accelerometer_rms,
+        "mag_calibration": "not_calibrated",
         "recordings": RECORDINGS,
-        "orientation_means": {
-            orientation: {
-                "raw_m_s2": measured_means[index].tolist(),
-                "corrected_m_s2": corrected_means[index].tolist(),
-                "target_m_s2": target_means[index].tolist(),
-            }
-            for index, orientation in enumerate(orientations)
-        },
     }
 
-    with OUTPUT_PATH.open("w", encoding="utf-8") as file:
-        json.dump(result, file, indent=2)
-
+    save_calibration(calibration)
     print(f"Saved: {OUTPUT_PATH}")
-    print(f"Accelerometer bias [m/s^2]: {accel_bias}")
-    print(f"Gyroscope bias [deg/s]: {np.degrees(gyro_bias)}")
-    print(f"Magnetometer bias [uT]: {mag_bias}")
-    print(f"Accelerometer noise [m/s^2]: {accel_noise_std}")
-    print(f"Gyroscope noise [deg/s]: {np.degrees(gyro_noise_std)}")
-    print(f"Magnetometer noise [uT]: {mag_noise_std}")
+    print("Accelerometer correction matrix")
+    print(accelerometer_matrix)
+    print_axis_values(
+        "Accelerometer bias",
+        accelerometer_bias,
+        "m/s^2",
+        accelerometer_bias * 1000.0 / GRAVITY,
+        "mg",
+    )
+    print_axis_values(
+        "Accelerometer sample noise",
+        accelerometer_noise,
+        "m/s^2",
+        accelerometer_noise * 1000.0 / GRAVITY,
+        "mg",
+    )
+    print_axis_values(
+        "Gyroscope bias",
+        np.degrees(gyroscope_bias),
+        "deg/s",
+        np.degrees(gyroscope_bias) * 1000.0,
+        "mdps",
+    )
+    print_axis_values(
+        "Gyroscope sample noise",
+        np.degrees(gyroscope_noise),
+        "deg/s",
+        np.degrees(gyroscope_noise) * 1000.0,
+        "mdps",
+    )
     print(
-        "Calibration RMS error [m/s^2]: "
-        f"{result['calibration_error_rms_m_s2']:.6f}"
+        "Accelerometer calibration RMS: "
+        f"{accelerometer_rms:.9f} m/s^2"
+    )
+    print(
+        "Magnetometer: not calibrated; a separate full-rotation "
+        "recording is required."
     )
 
 
