@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import torch
-from lightglue import LightGlue, SuperPoint
+from lightglue import LightGlue, SuperPoint, DISK
 from lightglue.utils import rbd
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
@@ -18,7 +18,7 @@ MAX_REPROJECTION_ERROR_PX = 3.0  # Maximum point reprojection error in pixels.
 GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80  # Projection margin outside the image.
 
 # Keyframe creation
-KEYFRAME_TRANSLATION_MM = 8.0  # Translation from the last keyframe required for a new one.
+KEYFRAME_TRANSLATION_MM = 4.0  # Translation from the last keyframe required for a new one.
 KEYFRAME_ROTATION_DEG = 5.0  # Rotation from the last keyframe required for a new one.
 KEYFRAME_INLIER_THRESHOLD_MODE = "mean"  # "mean_max": midpoint of history mean and maximum; "mean": history mean.
 KEYFRAME_INLIER_THRESHOLD_START_RATIO = 0.60  # Initial fraction of the dynamic PnP inlier threshold.
@@ -32,6 +32,10 @@ MAX_GLOBAL_LANDMARKS = 1024  # Hard maximum number of global map points.
 GLOBAL_MAP_PRUNE_TARGET = 930  # Map size retained before adding new points.
 LANDMARK_PROTECTION_VISIBLE_COUNT = 10  # Visibility opportunities protecting a new landmark.
 LANDMARK_INLIER_QUALITY_WEIGHT = 0.70  # PnP quality weight versus matching frequency.
+LANDMARK_PRUNING_DENSITY_RADIUS_MM = 5.0  # Radius used to count nearby map points during pruning.
+LANDMARK_PRUNING_DENSITY_WEIGHT = 0.35  # Importance of spatial density versus landmark quality.
+NEW_LANDMARK_DIRECTION_WEIGHT = 0.35  # Priority weight for features located in the movement direction.
+NEW_LANDMARK_DIRECTION_MIN_MOTION_MM = 1.0  # Minimum planar motion used to determine a screen direction.
 
 # ArUco
 MASK_ARUCO_FEATURES = False  # Exclude features located inside the ArUco marker.
@@ -64,8 +68,8 @@ class SkinMapTracker:
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
         self.keyframe_inlier_threshold_multiplier = keyframe_inlier_threshold_multiplier
 
-        self.extractor = SuperPoint(max_num_keypoints=MAX_FEATURES).eval().to(DEVICE)
-        self.matcher = LightGlue(features="superpoint").eval().to(DEVICE)
+        self.extractor = DISK(max_num_keypoints=MAX_FEATURES).eval().to(DEVICE)
+        self.matcher = LightGlue(features="disk").eval().to(DEVICE)
 
         dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
         self.aruco_detector = cv2.aruco.ArucoDetector(dictionary)
@@ -403,9 +407,49 @@ class SkinMapTracker:
             >= LANDMARK_PROTECTION_VISIBLE_COUNT
             and landmark_id not in protected_landmark_ids
         ]
+
+        landmark_ids = np.array(list(self.landmarks), dtype=np.int64)
+        landmark_points = np.array(
+            [
+                self.landmarks[landmark_id]["position"][:2]
+                for landmark_id in landmark_ids
+            ]
+        )
+        landmark_tree = cKDTree(landmark_points)
+        neighbor_counts = np.array(
+            [
+                len(neighbors) - 1
+                for neighbors in landmark_tree.query_ball_point(
+                    landmark_points,
+                    LANDMARK_PRUNING_DENSITY_RADIUS_MM,
+                )
+            ],
+            dtype=float,
+        )
+        maximum_neighbor_count = np.max(neighbor_counts)
+        if maximum_neighbor_count > 0.0:
+            neighbor_counts /= maximum_neighbor_count
+        density_by_landmark_id = dict(
+            zip(map(int, landmark_ids), neighbor_counts)
+        )
+
+        def retention_score(landmark_id):
+            quality = self.landmark_quality(
+                self.landmarks[landmark_id]
+            )
+            sparse_area_score = (
+                1.0 - density_by_landmark_id[landmark_id]
+            )
+            return (
+                (1.0 - LANDMARK_PRUNING_DENSITY_WEIGHT)
+                * quality
+                + LANDMARK_PRUNING_DENSITY_WEIGHT
+                * sparse_area_score
+            )
+
         candidates.sort(
             key=lambda landmark_id: (
-                self.landmark_quality(self.landmarks[landmark_id]),
+                retention_score(landmark_id),
                 self.landmarks[landmark_id]["inlier_count"],
                 len(self.landmarks[landmark_id]["observations"]),
             )
@@ -428,6 +472,91 @@ class SkinMapTracker:
         landmark["descriptor_sum"] += descriptor / np.linalg.norm(descriptor)
         descriptor_sum = landmark["descriptor_sum"]
         landmark["descriptor"] = descriptor_sum / np.linalg.norm(descriptor_sum)
+
+    def new_landmark_priority(
+        self,
+        feature_data,
+        feature_indices,
+        R_map_to_camera,
+        t_map_to_camera,
+    ):
+        keypoint_scores = (
+            feature_data["keypoint_scores"]
+            .detach()
+            .cpu()
+            .numpy()[feature_indices]
+        )
+        score_range = np.ptp(keypoint_scores)
+        if score_range > 0.0:
+            quality = (
+                keypoint_scores - np.min(keypoint_scores)
+            ) / score_range
+        else:
+            quality = np.ones(len(feature_indices))
+
+        if not self.keyframes:
+            return quality
+
+        camera_rotation = R_map_to_camera.T
+        camera_position = (
+            -camera_rotation @ t_map_to_camera.reshape(3)
+        )
+        movement_map = (
+            camera_position
+            - self.keyframes[-1]["camera_position"]
+        )
+        planar_motion = movement_map.copy()
+        planar_motion[2] = 0.0
+        if (
+            np.linalg.norm(planar_motion)
+            < NEW_LANDMARK_DIRECTION_MIN_MOTION_MM
+        ):
+            return quality
+
+        movement_camera = R_map_to_camera @ planar_motion
+        screen_direction = movement_camera[:2]
+        screen_direction_norm = np.linalg.norm(screen_direction)
+        if screen_direction_norm == 0.0:
+            return quality
+        screen_direction /= screen_direction_norm
+
+        width, height = (
+            feature_data["image_size"]
+            .detach()
+            .cpu()
+            .numpy()
+        )
+        roi_top = height * (
+            1.0 - self.feature_roi_bottom_fraction
+        )
+        roi_center = np.array(
+            [width / 2.0, (roi_top + height) / 2.0]
+        )
+        roi_half_size = np.array(
+            [width / 2.0, (height - roi_top) / 2.0]
+        )
+        keypoints = (
+            feature_data["keypoints"]
+            .detach()
+            .cpu()
+            .numpy()[feature_indices]
+        )
+        normalized_positions = (
+            keypoints - roi_center
+        ) / roi_half_size
+        direction_priority = np.clip(
+            0.5
+            + 0.5
+            * (normalized_positions @ screen_direction)
+            / np.sqrt(2.0),
+            0.0,
+            1.0,
+        )
+
+        return (
+            (1.0 - NEW_LANDMARK_DIRECTION_WEIGHT) * quality
+            + NEW_LANDMARK_DIRECTION_WEIGHT * direction_priority
+        )
 
     def associate_nearby_landmarks(
         self,
@@ -591,14 +720,14 @@ class SkinMapTracker:
             MAX_GLOBAL_LANDMARKS - len(self.landmarks)
         )
         if len(new_points) > available_landmark_slots:
-            keypoint_scores = (
-                feature_data["keypoint_scores"]
-                .detach()
-                .cpu()
-                .numpy()
+            priorities = self.new_landmark_priority(
+                feature_data,
+                new_feature_indices,
+                R_map_to_camera,
+                t_map_to_camera,
             )
             best_new_indices = np.argsort(
-                keypoint_scores[new_feature_indices]
+                priorities
             )[::-1][:available_landmark_slots]
             new_feature_indices = new_feature_indices[best_new_indices]
             new_points = new_points[best_new_indices]

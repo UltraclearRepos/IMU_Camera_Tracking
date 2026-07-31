@@ -28,9 +28,7 @@ from tracking_visualization import (
     save_top_view_video,
 )
 
-# 1. Moze premiowac punkty w kierunku ktorych idziemy w konetkscie dodania do mapy globalnej. Np jesli idziemy po osi X w gore czyli jakby obraz przesuwa sie w kamerze w dol to dodawac punkty bardziej na gorze obrazu
-# 2. Moze nie usuwac najgorszych punktow, tylko dbac zeby gestosc tez sie zgadzala, zeby nie wywalic np wszysytkich punktow znalezionych na poczatku w pierwszej fazie ruchu, bo jak potem wrocimy do tego miejsca to punktow
-#    nie bedzie i trzeba bedzie dodawac jako nowe, a tak mielibysmy juz dobrze sprawdzone punkty tam
+# 1. sprawdzic warunek dystanu dla close <8mm
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -40,7 +38,7 @@ RECORDING_NAME = "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
-KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.7
+KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.5
 FEATURE_ROI_BOTTOM_FRACTION = 0.70
 
 
