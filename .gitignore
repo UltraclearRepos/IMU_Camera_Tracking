@@ -2,4 +2,10 @@ Camera/Data
 IMU/Data
 IMU/sensor-fusion-tracking/Data
 .venv
-Camera/results/**.mp4
+Camera/results
+Camera/results_batch
+Data2
+Data3
+Camera/__pycache__
+IMU/__pycache__
+IMU/results
