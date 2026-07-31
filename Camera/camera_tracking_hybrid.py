@@ -14,7 +14,6 @@ from hybrid_skin_map_tracker import HybridSkinMapTracker
 from recording_axes import CAMERA_MAP_TO_DOBOT_BY_RECORDING
 from skin_map_tracker import (
     DEVICE,
-    FEATURE_ROI_BOTTOM_FRACTION,
     INITIALIZATION_FRAMES,
     INITIALIZATION_MIN_LANDMARKS,
     KEYFRAME_ROTATION_DEG,
@@ -33,13 +32,14 @@ from tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "initialpos_Speed-3_2026-07-28_16.38.48"
+RECORDING_NAME = "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 CAMERA_MAP_TO_DOBOT = CAMERA_MAP_TO_DOBOT_BY_RECORDING[RECORDING_NAME]
 MAX_FRAMES = 100000
+FEATURE_ROI_BOTTOM_FRACTION = 0.70
 MAX_OPTICAL_FLOW_FRAMES = 9  # Maximum consecutive optical-flow frames.
-MIN_OPTICAL_FLOW_TRACK_RATIO = 0.50  # Run LightGlue at this fraction of the initial tracks.
+MIN_OPTICAL_FLOW_TRACK_RATIO = 0.65  # Run LightGlue at this fraction of the initial tracks.
 
 
 SAVE_DIAGNOSTIC_VIDEO = True
@@ -120,6 +120,7 @@ def main():
         distortion,
         MAX_OPTICAL_FLOW_FRAMES,
         MIN_OPTICAL_FLOW_TRACK_RATIO,
+        FEATURE_ROI_BOTTOM_FRACTION,
     )
 
     capture = cv2.VideoCapture(str(VIDEO_PATH))

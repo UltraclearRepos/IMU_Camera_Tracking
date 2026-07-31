@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 
 from skin_map_tracker import (
-    FEATURE_ROI_BOTTOM_FRACTION,
     MAX_REPROJECTION_ERROR_PX,
     MIN_INLIERS,
     MIN_MATCHES,
@@ -22,8 +21,13 @@ class HybridSkinMapTracker(SkinMapTracker):
         distortion,
         max_optical_flow_frames,
         min_optical_flow_track_ratio,
+        feature_roi_bottom_fraction,
     ):
-        super().__init__(camera_matrix, distortion)
+        super().__init__(
+            camera_matrix,
+            distortion,
+            feature_roi_bottom_fraction,
+        )
         self.max_optical_flow_frames = max_optical_flow_frames
         self.min_optical_flow_track_ratio = min_optical_flow_track_ratio
         self.frame_index = -1
@@ -103,7 +107,9 @@ class HybridSkinMapTracker(SkinMapTracker):
         )
 
         height, width = current_gray.shape
-        roi_top = height * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
+        roi_top = height * (
+            1.0 - self.feature_roi_bottom_fraction
+        )
         valid = forward_status.ravel() == 1
         valid &= backward_status.ravel() == 1
         valid &= forward_backward_error <= LK_FORWARD_BACKWARD_ERROR_PX

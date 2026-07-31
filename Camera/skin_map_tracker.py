@@ -10,7 +10,6 @@ from scipy.spatial.transform import Rotation
 # Model and feature extraction
 DEVICE = "cuda"  # Device used by SuperPoint and LightGlue.
 MAX_FEATURES = 512  # Maximum number of SuperPoint features in the current frame.
-FEATURE_ROI_BOTTOM_FRACTION = 0.70  # Bottom fraction of the image used for features.
 
 # Global map matching and pose estimation
 MIN_MATCHES = 60  # Minimum LightGlue matches required to run PnP.
@@ -24,7 +23,7 @@ KEYFRAME_ROTATION_DEG = 5.0  # Rotation from the last keyframe required for a ne
 KEYFRAME_INLIER_THRESHOLD_MODE = "mean"  # "mean_max": midpoint of history mean and maximum; "mean": history mean.
 KEYFRAME_INLIER_THRESHOLD_START_RATIO = 0.60  # Initial fraction of the dynamic PnP inlier threshold.
 KEYFRAME_INLIER_THRESHOLD_RAMP_FRAMES = 300  # Successful PnP frames needed to reach the full threshold.
-KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.8  # Constant multiplier applied to the dynamic threshold.
+KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.7  # Constant multiplier applied to the dynamic threshold.
 
 # Landmark creation and association
 LANDMARK_MIN_DISTANCE_MM = 1.0  # Minimum spacing between global map points.
@@ -53,9 +52,17 @@ def frame_to_tensor(frame):
 
 
 class SkinMapTracker:
-    def __init__(self, camera_matrix, distortion):
+    def __init__(
+        self,
+        camera_matrix,
+        distortion,
+        feature_roi_bottom_fraction,
+        keyframe_inlier_threshold_multiplier=KEYFRAME_INLIER_THRESHOLD_MULTIPLIER,
+    ):
         self.camera_matrix = camera_matrix
         self.distortion = distortion
+        self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
+        self.keyframe_inlier_threshold_multiplier = keyframe_inlier_threshold_multiplier
 
         self.extractor = SuperPoint(max_num_keypoints=MAX_FEATURES).eval().to(DEVICE)
         self.matcher = LightGlue(features="superpoint").eval().to(DEVICE)
@@ -76,7 +83,7 @@ class SkinMapTracker:
     def extract_features(self, frame):
         height, width = frame.shape[:2]
         roi_top = round(
-            height * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
+            height * (1.0 - self.feature_roi_bottom_fraction)
         )
         roi = frame[roi_top:]
 
@@ -353,7 +360,7 @@ class SkinMapTracker:
         ).T + t_map_to_camera.reshape(3)
 
         width, height = image_size[0].detach().cpu().numpy()
-        roi_top = height * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
+        roi_top = height * (1.0 - self.feature_roi_bottom_fraction)
         visible = camera_points[:, 2] > 0.0
         visible &= projected_points[:, 0] >= 0.0
         visible &= projected_points[:, 0] < width
@@ -680,7 +687,7 @@ class SkinMapTracker:
         )
         self.keyframe_inlier_threshold *= (
             threshold_ratio
-            * KEYFRAME_INLIER_THRESHOLD_MULTIPLIER
+            * self.keyframe_inlier_threshold_multiplier
         )
 
         self.last_diagnostics["keyframe_inlier_threshold"] = (
@@ -716,7 +723,7 @@ class SkinMapTracker:
             current_features["image_size"][0].detach().cpu().numpy()
         )
         margin = GLOBAL_MAP_VISIBILITY_MARGIN_PX
-        roi_top = height * (1.0 - FEATURE_ROI_BOTTOM_FRACTION)
+        roi_top = height * (1.0 - self.feature_roi_bottom_fraction)
         visible = camera_points[:, 2] > 0.0
         visible &= projected_points[:, 0] >= -margin
         visible &= projected_points[:, 0] < width + margin

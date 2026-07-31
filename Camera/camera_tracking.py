@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 import time
 from pathlib import Path
@@ -13,7 +14,6 @@ from scipy.spatial.transform import Rotation
 from recording_axes import CAMERA_MAP_TO_DOBOT_BY_RECORDING
 from skin_map_tracker import (
     DEVICE,
-    FEATURE_ROI_BOTTOM_FRACTION,
     INITIALIZATION_FRAMES,
     INITIALIZATION_MIN_LANDMARKS,
     KEYFRAME_ROTATION_DEG,
@@ -39,8 +39,9 @@ from tracking_visualization import (
 RECORDING_NAME = "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
-CAMERA_MAP_TO_DOBOT = CAMERA_MAP_TO_DOBOT_BY_RECORDING[RECORDING_NAME]
 MAX_FRAMES = 100000
+KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.7
+FEATURE_ROI_BOTTOM_FRACTION = 0.70
 
 
 SAVE_DIAGNOSTIC_VIDEO = True
@@ -54,25 +55,6 @@ SHOW_PREVIEW = False
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_DIR / "Data3"
-OUTPUT_DIR = SCRIPT_DIR / "results" / RECORDING_NAME
-VIDEO_PATHS = list(
-    (DATA_DIR / "videos").glob(
-        f"{RECORDING_NAME}_{CAMERA_NAME}.*"
-    )
-)
-if len(VIDEO_PATHS) != 1:
-    raise RuntimeError(
-        f"Expected one video for {RECORDING_NAME} {CAMERA_NAME}, "
-        f"found {len(VIDEO_PATHS)}"
-    )
-VIDEO_PATH = VIDEO_PATHS[0]
-GROUND_TRUTH_PATH = DATA_DIR / "dobot" / f"{RECORDING_NAME}.csv"
-VIDEO_TIMESTAMP_PATH = (
-    DATA_DIR
-    / "video_timestamps"
-    / f"{RECORDING_NAME}.csv"
-)
-
 CAMERA_MATRIX_PATH = (
     SCRIPT_DIR
     / "calibrations"
@@ -105,22 +87,50 @@ def load_video_start_timestamp(path):
     return float(row["start_timestamp"])
 
 
-def main():
+def run_tracking(
+    recording_name,
+    output_dir,
+    keyframe_inlier_threshold_multiplier,
+    feature_roi_bottom_fraction,
+):
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    camera_map_to_dobot = CAMERA_MAP_TO_DOBOT_BY_RECORDING[
+        recording_name
+    ]
+    video_path = next(
+        (DATA_DIR / "videos").glob(
+            f"{recording_name}_{CAMERA_NAME}.*"
+        )
+    )
+    ground_truth_path = (
+        DATA_DIR / "dobot" / f"{recording_name}.csv"
+    )
+    video_timestamp_path = (
+        DATA_DIR
+        / "video_timestamps"
+        / f"{recording_name}.csv"
+    )
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     video_start_timestamp = load_video_start_timestamp(
-        VIDEO_TIMESTAMP_PATH
+        video_timestamp_path
     )
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
     distortion = np.load(DISTORTION_PATH)
-    tracker = SkinMapTracker(camera_matrix, distortion)
+    tracker = SkinMapTracker(
+        camera_matrix,
+        distortion,
+        feature_roi_bottom_fraction=feature_roi_bottom_fraction,
+        keyframe_inlier_threshold_multiplier=keyframe_inlier_threshold_multiplier,
+    )
 
-    capture = cv2.VideoCapture(str(VIDEO_PATH))
+    capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
-        raise FileNotFoundError(VIDEO_PATH)
+        raise FileNotFoundError(video_path)
 
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -128,7 +138,9 @@ def main():
 
     video_writer = None
     if SAVE_DIAGNOSTIC_VIDEO:
-        video_path_output = OUTPUT_DIR / f"{RECORDING_NAME}_tracking.mp4"
+        video_path_output = (
+            output_dir / f"{recording_name}_tracking.mp4"
+        )
         video_writer = cv2.VideoWriter(
             str(video_path_output),
             cv2.VideoWriter_fourcc(*"mp4v"),
@@ -171,7 +183,7 @@ def main():
                 initial_position = absolute_position.copy()
                 initial_rotation = camera_rotation.copy()
 
-            position = CAMERA_MAP_TO_DOBOT @ (
+            position = camera_map_to_dobot @ (
                 absolute_position - initial_position
             )
             relative_rotation = initial_rotation.T @ camera_rotation
@@ -240,7 +252,7 @@ def main():
                 tracker,
                 result,
                 positions,
-                FEATURE_ROI_BOTTOM_FRACTION,
+                feature_roi_bottom_fraction,
                 INITIALIZATION_FRAMES,
                 INITIALIZATION_MIN_LANDMARKS,
                 tracking_time_ms,
@@ -264,7 +276,7 @@ def main():
     if SAVE_TOP_VIEW_VIDEO:
         save_top_view_video(
             top_view_states,
-            OUTPUT_DIR / f"{RECORDING_NAME}_map_top_view.mp4",
+            output_dir / f"{recording_name}_map_top_view.mp4",
             TOP_VIEW_VIDEO_FPS,
             TOP_VIEW_VIDEO_SIZE_PX,
             TOP_VIEW_PADDING_MM,
@@ -275,36 +287,54 @@ def main():
     p95_tracking_time_ms = np.percentile(tracking_times_ms, 95)
     tracking_fps = 1000.0 / average_tracking_time_ms
 
-    csv_path = OUTPUT_DIR / f"{RECORDING_NAME}_camera.csv"
+    csv_path = output_dir / f"{recording_name}_camera.csv"
     position_plot_path = (
-        OUTPUT_DIR / f"{RECORDING_NAME}_camera_vs_gt_position.png"
+        output_dir / f"{recording_name}_camera_vs_gt_position.png"
     )
     orientation_plot_path = (
-        OUTPUT_DIR / f"{RECORDING_NAME}_camera_vs_gt_orientation.png"
+        output_dir / f"{recording_name}_camera_vs_gt_orientation.png"
     )
     diagnostics_plot_path = (
-        OUTPUT_DIR / f"{RECORDING_NAME}_mapping_diagnostics.png"
+        output_dir / f"{recording_name}_mapping_diagnostics.png"
     )
     save_results_csv(rows, csv_path)
     save_mapping_diagnostics(
         rows,
         diagnostics_plot_path,
-        RECORDING_NAME,
+        recording_name,
         KEYFRAME_TRANSLATION_MM,
         KEYFRAME_ROTATION_DEG,
     )
     position_rmse, orientation_rmse = create_comparison_plots(
         rows,
-        GROUND_TRUTH_PATH,
+        ground_truth_path,
         position_plot_path,
         orientation_plot_path,
-        RECORDING_NAME,
+        recording_name,
     )
+    tracked_frames = sum(row["tracked"] for row in rows)
+    tracked_percent = 100.0 * tracked_frames / len(rows)
+    metrics = {
+        "recording": recording_name,
+        "position_rmse_mm": float(position_rmse),
+        "orientation_rmse_deg": float(orientation_rmse),
+        "tracked_percent": tracked_percent,
+        "feature_roi_bottom_fraction": (
+            feature_roi_bottom_fraction
+        ),
+        "keyframe_inlier_threshold_multiplier": (
+            keyframe_inlier_threshold_multiplier
+        ),
+    }
+    metrics_path = output_dir / f"{recording_name}_metrics.json"
+    with metrics_path.open("w", encoding="utf-8") as file:
+        json.dump(metrics, file, indent=2)
 
     print(f"Saved: {csv_path}")
     print(f"Saved: {position_plot_path}")
     print(f"Saved: {orientation_plot_path}")
     print(f"Saved: {diagnostics_plot_path}")
+    print(f"Saved: {metrics_path}")
     if SAVE_DIAGNOSTIC_VIDEO:
         print(f"Saved: {video_path_output}")
     print(f"Position RMSE: {position_rmse:.2f} mm")
@@ -314,6 +344,16 @@ def main():
         f"median {median_tracking_time_ms:.1f} ms | "
         f"p95 {p95_tracking_time_ms:.1f} ms | "
         f"{tracking_fps:.1f} FPS"
+    )
+    return metrics
+
+
+def main():
+    run_tracking(
+        RECORDING_NAME,
+        SCRIPT_DIR / "results" / RECORDING_NAME,
+        KEYFRAME_INLIER_THRESHOLD_MULTIPLIER,
+        FEATURE_ROI_BOTTOM_FRACTION,
     )
 
 
