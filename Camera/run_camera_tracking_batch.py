@@ -9,32 +9,32 @@ from camera_tracking import run_tracking
 # Experiment configuration
 # -----------------------------------------------------------------------------
 
-EXPERIMENT_NAME = "keyframe_inlier_multiplier_0_5_all_screen_visible"
+EXPERIMENT_NAME = "visible_map_expansion"
 
 RECORDINGS = {
     "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25": {
-        "feature_roi_bottom_fraction": 1.0,
+        "feature_roi_bottom_fraction": 0.85,
     },
     "initialpos-white-nolight_Speed-3_2026-07-29_17.47.53": {
-        "feature_roi_bottom_fraction": 1.0,
+        "feature_roi_bottom_fraction": 0.85,
     },
     "initialpos-dark-nolight_Speed-3_2026-07-28_16.55.02": {
-        "feature_roi_bottom_fraction": 1.0,
+        "feature_roi_bottom_fraction": 0.85,
     },
     "initialpos-dark-withlight_Speed-3_2026-07-28_16.57.56": {
-        "feature_roi_bottom_fraction": 1.0,
+        "feature_roi_bottom_fraction": 0.85,
     },
     "far-white-nolight_Speed-3_2026-07-28_17.06.45": {
-        "feature_roi_bottom_fraction": 1.0,
+        "feature_roi_bottom_fraction": 0.7,
     },
     "far-white-withlight_Speed-3_2026-07-28_17.08.22": {
-        "feature_roi_bottom_fraction": 1.0,
+        "feature_roi_bottom_fraction": 0.7,
     },
     "far-dark-withlight_Speed-3_2026-07-28_17.02.52": {
-        "feature_roi_bottom_fraction": 1.0,
+        "feature_roi_bottom_fraction": 0.7,
     },
     "far-dark-nolight_Speed-3_2026-07-28_17.04.19": {
-        "feature_roi_bottom_fraction": 1.0,
+        "feature_roi_bottom_fraction": 0.7,
     },
     "close-white-withlight_Speed-3_2026-07-28_17.12.37": {
         "feature_roi_bottom_fraction": 1.0,
@@ -50,11 +50,11 @@ RECORDINGS = {
     },
 }
 
-KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.5
+MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.5
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-RESULTS_DIR = SCRIPT_DIR / "results_batch" / EXPERIMENT_NAME
+RESULTS_DIR = SCRIPT_DIR / "results_DISK_batch" / EXPERIMENT_NAME
 
 
 def run_recording(recording_name, parameters):
@@ -62,7 +62,7 @@ def run_recording(recording_name, parameters):
     return run_tracking(
         recording_name,
         recording_output_dir,
-        KEYFRAME_INLIER_THRESHOLD_MULTIPLIER,
+        MAP_EXPANSION_THRESHOLD_MULTIPLIER,
         parameters["feature_roi_bottom_fraction"],
     )
 
@@ -147,8 +147,8 @@ def save_rmse_summary_plot(metrics):
 
     figure.suptitle(
         f"{EXPERIMENT_NAME}\n"
-        "KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = "
-        f"{KEYFRAME_INLIER_THRESHOLD_MULTIPLIER}"
+        "MAP_EXPANSION_THRESHOLD_MULTIPLIER = "
+        f"{MAP_EXPANSION_THRESHOLD_MULTIPLIER}"
     )
 
     output_path = RESULTS_DIR / "rmse_summary.png"

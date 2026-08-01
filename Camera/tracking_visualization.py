@@ -814,14 +814,16 @@ def save_mapping_diagnostics(
     rows,
     output_path,
     recording_name,
-    keyframe_translation_mm,
-    keyframe_rotation_deg,
+    minimum_pnp_inliers,
 ):
     frames = np.array([row["frame"] for row in rows])
     matches = np.array([row["matches"] for row in rows])
     inliers = np.array([row["inliers"] for row in rows])
-    keyframe_inlier_threshold = np.array(
-        [row["keyframe_inlier_threshold"] for row in rows]
+    visible_landmarks = np.array(
+        [row["visible_landmarks"] for row in rows]
+    )
+    map_expansion_threshold = np.array(
+        [row["map_expansion_threshold"] for row in rows]
     )
     new_features = np.array([row["new_features"] for row in rows])
     nearby_associations = np.array(
@@ -844,13 +846,25 @@ def save_mapping_diagnostics(
 
     axes[1].plot(
         frames,
-        inliers,
+        visible_landmarks,
         color="tab:green",
+        label="Visible global landmarks",
+    )
+    axes[1].plot(
+        frames,
+        inliers,
+        color="tab:blue",
         label="PnP inliers",
+    )
+    axes[1].axhline(
+        minimum_pnp_inliers,
+        color="black",
+        linestyle=":",
+        label=f"Tracking minimum: {minimum_pnp_inliers} PnP inliers",
     )
     axes[1].scatter(
         frames[keyframe_added],
-        inliers[keyframe_added],
+        visible_landmarks[keyframe_added],
         color="red",
         s=18,
         label="Keyframe added",
@@ -858,12 +872,12 @@ def save_mapping_diagnostics(
     )
     axes[1].plot(
         frames,
-        keyframe_inlier_threshold,
+        map_expansion_threshold,
         color="orange",
         linestyle="--",
-        label="Dynamic keyframe inlier threshold",
+        label="Map expansion threshold",
     )
-    axes[1].set_ylabel("PnP inliers")
+    axes[1].set_ylabel("Points")
     axes[1].set_ylim(bottom=0.0)
     axes[1].grid(True)
     axes[1].legend()
@@ -917,8 +931,7 @@ def save_mapping_diagnostics(
 
     figure.suptitle(
         f"{recording_name}: map expansion diagnostics | "
-        f"keyframe after {keyframe_translation_mm:g} mm or "
-        f"{keyframe_rotation_deg:g} deg"
+        "expand when visible map coverage falls below the threshold"
     )
     figure.tight_layout()
     figure.savefig(output_path, dpi=160)

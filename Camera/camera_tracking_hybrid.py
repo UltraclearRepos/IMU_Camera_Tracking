@@ -16,8 +16,7 @@ from skin_map_tracker import (
     DEVICE,
     INITIALIZATION_FRAMES,
     INITIALIZATION_MIN_LANDMARKS,
-    KEYFRAME_ROTATION_DEG,
-    KEYFRAME_TRANSLATION_MM,
+    MIN_INLIERS,
 )
 from tracking_visualization import (
     create_top_view_state,
@@ -133,10 +132,7 @@ def main():
 
     video_writer = None
     if SAVE_DIAGNOSTIC_VIDEO:
-        video_path_output = (
-            OUTPUT_DIR
-            / f"{RECORDING_NAME}_hybrid_tracking.mp4"
-        )
+        video_path_output = OUTPUT_DIR / "hybrid_tracking.mp4"
         video_writer = cv2.VideoWriter(
             str(video_path_output),
             cv2.VideoWriter_fourcc(*"mp4v"),
@@ -216,8 +212,11 @@ def main():
                 "removed_landmarks": diagnostics[
                     "removed_landmarks"
                 ],
-                "keyframe_inlier_threshold": diagnostics[
-                    "keyframe_inlier_threshold"
+                "visible_landmarks": diagnostics[
+                    "visible_landmarks"
+                ],
+                "map_expansion_threshold": diagnostics[
+                    "map_expansion_threshold"
                 ],
                 "initialization_frames": diagnostics[
                     "initialization_frames"
@@ -282,10 +281,7 @@ def main():
     if SAVE_TOP_VIEW_VIDEO:
         save_top_view_video(
             top_view_states,
-            (
-                OUTPUT_DIR
-                / f"{RECORDING_NAME}_hybrid_map_top_view.mp4"
-            ),
+            OUTPUT_DIR / "hybrid_map_top_view.mp4",
             TOP_VIEW_VIDEO_FPS,
             TOP_VIEW_VIDEO_SIZE_PX,
             TOP_VIEW_PADDING_MM,
@@ -296,26 +292,16 @@ def main():
     p95_tracking_time_ms = np.percentile(tracking_times_ms, 95)
     tracking_fps = 1000.0 / average_tracking_time_ms
 
-    csv_path = OUTPUT_DIR / f"{RECORDING_NAME}_camera_hybrid.csv"
-    position_plot_path = (
-        OUTPUT_DIR
-        / f"{RECORDING_NAME}_camera_hybrid_vs_gt_position.png"
-    )
-    orientation_plot_path = (
-        OUTPUT_DIR
-        / f"{RECORDING_NAME}_camera_hybrid_vs_gt_orientation.png"
-    )
-    diagnostics_plot_path = (
-        OUTPUT_DIR
-        / f"{RECORDING_NAME}_hybrid_mapping_diagnostics.png"
-    )
+    csv_path = OUTPUT_DIR / "camera_hybrid.csv"
+    position_plot_path = OUTPUT_DIR / "hybrid_position.png"
+    orientation_plot_path = OUTPUT_DIR / "hybrid_orientation.png"
+    diagnostics_plot_path = OUTPUT_DIR / "hybrid_mapping_diagnostics.png"
     save_results_csv(rows, csv_path)
     save_mapping_diagnostics(
         rows,
         diagnostics_plot_path,
         f"{RECORDING_NAME}_hybrid",
-        KEYFRAME_TRANSLATION_MM,
-        KEYFRAME_ROTATION_DEG,
+        MIN_INLIERS,
     )
     position_rmse, orientation_rmse = create_comparison_plots(
         rows,

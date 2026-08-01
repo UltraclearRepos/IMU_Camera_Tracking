@@ -1,15 +1,14 @@
 import cv2
 import numpy as np
 import torch
-from lightglue import LightGlue, SuperPoint, DISK
+from lightglue import DISK, LightGlue
 from lightglue.utils import rbd
 from scipy.spatial import cKDTree
-from scipy.spatial.transform import Rotation
 
 
 # Model and feature extraction
-DEVICE = "cuda"  # Device used by SuperPoint and LightGlue.
-MAX_FEATURES = 512  # Maximum number of SuperPoint features in the current frame.
+DEVICE = "cuda"  # Device used by DISK and LightGlue.
+MAX_FEATURES = 512  # Maximum number of DISK features in the current frame.
 
 # Global map matching and pose estimation
 MIN_MATCHES = 60  # Minimum LightGlue matches required to run PnP.
@@ -17,13 +16,11 @@ MIN_INLIERS = 50  # Minimum PnP inliers required to accept the pose.
 MAX_REPROJECTION_ERROR_PX = 3.0  # Maximum point reprojection error in pixels.
 GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80  # Projection margin outside the image.
 
-# Keyframe creation
-KEYFRAME_TRANSLATION_MM = 4.0  # Translation from the last keyframe required for a new one.
-KEYFRAME_ROTATION_DEG = 5.0  # Rotation from the last keyframe required for a new one.
-KEYFRAME_INLIER_THRESHOLD_MODE = "mean"  # "mean_max": midpoint of history mean and maximum; "mean": history mean.
-KEYFRAME_INLIER_THRESHOLD_START_RATIO = 0.60  # Initial fraction of the dynamic PnP inlier threshold.
-KEYFRAME_INLIER_THRESHOLD_RAMP_FRAMES = 300  # Successful PnP frames needed to reach the full threshold.
-KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.7  # Constant multiplier applied to the dynamic threshold.
+# Map expansion
+MAP_EXPANSION_THRESHOLD_MODE = "mean"  # "mean_max": midpoint of history mean and maximum; "mean": history mean.
+MAP_EXPANSION_THRESHOLD_START_RATIO = 0.60  # Initial fraction of the dynamic visible-landmark threshold.
+MAP_EXPANSION_THRESHOLD_RAMP_FRAMES = 300  # Tracked frames needed to reach the full threshold.
+MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.5  # Constant multiplier applied to the dynamic threshold.
 
 # Landmark creation and association
 LANDMARK_MIN_DISTANCE_MM = 1.0  # Minimum spacing between global map points.
@@ -61,12 +58,14 @@ class SkinMapTracker:
         camera_matrix,
         distortion,
         feature_roi_bottom_fraction,
-        keyframe_inlier_threshold_multiplier=KEYFRAME_INLIER_THRESHOLD_MULTIPLIER,
+        map_expansion_threshold_multiplier=MAP_EXPANSION_THRESHOLD_MULTIPLIER,
     ):
         self.camera_matrix = camera_matrix
         self.distortion = distortion
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
-        self.keyframe_inlier_threshold_multiplier = keyframe_inlier_threshold_multiplier
+        self.map_expansion_threshold_multiplier = (
+            map_expansion_threshold_multiplier
+        )
 
         self.extractor = DISK(max_num_keypoints=MAX_FEATURES).eval().to(DEVICE)
         self.matcher = LightGlue(features="disk").eval().to(DEVICE)
@@ -81,8 +80,8 @@ class SkinMapTracker:
         self.initialization = None
         self.R_map_to_camera = None
         self.t_map_to_camera = None
-        self.inlier_history = []
-        self.keyframe_inlier_threshold = np.nan
+        self.visible_landmark_history = []
+        self.map_expansion_threshold = np.nan
 
     def extract_features(self, frame):
         height, width = frame.shape[:2]
@@ -766,62 +765,71 @@ class SkinMapTracker:
         }
 
     def should_add_keyframe(self, result):
-        last_keyframe = self.keyframes[-1]
-        camera_rotation = result["R"].T
-        camera_position = -camera_rotation @ result["t"]
-        translation = np.linalg.norm(
-            camera_position - last_keyframe["camera_position"]
-        )
-        relative_rotation = (
-            last_keyframe["camera_rotation"].T @ camera_rotation
-        )
-        rotation = np.degrees(
-            Rotation.from_matrix(relative_rotation).magnitude()
-        )
-        viewpoint_changed = (
-            translation >= KEYFRAME_TRANSLATION_MM
-            or rotation >= KEYFRAME_ROTATION_DEG
-        )
         return (
-            result["inliers"] >= self.keyframe_inlier_threshold
-            and viewpoint_changed
+            result["visible_landmarks"]
+            < self.map_expansion_threshold
         )
 
-    def update_keyframe_inlier_threshold(self, inliers):
-        self.inlier_history.append(inliers)
-        mean_inliers = np.mean(self.inlier_history)
+    def update_map_expansion_threshold(self, visible_landmarks):
+        self.visible_landmark_history.append(visible_landmarks)
+        mean_visible = np.mean(self.visible_landmark_history)
 
-        if KEYFRAME_INLIER_THRESHOLD_MODE == "mean":
-            self.keyframe_inlier_threshold = mean_inliers
-        elif KEYFRAME_INLIER_THRESHOLD_MODE == "mean_max":
-            max_inliers = np.max(self.inlier_history)
-            self.keyframe_inlier_threshold = (
-                mean_inliers + max_inliers
+        if MAP_EXPANSION_THRESHOLD_MODE == "mean":
+            self.map_expansion_threshold = mean_visible
+        elif MAP_EXPANSION_THRESHOLD_MODE == "mean_max":
+            max_visible = np.max(self.visible_landmark_history)
+            self.map_expansion_threshold = (
+                mean_visible + max_visible
             ) / 2.0
         else:
             raise ValueError(
-                "KEYFRAME_INLIER_THRESHOLD_MODE must be "
+                "MAP_EXPANSION_THRESHOLD_MODE must be "
                 "'mean' or 'mean_max'"
             )
 
         ramp_progress = min(
-            (len(self.inlier_history) - 1)
-            / (KEYFRAME_INLIER_THRESHOLD_RAMP_FRAMES - 1),
+            (len(self.visible_landmark_history) - 1)
+            / (MAP_EXPANSION_THRESHOLD_RAMP_FRAMES - 1),
             1.0,
         )
         threshold_ratio = (
-            KEYFRAME_INLIER_THRESHOLD_START_RATIO
-            + (1.0 - KEYFRAME_INLIER_THRESHOLD_START_RATIO)
+            MAP_EXPANSION_THRESHOLD_START_RATIO
+            + (1.0 - MAP_EXPANSION_THRESHOLD_START_RATIO)
             * ramp_progress
         )
-        self.keyframe_inlier_threshold *= (
+        self.map_expansion_threshold *= (
             threshold_ratio
-            * self.keyframe_inlier_threshold_multiplier
+            * self.map_expansion_threshold_multiplier
         )
 
-        self.last_diagnostics["keyframe_inlier_threshold"] = (
-            self.keyframe_inlier_threshold
+        self.last_diagnostics["map_expansion_threshold"] = (
+            self.map_expansion_threshold
         )
+
+    def count_visible_landmarks(self, image_size):
+        map_points = np.array(
+            [landmark["position"] for landmark in self.landmarks.values()]
+        )
+        projected_points, _ = cv2.projectPoints(
+            map_points,
+            cv2.Rodrigues(self.R_map_to_camera)[0],
+            self.t_map_to_camera,
+            self.camera_matrix,
+            self.distortion,
+        )
+        projected_points = projected_points.reshape(-1, 2)
+        camera_points = (
+            self.R_map_to_camera @ map_points.T
+        ).T + self.t_map_to_camera.reshape(3)
+
+        width, height = image_size[0].detach().cpu().numpy()
+        roi_top = height * (1.0 - self.feature_roi_bottom_fraction)
+        visible = camera_points[:, 2] > 0.0
+        visible &= projected_points[:, 0] >= 0.0
+        visible &= projected_points[:, 0] < width
+        visible &= projected_points[:, 1] >= roi_top
+        visible &= projected_points[:, 1] < height
+        return int(visible.sum())
 
     def visible_global_map(self, current_features):
         if not self.landmarks or self.R_map_to_camera is None:
@@ -992,7 +1000,8 @@ class SkinMapTracker:
             "nearby_associations": 0,
             "new_landmarks": 0,
             "removed_landmarks": 0,
-            "keyframe_inlier_threshold": self.keyframe_inlier_threshold,
+            "visible_landmarks": 0,
+            "map_expansion_threshold": self.map_expansion_threshold,
             "initialization_frames": 0,
             "initialization_candidates": 0,
             "initialization_confirmed": 0,
@@ -1053,7 +1062,13 @@ class SkinMapTracker:
 
         self.R_map_to_camera = result["R"]
         self.t_map_to_camera = result["t"]
-        self.update_keyframe_inlier_threshold(result["inliers"])
+        result["visible_landmarks"] = self.count_visible_landmarks(
+            features["image_size"]
+        )
+        self.last_diagnostics["visible_landmarks"] = result[
+            "visible_landmarks"
+        ]
+        self.update_map_expansion_threshold(result["visible_landmarks"])
         result["nearby_associations"] = 0
 
         if self.should_add_keyframe(result):

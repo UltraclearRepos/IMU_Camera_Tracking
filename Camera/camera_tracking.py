@@ -16,8 +16,7 @@ from skin_map_tracker import (
     DEVICE,
     INITIALIZATION_FRAMES,
     INITIALIZATION_MIN_LANDMARKS,
-    KEYFRAME_ROTATION_DEG,
-    KEYFRAME_TRANSLATION_MM,
+    MIN_INLIERS,
     SkinMapTracker,
 )
 from tracking_visualization import (
@@ -28,8 +27,6 @@ from tracking_visualization import (
     save_top_view_video,
 )
 
-# 1. sprawdzic warunek dystanu dla close <8mm
-
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -38,7 +35,7 @@ RECORDING_NAME = "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
-KEYFRAME_INLIER_THRESHOLD_MULTIPLIER = 0.5
+MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.9
 FEATURE_ROI_BOTTOM_FRACTION = 0.70
 
 
@@ -88,7 +85,7 @@ def load_video_start_timestamp(path):
 def run_tracking(
     recording_name,
     output_dir,
-    keyframe_inlier_threshold_multiplier,
+    map_expansion_threshold_multiplier,
     feature_roi_bottom_fraction,
 ):
     if not torch.cuda.is_available() and DEVICE == "cuda":
@@ -123,7 +120,9 @@ def run_tracking(
         camera_matrix,
         distortion,
         feature_roi_bottom_fraction=feature_roi_bottom_fraction,
-        keyframe_inlier_threshold_multiplier=keyframe_inlier_threshold_multiplier,
+        map_expansion_threshold_multiplier=(
+            map_expansion_threshold_multiplier
+        ),
     )
 
     capture = cv2.VideoCapture(str(video_path))
@@ -136,9 +135,7 @@ def run_tracking(
 
     video_writer = None
     if SAVE_DIAGNOSTIC_VIDEO:
-        video_path_output = (
-            output_dir / f"{recording_name}_tracking.mp4"
-        )
+        video_path_output = output_dir / "tracking.mp4"
         video_writer = cv2.VideoWriter(
             str(video_path_output),
             cv2.VideoWriter_fourcc(*"mp4v"),
@@ -212,8 +209,11 @@ def run_tracking(
                 "nearby_associations": diagnostics["nearby_associations"],
                 "new_landmarks": diagnostics["new_landmarks"],
                 "removed_landmarks": diagnostics["removed_landmarks"],
-                "keyframe_inlier_threshold": diagnostics[
-                    "keyframe_inlier_threshold"
+                "visible_landmarks": diagnostics[
+                    "visible_landmarks"
+                ],
+                "map_expansion_threshold": diagnostics[
+                    "map_expansion_threshold"
                 ],
                 "initialization_frames": diagnostics[
                     "initialization_frames"
@@ -274,7 +274,7 @@ def run_tracking(
     if SAVE_TOP_VIEW_VIDEO:
         save_top_view_video(
             top_view_states,
-            output_dir / f"{recording_name}_map_top_view.mp4",
+            output_dir / "map_top_view.mp4",
             TOP_VIEW_VIDEO_FPS,
             TOP_VIEW_VIDEO_SIZE_PX,
             TOP_VIEW_PADDING_MM,
@@ -285,23 +285,16 @@ def run_tracking(
     p95_tracking_time_ms = np.percentile(tracking_times_ms, 95)
     tracking_fps = 1000.0 / average_tracking_time_ms
 
-    csv_path = output_dir / f"{recording_name}_camera.csv"
-    position_plot_path = (
-        output_dir / f"{recording_name}_camera_vs_gt_position.png"
-    )
-    orientation_plot_path = (
-        output_dir / f"{recording_name}_camera_vs_gt_orientation.png"
-    )
-    diagnostics_plot_path = (
-        output_dir / f"{recording_name}_mapping_diagnostics.png"
-    )
+    csv_path = output_dir / "camera.csv"
+    position_plot_path = output_dir / "position.png"
+    orientation_plot_path = output_dir / "orientation.png"
+    diagnostics_plot_path = output_dir / "mapping_diagnostics.png"
     save_results_csv(rows, csv_path)
     save_mapping_diagnostics(
         rows,
         diagnostics_plot_path,
         recording_name,
-        KEYFRAME_TRANSLATION_MM,
-        KEYFRAME_ROTATION_DEG,
+        MIN_INLIERS,
     )
     position_rmse, orientation_rmse = create_comparison_plots(
         rows,
@@ -320,11 +313,11 @@ def run_tracking(
         "feature_roi_bottom_fraction": (
             feature_roi_bottom_fraction
         ),
-        "keyframe_inlier_threshold_multiplier": (
-            keyframe_inlier_threshold_multiplier
+        "map_expansion_threshold_multiplier": (
+            map_expansion_threshold_multiplier
         ),
     }
-    metrics_path = output_dir / f"{recording_name}_metrics.json"
+    metrics_path = output_dir / "metrics.json"
     with metrics_path.open("w", encoding="utf-8") as file:
         json.dump(metrics, file, indent=2)
 
@@ -350,7 +343,7 @@ def main():
     run_tracking(
         RECORDING_NAME,
         SCRIPT_DIR / "results" / RECORDING_NAME,
-        KEYFRAME_INLIER_THRESHOLD_MULTIPLIER,
+        MAP_EXPANSION_THRESHOLD_MULTIPLIER,
         FEATURE_ROI_BOTTOM_FRACTION,
     )
 
