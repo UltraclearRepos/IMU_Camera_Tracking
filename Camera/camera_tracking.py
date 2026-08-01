@@ -16,7 +16,6 @@ from skin_map_tracker import (
     DEVICE,
     INITIALIZATION_FRAMES,
     INITIALIZATION_MIN_LANDMARKS,
-    MIN_INLIERS,
     SkinMapTracker,
 )
 from tracking_visualization import (
@@ -35,7 +34,7 @@ RECORDING_NAME = "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
-MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.9
+MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.7
 FEATURE_ROI_BOTTOM_FRACTION = 0.70
 
 
@@ -204,6 +203,8 @@ def run_tracking(
                 "matches": diagnostics["matches"],
                 "flow_tracks": diagnostics["flow_tracks"],
                 "inliers": diagnostics["inliers"],
+                "required_matches": diagnostics["required_matches"],
+                "required_inliers": diagnostics["required_inliers"],
                 "pnp_inlier_ratio": diagnostics["pnp_inlier_ratio"],
                 "new_features": diagnostics["new_features"],
                 "nearby_associations": diagnostics["nearby_associations"],
@@ -294,7 +295,6 @@ def run_tracking(
         rows,
         diagnostics_plot_path,
         recording_name,
-        MIN_INLIERS,
     )
     position_rmse, orientation_rmse = create_comparison_plots(
         rows,

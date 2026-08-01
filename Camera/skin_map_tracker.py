@@ -11,20 +11,23 @@ DEVICE = "cuda"  # Device used by DISK and LightGlue.
 MAX_FEATURES = 512  # Maximum number of DISK features in the current frame.
 
 # Global map matching and pose estimation
-MIN_MATCHES = 60  # Minimum LightGlue matches required to run PnP.
-MIN_INLIERS = 50  # Minimum PnP inliers required to accept the pose.
+MIN_MATCHES = 20  # Absolute minimum LightGlue matches required to run PnP.
+MIN_MATCH_RATIO = 0.15  # Required matches relative to potentially matchable visible landmarks.
+MIN_INLIERS = 20  # Absolute minimum PnP inliers required to accept the pose.
+MIN_INLIER_RATIO = 0.125  # Required inliers relative to potentially matchable visible landmarks.
 MAX_REPROJECTION_ERROR_PX = 3.0  # Maximum point reprojection error in pixels.
 GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80  # Projection margin outside the image.
 
 # Map expansion
 MAP_EXPANSION_THRESHOLD_MODE = "mean"  # "mean_max": midpoint of history mean and maximum; "mean": history mean.
-MAP_EXPANSION_THRESHOLD_START_RATIO = 0.60  # Initial fraction of the dynamic visible-landmark threshold.
+MAP_EXPANSION_THRESHOLD_START_RATIO = 1.5  # Initial fraction of the dynamic visible-landmark threshold.
 MAP_EXPANSION_THRESHOLD_RAMP_FRAMES = 300  # Tracked frames needed to reach the full threshold.
-MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.5  # Constant multiplier applied to the dynamic threshold.
+MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.7  # Constant multiplier applied to the dynamic threshold.
 
 # Landmark creation and association
 LANDMARK_MIN_DISTANCE_MM = 1.0  # Minimum spacing between global map points.
 LANDMARK_DESCRIPTOR_SIMILARITY = 0.80  # Minimum descriptor similarity for one landmark.
+MAX_NEW_LANDMARKS_PER_KEYFRAME = 100  # Maximum new global map points added by one keyframe.
 MAX_GLOBAL_LANDMARKS = 1024  # Hard maximum number of global map points.
 GLOBAL_MAP_PRUNE_TARGET = 930  # Map size retained before adding new points.
 LANDMARK_PROTECTION_VISIBLE_COUNT = 10  # Visibility opportunities protecting a new landmark.
@@ -50,6 +53,18 @@ def frame_to_tensor(frame):
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     image = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
     return image.to(DEVICE)
+
+
+def required_pose_counts(matchable_landmarks):
+    required_matches = max(
+        MIN_MATCHES,
+        int(np.ceil(MIN_MATCH_RATIO * matchable_landmarks)),
+    )
+    required_inliers = max(
+        MIN_INLIERS,
+        int(np.ceil(MIN_INLIER_RATIO * matchable_landmarks)),
+    )
+    return required_matches, required_inliers
 
 
 class SkinMapTracker:
@@ -715,10 +730,11 @@ class SkinMapTracker:
                 protected_landmark_ids
             )
 
-        available_landmark_slots = (
-            MAX_GLOBAL_LANDMARKS - len(self.landmarks)
+        new_landmark_limit = min(
+            MAX_NEW_LANDMARKS_PER_KEYFRAME,
+            MAX_GLOBAL_LANDMARKS - len(self.landmarks),
         )
-        if len(new_points) > available_landmark_slots:
+        if len(new_points) > new_landmark_limit:
             priorities = self.new_landmark_priority(
                 feature_data,
                 new_feature_indices,
@@ -727,7 +743,7 @@ class SkinMapTracker:
             )
             best_new_indices = np.argsort(
                 priorities
-            )[::-1][:available_landmark_slots]
+            )[::-1][:new_landmark_limit]
             new_feature_indices = new_feature_indices[best_new_indices]
             new_points = new_points[best_new_indices]
 
@@ -859,18 +875,25 @@ class SkinMapTracker:
         width, height = (
             current_features["image_size"][0].detach().cpu().numpy()
         )
-        margin = GLOBAL_MAP_VISIBILITY_MARGIN_PX
         roi_top = height * (1.0 - self.feature_roi_bottom_fraction)
-        visible = camera_points[:, 2] > 0.0
-        visible &= projected_points[:, 0] >= -margin
-        visible &= projected_points[:, 0] < width + margin
-        visible &= projected_points[:, 1] >= roi_top - margin
-        visible &= projected_points[:, 1] < height + margin
+        expected_visible = camera_points[:, 2] > 0.0
+        expected_visible &= projected_points[:, 0] >= 0.0
+        expected_visible &= projected_points[:, 0] < width
+        expected_visible &= projected_points[:, 1] >= roi_top
+        expected_visible &= projected_points[:, 1] < height
+        expected_visible_count = int(expected_visible.sum())
 
-        landmark_ids = landmark_ids[visible]
-        map_points = map_points[visible]
-        projected_points = projected_points[visible]
-        descriptors = descriptors[visible]
+        margin = GLOBAL_MAP_VISIBILITY_MARGIN_PX
+        matching_area = camera_points[:, 2] > 0.0
+        matching_area &= projected_points[:, 0] >= -margin
+        matching_area &= projected_points[:, 0] < width + margin
+        matching_area &= projected_points[:, 1] >= roi_top - margin
+        matching_area &= projected_points[:, 1] < height + margin
+
+        landmark_ids = landmark_ids[matching_area]
+        map_points = map_points[matching_area]
+        projected_points = projected_points[matching_area]
+        descriptors = descriptors[matching_area]
         if not len(landmark_ids):
             return None
 
@@ -888,7 +911,12 @@ class SkinMapTracker:
             )[None],
             "image_size": current_features["image_size"],
         }
-        return landmark_ids, map_points, global_features
+        return (
+            landmark_ids,
+            map_points,
+            global_features,
+            expected_visible_count,
+        )
 
     def match_global_map(self, current_features):
         current_keypoints = (
@@ -898,7 +926,22 @@ class SkinMapTracker:
         if visible_map is None:
             return None
 
-        visible_landmark_ids, visible_map_points, global_features = visible_map
+        (
+            visible_landmark_ids,
+            visible_map_points,
+            global_features,
+            expected_visible_count,
+        ) = visible_map
+        matchable_landmarks = min(
+            expected_visible_count,
+            len(current_keypoints),
+        )
+        required_matches, required_inliers = required_pose_counts(
+            matchable_landmarks
+        )
+        self.last_diagnostics["required_matches"] = required_matches
+        self.last_diagnostics["required_inliers"] = required_inliers
+
         with torch.inference_mode():
             output = self.matcher(
                 {
@@ -913,7 +956,7 @@ class SkinMapTracker:
         self.last_diagnostics["new_features"] = (
             len(current_keypoints) - len(matched_current_indices)
         )
-        if len(matches) < MIN_MATCHES:
+        if len(matches) < required_matches:
             return None
 
         landmark_ids = matched_landmark_ids
@@ -949,7 +992,7 @@ class SkinMapTracker:
             inlier_count / len(map_points)
         )
 
-        if not success or inlier_count < MIN_INLIERS:
+        if not success or inlier_count < required_inliers:
             return None
 
         inlier_indices = inliers.ravel()
@@ -994,6 +1037,8 @@ class SkinMapTracker:
             "matches": 0,
             "flow_tracks": 0,
             "inliers": 0,
+            "required_matches": np.nan,
+            "required_inliers": np.nan,
             "pnp_inlier_ratio": np.nan,
             "new_features": feature_count,
             "keyframe_added": 0,

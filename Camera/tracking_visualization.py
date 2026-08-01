@@ -814,11 +814,16 @@ def save_mapping_diagnostics(
     rows,
     output_path,
     recording_name,
-    minimum_pnp_inliers,
 ):
     frames = np.array([row["frame"] for row in rows])
     matches = np.array([row["matches"] for row in rows])
     inliers = np.array([row["inliers"] for row in rows])
+    required_matches = np.array(
+        [row["required_matches"] for row in rows]
+    )
+    required_inliers = np.array(
+        [row["required_inliers"] for row in rows]
+    )
     visible_landmarks = np.array(
         [row["visible_landmarks"] for row in rows]
     )
@@ -840,6 +845,19 @@ def save_mapping_diagnostics(
 
     axes[0].plot(frames, matches, label="PnP correspondences")
     axes[0].plot(frames, inliers, label="PnP inliers")
+    axes[0].plot(
+        frames,
+        required_matches,
+        linestyle="--",
+        label="Required correspondences",
+    )
+    axes[0].plot(
+        frames,
+        required_inliers,
+        linestyle=":",
+        color="black",
+        label="Required PnP inliers",
+    )
     axes[0].set_ylabel("Points")
     axes[0].grid(True)
     axes[0].legend()
@@ -856,11 +874,12 @@ def save_mapping_diagnostics(
         color="tab:blue",
         label="PnP inliers",
     )
-    axes[1].axhline(
-        minimum_pnp_inliers,
+    axes[1].plot(
+        frames,
+        required_inliers,
         color="black",
         linestyle=":",
-        label=f"Tracking minimum: {minimum_pnp_inliers} PnP inliers",
+        label="Required PnP inliers",
     )
     axes[1].scatter(
         frames[keyframe_added],

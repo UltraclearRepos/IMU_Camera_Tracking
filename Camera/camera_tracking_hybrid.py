@@ -16,7 +16,6 @@ from skin_map_tracker import (
     DEVICE,
     INITIALIZATION_FRAMES,
     INITIALIZATION_MIN_LANDMARKS,
-    MIN_INLIERS,
 )
 from tracking_visualization import (
     create_top_view_state,
@@ -203,6 +202,8 @@ def main():
                 "matches": diagnostics["matches"],
                 "flow_tracks": diagnostics["flow_tracks"],
                 "inliers": diagnostics["inliers"],
+                "required_matches": diagnostics["required_matches"],
+                "required_inliers": diagnostics["required_inliers"],
                 "pnp_inlier_ratio": diagnostics["pnp_inlier_ratio"],
                 "new_features": diagnostics["new_features"],
                 "nearby_associations": diagnostics[
@@ -301,7 +302,6 @@ def main():
         rows,
         diagnostics_plot_path,
         f"{RECORDING_NAME}_hybrid",
-        MIN_INLIERS,
     )
     position_rmse, orientation_rmse = create_comparison_plots(
         rows,

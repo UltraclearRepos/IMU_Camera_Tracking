@@ -3,9 +3,9 @@ import numpy as np
 
 from skin_map_tracker import (
     MAX_REPROJECTION_ERROR_PX,
-    MIN_INLIERS,
     MIN_MATCHES,
     SkinMapTracker,
+    required_pose_counts,
 )
 
 
@@ -123,7 +123,12 @@ class HybridSkinMapTracker(SkinMapTracker):
     def estimate_flow_pose(self, image_points, landmark_ids):
         self.last_diagnostics["matches"] = len(image_points)
         self.last_diagnostics["flow_tracks"] = len(image_points)
-        if len(image_points) < MIN_MATCHES:
+        required_matches, required_inliers = required_pose_counts(
+            len(image_points)
+        )
+        self.last_diagnostics["required_matches"] = required_matches
+        self.last_diagnostics["required_inliers"] = required_inliers
+        if len(image_points) < required_matches:
             return None
 
         map_points = np.ascontiguousarray(
@@ -158,7 +163,7 @@ class HybridSkinMapTracker(SkinMapTracker):
         self.last_diagnostics["pnp_inlier_ratio"] = (
             inlier_count / len(map_points)
         )
-        if not success or inlier_count < MIN_INLIERS:
+        if not success or inlier_count < required_inliers:
             return None
 
         inlier_indices = inliers.ravel()
