@@ -11,7 +11,10 @@ import cv2
 import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
-from recording_axes import CAMERA_MAP_TO_DOBOT_BY_RECORDING
+from recording_axes import (
+    CAMERA_EULER_SIGNS_BY_RECORDING,
+    CAMERA_MAP_TO_DOBOT_BY_RECORDING,
+)
 from skin_map_tracker import (
     DEVICE,
     INITIALIZATION_FRAMES,
@@ -30,7 +33,8 @@ from tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25"
+RECORDING_NAME = "initial-white-withlight-25deg_Speed-3_2026-07-30_13.06.03"
+DATA_FOLDER = "OnlyR"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
@@ -48,7 +52,8 @@ SHOW_PREVIEW = False
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_DIR = PROJECT_DIR / "Data3"
+DATA_DIR = PROJECT_DIR / "Data" / DATA_FOLDER
+RESULTS_DIR = SCRIPT_DIR / "results" / DATA_FOLDER
 CAMERA_MATRIX_PATH = (
     SCRIPT_DIR
     / "calibrations"
@@ -91,6 +96,9 @@ def run_tracking(
         raise RuntimeError("CUDA is not available in the project .venv")
 
     camera_map_to_dobot = CAMERA_MAP_TO_DOBOT_BY_RECORDING[
+        recording_name
+    ]
+    camera_euler_signs = CAMERA_EULER_SIGNS_BY_RECORDING[
         recording_name
     ]
     video_path = next(
@@ -184,6 +192,7 @@ def run_tracking(
             euler = Rotation.from_matrix(relative_rotation).as_euler(
                 "xyz", degrees=True
             )
+            euler *= camera_euler_signs
 
         positions.append(position)
         time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
@@ -342,7 +351,7 @@ def run_tracking(
 def main():
     run_tracking(
         RECORDING_NAME,
-        SCRIPT_DIR / "results" / RECORDING_NAME,
+        RESULTS_DIR / RECORDING_NAME,
         MAP_EXPANSION_THRESHOLD_MULTIPLIER,
         FEATURE_ROI_BOTTOM_FRACTION,
     )

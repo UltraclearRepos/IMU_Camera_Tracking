@@ -2,14 +2,14 @@ import csv
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from camera_tracking import run_tracking
+from camera_tracking import DATA_FOLDER, run_tracking
 
 
 # -----------------------------------------------------------------------------
 # Experiment configuration
 # -----------------------------------------------------------------------------
 
-EXPERIMENT_NAME = "visible_map_expansion"
+EXPERIMENT_NAME = "realistic_screen_visible_0.7_expansion_threshold"
 
 RECORDINGS = {
     "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25": {
@@ -50,11 +50,16 @@ RECORDINGS = {
     },
 }
 
-MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.5
+MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.7
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-RESULTS_DIR = SCRIPT_DIR / "results_DISK_batch" / EXPERIMENT_NAME
+RESULTS_DIR = (
+    SCRIPT_DIR
+    / "results_DISK_batch"
+    / DATA_FOLDER
+    / EXPERIMENT_NAME
+)
 
 
 def run_recording(recording_name, parameters):

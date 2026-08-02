@@ -11,7 +11,10 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 from hybrid_skin_map_tracker import HybridSkinMapTracker
-from recording_axes import CAMERA_MAP_TO_DOBOT_BY_RECORDING
+from recording_axes import (
+    CAMERA_EULER_SIGNS_BY_RECORDING,
+    CAMERA_MAP_TO_DOBOT_BY_RECORDING,
+)
 from skin_map_tracker import (
     DEVICE,
     INITIALIZATION_FRAMES,
@@ -31,9 +34,11 @@ from tracking_visualization import (
 # -----------------------------------------------------------------------------
 
 RECORDING_NAME = "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25"
+DATA_FOLDER = "Line"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 CAMERA_MAP_TO_DOBOT = CAMERA_MAP_TO_DOBOT_BY_RECORDING[RECORDING_NAME]
+CAMERA_EULER_SIGNS = CAMERA_EULER_SIGNS_BY_RECORDING[RECORDING_NAME]
 MAX_FRAMES = 100000
 FEATURE_ROI_BOTTOM_FRACTION = 0.70
 MAX_OPTICAL_FLOW_FRAMES = 9  # Maximum consecutive optical-flow frames.
@@ -50,8 +55,8 @@ SHOW_PREVIEW = False
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_DIR = PROJECT_DIR / "Data3"
-OUTPUT_DIR = SCRIPT_DIR / "results" / RECORDING_NAME
+DATA_DIR = PROJECT_DIR / "Data" / DATA_FOLDER
+OUTPUT_DIR = SCRIPT_DIR / "results" / DATA_FOLDER / RECORDING_NAME
 VIDEO_PATHS = list(
     (DATA_DIR / "videos").glob(
         f"{RECORDING_NAME}_{CAMERA_NAME}.*"
@@ -183,6 +188,7 @@ def main():
                 "xyz",
                 degrees=True,
             )
+            euler *= CAMERA_EULER_SIGNS
 
         positions.append(position)
         time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0

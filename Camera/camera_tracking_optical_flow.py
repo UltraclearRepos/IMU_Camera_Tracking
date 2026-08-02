@@ -13,7 +13,10 @@ from optical_flow_tracker import (
     MIN_PNP_INLIERS,
     OpticalFlowMapTracker,
 )
-from recording_axes import CAMERA_MAP_TO_DOBOT_BY_RECORDING
+from recording_axes import (
+    CAMERA_EULER_SIGNS_BY_RECORDING,
+    CAMERA_MAP_TO_DOBOT_BY_RECORDING,
+)
 from tracking_visualization import (
     create_comparison_plots,
     optical_flow_diagnostic_frame,
@@ -26,9 +29,11 @@ from tracking_visualization import (
 # -----------------------------------------------------------------------------
 
 RECORDING_NAME = "horizontal_line_1"
+DATA_FOLDER = "firstSkinData"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 CAMERA_MAP_TO_DOBOT = CAMERA_MAP_TO_DOBOT_BY_RECORDING[RECORDING_NAME]
+CAMERA_EULER_SIGNS = CAMERA_EULER_SIGNS_BY_RECORDING[RECORDING_NAME]
 
 SAVE_DIAGNOSTIC_VIDEO = True
 DIAGNOSTIC_VIDEO_FPS = 1.0
@@ -38,8 +43,14 @@ MAX_FRAMES = 1000000
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent
-DATA_DIR = PROJECT_DIR / "Data2"
-OUTPUT_DIR = SCRIPT_DIR / "results" / RECORDING_NAME / "optical_flow"
+DATA_DIR = PROJECT_DIR / "Data" / DATA_FOLDER
+OUTPUT_DIR = (
+    SCRIPT_DIR
+    / "results"
+    / DATA_FOLDER
+    / RECORDING_NAME
+    / "optical_flow"
+)
 VIDEO_PATHS = list(
     (DATA_DIR / "videos").glob(
         f"{RECORDING_NAME}_{CAMERA_NAME}.*"
@@ -151,6 +162,7 @@ def main():
                 "xyz",
                 degrees=True,
             )
+            euler *= CAMERA_EULER_SIGNS
 
         positions.append(position)
         time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0

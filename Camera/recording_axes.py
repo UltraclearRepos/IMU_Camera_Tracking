@@ -143,4 +143,97 @@ CAMERA_MAP_TO_DOBOT_BY_RECORDING = {
             [0.0, 1.0, 0.0],
         ]
     ),
+    "initial-white-withlight-25deg_Speed-3_2026-07-30_13.06.03": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "initial-white-nolight-25deg_Speed-3_2026-07-30_13.07.33": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "close-white-nolight-25deg_Speed-3_2026-07-30_13.10.31": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "close-white-withlight-25deg_Speed-3_2026-07-30_13.11.32": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "far-white-withlight-25deg_Speed-3_2026-07-30_13.13.13": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "far-white-nolight-25deg_Speed-3_2026-07-30_13.14.23": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "initial-black-nolight-25deg_Speed-3_2026-07-30_13.55.04": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "initial-black-withlight-25deg_Speed-3_2026-07-30_13.56.04": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "far-black-withlight-25deg_Speed-3_2026-07-30_13.58.22": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "far-black-nolight-25deg_Speed-3_2026-07-30_14.00.25": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "close-black-nolight-25deg_Speed-3_2026-07-30_14.08.24": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "close-black-withlight-25deg_Speed-3_2026-07-30_14.09.41": np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+}
+
+
+# OnlyR uses the opposite pitch direction for the camera orientation.
+CAMERA_EULER_SIGNS_BY_RECORDING = {
+    recording_name: np.array(
+        [1.0, -1.0, 1.0]
+    )
+    for recording_name in CAMERA_MAP_TO_DOBOT_BY_RECORDING
 }

@@ -632,7 +632,18 @@ def load_ground_truth(path):
 
     positions = np.array(positions)
     positions = positions - positions[0]
-    return np.array(timestamps), positions, np.array(orientations)
+    orientation_matrices = Rotation.from_euler(
+        "xyz",
+        np.array(orientations),
+        degrees=True,
+    ).as_matrix()
+    relative_orientation_matrices = (
+        orientation_matrices[0].T @ orientation_matrices
+    )
+    relative_orientations = Rotation.from_matrix(
+        relative_orientation_matrices
+    ).as_euler("xyz", degrees=True)
+    return np.array(timestamps), positions, relative_orientations
 
 
 def save_comparison_figure(
