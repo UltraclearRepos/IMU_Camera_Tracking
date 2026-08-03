@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import torch
+import time
 from lightglue import DISK, LightGlue
 from lightglue.utils import rbd
 from scipy.spatial import cKDTree
@@ -19,23 +20,22 @@ MAX_REPROJECTION_ERROR_PX = 3.0  # Maximum point reprojection error in pixels.
 GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80  # Projection margin outside the image.
 
 # Map expansion
-MAP_EXPANSION_THRESHOLD_MODE = "mean"  # "mean_max": midpoint of history mean and maximum; "mean": history mean.
-MAP_EXPANSION_THRESHOLD_START_RATIO = 1.5  # Initial fraction of the dynamic visible-landmark threshold.
-MAP_EXPANSION_THRESHOLD_RAMP_FRAMES = 300  # Tracked frames needed to reach the full threshold.
-MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.7  # Constant multiplier applied to the dynamic threshold.
+MAP_COVERAGE_GRID_ROWS = 4  # Number of horizontal grid bands in the feature ROI.
+MAP_COVERAGE_GRID_COLUMNS = 4  # Number of vertical grid bands in the feature ROI.
+TARGET_LANDMARKS_PER_CELL = 15  # Desired visible global landmarks in one grid cell.
+MAP_EXPANSION_MIN_COVERAGE_RATIO = 0.70  # Add a keyframe below this mean grid coverage.
 
 # Landmark creation and association
 LANDMARK_MIN_DISTANCE_MM = 1.0  # Minimum spacing between global map points.
 LANDMARK_DESCRIPTOR_SIMILARITY = 0.80  # Minimum descriptor similarity for one landmark.
 MAX_NEW_LANDMARKS_PER_KEYFRAME = 100  # Maximum new global map points added by one keyframe.
+UNCOVERED_FEATURE_MIN_SCORE = 50.0  # Minimum raw DISK score in uncovered regions.
+COVERED_FEATURE_MIN_SCORE = 75.0  # Minimum raw DISK score in covered regions.
 MAX_GLOBAL_LANDMARKS = 1024  # Hard maximum number of global map points.
-GLOBAL_MAP_PRUNE_TARGET = 930  # Map size retained before adding new points.
 LANDMARK_PROTECTION_VISIBLE_COUNT = 10  # Visibility opportunities protecting a new landmark.
 LANDMARK_INLIER_QUALITY_WEIGHT = 0.70  # PnP quality weight versus matching frequency.
 LANDMARK_PRUNING_DENSITY_RADIUS_MM = 5.0  # Radius used to count nearby map points during pruning.
 LANDMARK_PRUNING_DENSITY_WEIGHT = 0.35  # Importance of spatial density versus landmark quality.
-NEW_LANDMARK_DIRECTION_WEIGHT = 0.35  # Priority weight for features located in the movement direction.
-NEW_LANDMARK_DIRECTION_MIN_MOTION_MM = 1.0  # Minimum planar motion used to determine a screen direction.
 
 # ArUco
 MASK_ARUCO_FEATURES = False  # Exclude features located inside the ArUco marker.
@@ -47,12 +47,25 @@ INITIALIZATION_FRAMES = 5  # Number of frames used to initialize the map.
 INITIALIZATION_MIN_OBSERVATIONS = 3  # Minimum observations during initialization.
 INITIALIZATION_MIN_LANDMARKS = 60  # Minimum stable landmarks in the initial map.
 INITIALIZATION_POINT_MAX_DISTANCE_MM = 1.5  # Maximum point spread during initialization.
+INITIAL_MAP_MAX_LANDMARKS = 200  # Maximum landmarks created in the first keyframe.
 
 
 def frame_to_tensor(frame):
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     image = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
     return image.to(DEVICE)
+
+
+def start_timer():
+    if DEVICE == "cuda":
+        torch.cuda.synchronize()
+    return time.perf_counter()
+
+
+def elapsed_ms(started):
+    if DEVICE == "cuda":
+        torch.cuda.synchronize()
+    return 1000.0 * (time.perf_counter() - started)
 
 
 def required_pose_counts(matchable_landmarks):
@@ -73,13 +86,13 @@ class SkinMapTracker:
         camera_matrix,
         distortion,
         feature_roi_bottom_fraction,
-        map_expansion_threshold_multiplier=MAP_EXPANSION_THRESHOLD_MULTIPLIER,
+        map_expansion_min_coverage_ratio=MAP_EXPANSION_MIN_COVERAGE_RATIO,
     ):
         self.camera_matrix = camera_matrix
         self.distortion = distortion
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
-        self.map_expansion_threshold_multiplier = (
-            map_expansion_threshold_multiplier
+        self.map_expansion_min_coverage_ratio = (
+            map_expansion_min_coverage_ratio
         )
 
         self.extractor = DISK(max_num_keypoints=MAX_FEATURES).eval().to(DEVICE)
@@ -95,8 +108,7 @@ class SkinMapTracker:
         self.initialization = None
         self.R_map_to_camera = None
         self.t_map_to_camera = None
-        self.visible_landmark_history = []
-        self.map_expansion_threshold = np.nan
+        self.map_coverage_ratio = 0.0
 
     def extract_features(self, frame):
         height, width = frame.shape[:2]
@@ -238,11 +250,15 @@ class SkinMapTracker:
         )
 
         with torch.inference_mode():
+            matching_started = start_timer()
             output = self.matcher(
                 {
                     "image0": initialization["features"],
                     "image1": features,
                 }
+            )
+            self.last_diagnostics["lightglue_ms"] = elapsed_ms(
+                matching_started
             )
         matches = rbd(output)["matches"].detach().cpu().numpy()
 
@@ -293,6 +309,7 @@ class SkinMapTracker:
             return None
 
         no_known_features = np.empty(0, dtype=np.int64)
+        map_update_started = start_timer()
         map_update = self.add_keyframe(
             initialization["features"],
             initialization["R"],
@@ -301,8 +318,10 @@ class SkinMapTracker:
             no_known_features,
             confirmed_indices,
         )
+        self.last_diagnostics["map_update_ms"] = elapsed_ms(
+            map_update_started
+        )
         self.initialization = None
-        self.last_diagnostics["keyframe_added"] = 1
         self.last_diagnostics.update(map_update)
 
         return {
@@ -406,13 +425,13 @@ class SkinMapTracker:
                 keyframe["landmark_ids"][feature_index] = -1
         del self.landmarks[landmark_id]
 
-    def prune_global_map(self, protected_landmark_ids):
-        if len(self.landmarks) < MAX_GLOBAL_LANDMARKS:
+    def prune_global_map(
+        self,
+        protected_landmark_ids,
+        points_to_remove,
+    ):
+        if points_to_remove <= 0:
             return 0
-
-        points_to_remove = (
-            len(self.landmarks) - GLOBAL_MAP_PRUNE_TARGET
-        )
 
         candidates = [
             landmark_id
@@ -487,53 +506,47 @@ class SkinMapTracker:
         descriptor_sum = landmark["descriptor_sum"]
         landmark["descriptor"] = descriptor_sum / np.linalg.norm(descriptor_sum)
 
-    def new_landmark_priority(
+    def feature_scores(
         self,
         feature_data,
         feature_indices,
-        R_map_to_camera,
-        t_map_to_camera,
     ):
-        keypoint_scores = (
+        return (
             feature_data["keypoint_scores"]
             .detach()
             .cpu()
             .numpy()[feature_indices]
         )
-        score_range = np.ptp(keypoint_scores)
-        if score_range > 0.0:
-            quality = (
-                keypoint_scores - np.min(keypoint_scores)
-            ) / score_range
-        else:
-            quality = np.ones(len(feature_indices))
 
-        if not self.keyframes:
-            return quality
+    def select_new_landmarks(
+        self,
+        feature_data,
+        feature_indices,
+        map_points,
+    ):
+        if not len(feature_indices):
+            return feature_indices, map_points
 
-        camera_rotation = R_map_to_camera.T
-        camera_position = (
-            -camera_rotation @ t_map_to_camera.reshape(3)
+        scores = self.feature_scores(
+            feature_data,
+            feature_indices,
         )
-        movement_map = (
-            camera_position
-            - self.keyframes[-1]["camera_position"]
+
+        if not self.landmarks:
+            selected = np.argsort(scores)[::-1][
+                :INITIAL_MAP_MAX_LANDMARKS
+            ]
+            return feature_indices[selected], map_points[selected]
+
+        keypoints = (
+            feature_data["keypoints"]
+            .detach()
+            .cpu()
+            .numpy()[feature_indices]
         )
-        planar_motion = movement_map.copy()
-        planar_motion[2] = 0.0
-        if (
-            np.linalg.norm(planar_motion)
-            < NEW_LANDMARK_DIRECTION_MIN_MOTION_MM
-        ):
-            return quality
-
-        movement_camera = R_map_to_camera @ planar_motion
-        screen_direction = movement_camera[:2]
-        screen_direction_norm = np.linalg.norm(screen_direction)
-        if screen_direction_norm == 0.0:
-            return quality
-        screen_direction /= screen_direction_norm
-
+        _, cell_counts = self.map_coverage_grid(
+            feature_data["image_size"]
+        )
         width, height = (
             feature_data["image_size"]
             .detach()
@@ -543,34 +556,68 @@ class SkinMapTracker:
         roi_top = height * (
             1.0 - self.feature_roi_bottom_fraction
         )
-        roi_center = np.array(
-            [width / 2.0, (roi_top + height) / 2.0]
-        )
-        roi_half_size = np.array(
-            [width / 2.0, (height - roi_top) / 2.0]
-        )
-        keypoints = (
-            feature_data["keypoints"]
-            .detach()
-            .cpu()
-            .numpy()[feature_indices]
-        )
-        normalized_positions = (
-            keypoints - roi_center
-        ) / roi_half_size
-        direction_priority = np.clip(
-            0.5
-            + 0.5
-            * (normalized_positions @ screen_direction)
-            / np.sqrt(2.0),
-            0.0,
-            1.0,
-        )
+        columns = np.floor(
+            keypoints[:, 0]
+            / width
+            * MAP_COVERAGE_GRID_COLUMNS
+        ).astype(int)
+        rows = np.floor(
+            (keypoints[:, 1] - roi_top)
+            / (height - roi_top)
+            * MAP_COVERAGE_GRID_ROWS
+        ).astype(int)
+        columns = np.clip(columns, 0, MAP_COVERAGE_GRID_COLUMNS - 1)
+        rows = np.clip(rows, 0, MAP_COVERAGE_GRID_ROWS - 1)
 
-        return (
-            (1.0 - NEW_LANDMARK_DIRECTION_WEIGHT) * quality
-            + NEW_LANDMARK_DIRECTION_WEIGHT * direction_priority
+        selected_for_coverage_by_cell = []
+        selected_for_coverage_mask = np.zeros(
+            len(feature_indices),
+            dtype=bool,
         )
+        for row in range(MAP_COVERAGE_GRID_ROWS):
+            for column in range(MAP_COVERAGE_GRID_COLUMNS):
+                missing_landmarks = max(
+                    TARGET_LANDMARKS_PER_CELL
+                    - cell_counts[row, column],
+                    0,
+                )
+                candidates = np.flatnonzero(
+                    (rows == row)
+                    & (columns == column)
+                    & (scores >= UNCOVERED_FEATURE_MIN_SCORE)
+                )
+                candidates = candidates[
+                    np.argsort(scores[candidates])[::-1]
+                ][:missing_landmarks]
+                selected_for_coverage_by_cell.append(candidates)
+                selected_for_coverage_mask[candidates] = True
+
+        selected_for_coverage = []
+        maximum_cell_selection = max(
+            map(len, selected_for_coverage_by_cell),
+            default=0,
+        )
+        for candidate_rank in range(maximum_cell_selection):
+            for candidates in selected_for_coverage_by_cell:
+                if candidate_rank < len(candidates):
+                    selected_for_coverage.append(
+                        candidates[candidate_rank]
+                    )
+
+        exceptional_candidates = np.flatnonzero(
+            ~selected_for_coverage_mask
+            & (scores >= COVERED_FEATURE_MIN_SCORE)
+        )
+        exceptional_candidates = exceptional_candidates[
+            np.argsort(scores[exceptional_candidates])[::-1]
+        ]
+        selected = np.concatenate(
+            (
+                np.asarray(selected_for_coverage, dtype=int),
+                exceptional_candidates,
+            )
+        )[:MAX_NEW_LANDMARKS_PER_KEYFRAME]
+        return feature_indices[selected], map_points[selected]
 
     def associate_nearby_landmarks(
         self,
@@ -721,31 +768,44 @@ class SkinMapTracker:
         new_feature_indices = new_feature_indices[unique_indices]
         new_points = new_points[unique_indices]
 
+        new_feature_indices, new_points = self.select_new_landmarks(
+            feature_data,
+            new_feature_indices,
+            new_points,
+        )
+
+        if not len(new_points):
+            return {
+                "keyframe_added": 0,
+                "nearby_associations": len(nearby_associations),
+                "new_landmarks": 0,
+                "removed_landmarks": 0,
+            }
+
         protected_landmark_ids = set(
             map(int, landmark_ids[landmark_ids >= 0])
         )
-        removed_landmarks = 0
-        if len(new_points) > 0:
-            removed_landmarks = self.prune_global_map(
-                protected_landmark_ids
-            )
-
-        new_landmark_limit = min(
-            MAX_NEW_LANDMARKS_PER_KEYFRAME,
-            MAX_GLOBAL_LANDMARKS - len(self.landmarks),
+        points_to_remove = max(
+            0,
+            len(self.landmarks)
+            + len(new_points)
+            - MAX_GLOBAL_LANDMARKS,
         )
-        if len(new_points) > new_landmark_limit:
-            priorities = self.new_landmark_priority(
-                feature_data,
-                new_feature_indices,
-                R_map_to_camera,
-                t_map_to_camera,
-            )
-            best_new_indices = np.argsort(
-                priorities
-            )[::-1][:new_landmark_limit]
-            new_feature_indices = new_feature_indices[best_new_indices]
-            new_points = new_points[best_new_indices]
+        removed_landmarks = self.prune_global_map(
+            protected_landmark_ids,
+            points_to_remove,
+        )
+        available_space = MAX_GLOBAL_LANDMARKS - len(self.landmarks)
+        new_feature_indices = new_feature_indices[:available_space]
+        new_points = new_points[:available_space]
+
+        if not len(new_points):
+            return {
+                "keyframe_added": 0,
+                "nearby_associations": len(nearby_associations),
+                "new_landmarks": 0,
+                "removed_landmarks": removed_landmarks,
+            }
 
         camera_rotation = R_map_to_camera.T
         camera_position = -camera_rotation @ t_map_to_camera.reshape(3)
@@ -775,6 +835,7 @@ class SkinMapTracker:
             keyframe["landmark_ids"][feature_index] = landmark_id
 
         return {
+            "keyframe_added": 1,
             "nearby_associations": len(nearby_associations),
             "new_landmarks": len(new_points),
             "removed_landmarks": removed_landmarks,
@@ -782,47 +843,30 @@ class SkinMapTracker:
 
     def should_add_keyframe(self, result):
         return (
-            result["visible_landmarks"]
-            < self.map_expansion_threshold
+            result["map_coverage_ratio"]
+            < self.map_expansion_min_coverage_ratio
+            and len(result["new_feature_indices"]) > 0
         )
 
-    def update_map_expansion_threshold(self, visible_landmarks):
-        self.visible_landmark_history.append(visible_landmarks)
-        mean_visible = np.mean(self.visible_landmark_history)
-
-        if MAP_EXPANSION_THRESHOLD_MODE == "mean":
-            self.map_expansion_threshold = mean_visible
-        elif MAP_EXPANSION_THRESHOLD_MODE == "mean_max":
-            max_visible = np.max(self.visible_landmark_history)
-            self.map_expansion_threshold = (
-                mean_visible + max_visible
-            ) / 2.0
-        else:
-            raise ValueError(
-                "MAP_EXPANSION_THRESHOLD_MODE must be "
-                "'mean' or 'mean_max'"
-            )
-
-        ramp_progress = min(
-            (len(self.visible_landmark_history) - 1)
-            / (MAP_EXPANSION_THRESHOLD_RAMP_FRAMES - 1),
-            1.0,
+    def map_coverage_grid(self, image_size):
+        width, height = (
+            image_size.detach()
+            .cpu()
+            .numpy()
+            .reshape(-1, 2)[0]
         )
-        threshold_ratio = (
-            MAP_EXPANSION_THRESHOLD_START_RATIO
-            + (1.0 - MAP_EXPANSION_THRESHOLD_START_RATIO)
-            * ramp_progress
+        width = int(width)
+        height = int(height)
+        roi_top = round(
+            height * (1.0 - self.feature_roi_bottom_fraction)
         )
-        self.map_expansion_threshold *= (
-            threshold_ratio
-            * self.map_expansion_threshold_multiplier
+        cell_counts = np.zeros(
+            (MAP_COVERAGE_GRID_ROWS, MAP_COVERAGE_GRID_COLUMNS),
+            dtype=int,
         )
+        if not self.landmarks:
+            return 0, cell_counts
 
-        self.last_diagnostics["map_expansion_threshold"] = (
-            self.map_expansion_threshold
-        )
-
-    def count_visible_landmarks(self, image_size):
         map_points = np.array(
             [landmark["position"] for landmark in self.landmarks.values()]
         )
@@ -838,14 +882,43 @@ class SkinMapTracker:
             self.R_map_to_camera @ map_points.T
         ).T + self.t_map_to_camera.reshape(3)
 
-        width, height = image_size[0].detach().cpu().numpy()
-        roi_top = height * (1.0 - self.feature_roi_bottom_fraction)
         visible = camera_points[:, 2] > 0.0
         visible &= projected_points[:, 0] >= 0.0
         visible &= projected_points[:, 0] < width
         visible &= projected_points[:, 1] >= roi_top
         visible &= projected_points[:, 1] < height
-        return int(visible.sum())
+
+        visible_points = projected_points[visible]
+        if len(visible_points):
+            columns = np.floor(
+                visible_points[:, 0]
+                / width
+                * MAP_COVERAGE_GRID_COLUMNS
+            ).astype(int)
+            rows = np.floor(
+                (visible_points[:, 1] - roi_top)
+                / (height - roi_top)
+                * MAP_COVERAGE_GRID_ROWS
+            ).astype(int)
+            columns = np.clip(
+                columns,
+                0,
+                MAP_COVERAGE_GRID_COLUMNS - 1,
+            )
+            rows = np.clip(rows, 0, MAP_COVERAGE_GRID_ROWS - 1)
+            np.add.at(cell_counts, (rows, columns), 1)
+
+        return int(visible.sum()), cell_counts
+
+    def measure_map_coverage(self, image_size):
+        visible_landmarks, cell_counts = self.map_coverage_grid(image_size)
+        cell_coverage = np.clip(
+            cell_counts / TARGET_LANDMARKS_PER_CELL,
+            0.0,
+            1.0,
+        )
+        coverage_ratio = float(np.mean(cell_coverage))
+        return visible_landmarks, coverage_ratio
 
     def visible_global_map(self, current_features):
         if not self.landmarks or self.R_map_to_camera is None:
@@ -922,7 +995,11 @@ class SkinMapTracker:
         current_keypoints = (
             rbd(current_features)["keypoints"].detach().cpu().numpy()
         )
+        map_projection_started = start_timer()
         visible_map = self.visible_global_map(current_features)
+        self.last_diagnostics["global_map_projection_ms"] = elapsed_ms(
+            map_projection_started
+        )
         if visible_map is None:
             return None
 
@@ -942,6 +1019,7 @@ class SkinMapTracker:
         self.last_diagnostics["required_matches"] = required_matches
         self.last_diagnostics["required_inliers"] = required_inliers
 
+        matching_started = start_timer()
         with torch.inference_mode():
             output = self.matcher(
                 {
@@ -949,6 +1027,9 @@ class SkinMapTracker:
                     "image1": current_features,
                 }
             )
+        self.last_diagnostics["lightglue_ms"] = elapsed_ms(
+            matching_started
+        )
         matches = rbd(output)["matches"].detach().cpu().numpy()
         matched_landmark_ids = visible_landmark_ids[matches[:, 0]]
         matched_current_indices = set(map(int, matches[:, 1]))
@@ -972,6 +1053,7 @@ class SkinMapTracker:
 
         rvec = cv2.Rodrigues(self.R_map_to_camera)[0]
         tvec = self.t_map_to_camera.reshape(3, 1).copy()
+        pnp_started = start_timer()
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
             map_points,
             image_points,
@@ -985,6 +1067,7 @@ class SkinMapTracker:
             confidence=0.999,
             flags=cv2.SOLVEPNP_ITERATIVE,
         )
+        self.last_diagnostics["pnp_ransac_ms"] = elapsed_ms(pnp_started)
 
         inlier_count = 0 if inliers is None else len(inliers)
         self.last_diagnostics["inliers"] = inlier_count
@@ -996,6 +1079,7 @@ class SkinMapTracker:
             return None
 
         inlier_indices = inliers.ravel()
+        refinement_started = start_timer()
         rvec, tvec = cv2.solvePnPRefineLM(
             map_points[inlier_indices],
             image_points[inlier_indices],
@@ -1003,6 +1087,9 @@ class SkinMapTracker:
             self.distortion,
             rvec,
             tvec,
+        )
+        self.last_diagnostics["pnp_refine_ms"] = elapsed_ms(
+            refinement_started
         )
 
         R_map_to_camera = cv2.Rodrigues(rvec)[0]
@@ -1046,22 +1133,43 @@ class SkinMapTracker:
             "new_landmarks": 0,
             "removed_landmarks": 0,
             "visible_landmarks": 0,
-            "map_expansion_threshold": self.map_expansion_threshold,
+            "map_coverage_ratio": np.nan,
+            "map_expansion_coverage_threshold": (
+                self.map_expansion_min_coverage_ratio
+            ),
             "initialization_frames": 0,
             "initialization_candidates": 0,
             "initialization_confirmed": 0,
             "initialization_matches": 0,
             "initialization_points": np.empty((0, 2)),
             "initialization_aruco_detected": 0,
+            "feature_extraction_ms": np.nan,
+            "aruco_pose_ms": np.nan,
+            "global_map_projection_ms": np.nan,
+            "lightglue_ms": np.nan,
+            "optical_flow_ms": np.nan,
+            "pnp_ransac_ms": np.nan,
+            "pnp_refine_ms": np.nan,
+            "map_coverage_ms": np.nan,
+            "map_update_ms": np.nan,
         }
 
     def track(self, frame):
+        feature_extraction_started = start_timer()
         features = self.extract_features(frame)
+        feature_extraction_ms = elapsed_ms(feature_extraction_started)
         feature_count = features["keypoints"].shape[1]
         self.reset_diagnostics(feature_count, "lightglue")
+        self.last_diagnostics["feature_extraction_ms"] = (
+            feature_extraction_ms
+        )
 
         if not self.keyframes:
+            aruco_started = start_timer()
             initial_pose = self.find_initial_pose(frame)
+            self.last_diagnostics["aruco_pose_ms"] = elapsed_ms(
+                aruco_started
+            )
             if initial_pose is None:
                 if self.initialization is not None:
                     self.last_diagnostics["initialization_frames"] = (
@@ -1107,16 +1215,27 @@ class SkinMapTracker:
 
         self.R_map_to_camera = result["R"]
         self.t_map_to_camera = result["t"]
-        result["visible_landmarks"] = self.count_visible_landmarks(
+        coverage_started = start_timer()
+        (
+            result["visible_landmarks"],
+            result["map_coverage_ratio"],
+        ) = self.measure_map_coverage(
             features["image_size"]
         )
+        self.last_diagnostics["map_coverage_ms"] = elapsed_ms(
+            coverage_started
+        )
+        self.map_coverage_ratio = result["map_coverage_ratio"]
         self.last_diagnostics["visible_landmarks"] = result[
             "visible_landmarks"
         ]
-        self.update_map_expansion_threshold(result["visible_landmarks"])
+        self.last_diagnostics["map_coverage_ratio"] = result[
+            "map_coverage_ratio"
+        ]
         result["nearby_associations"] = 0
 
         if self.should_add_keyframe(result):
+            map_update_started = start_timer()
             map_update = self.add_keyframe(
                 features,
                 result["R"],
@@ -1125,10 +1244,12 @@ class SkinMapTracker:
                 result["inlier_landmark_ids"],
                 result["new_feature_indices"],
             )
+            self.last_diagnostics["map_update_ms"] = elapsed_ms(
+                map_update_started
+            )
             result["nearby_associations"] = map_update[
                 "nearby_associations"
             ]
-            self.last_diagnostics["keyframe_added"] = 1
             self.last_diagnostics.update(map_update)
 
         return result

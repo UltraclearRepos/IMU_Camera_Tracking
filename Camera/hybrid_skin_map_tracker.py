@@ -2,10 +2,13 @@ import cv2
 import numpy as np
 
 from skin_map_tracker import (
+    MAP_EXPANSION_MIN_COVERAGE_RATIO,
     MAX_REPROJECTION_ERROR_PX,
     MIN_MATCHES,
     SkinMapTracker,
+    elapsed_ms,
     required_pose_counts,
+    start_timer,
 )
 
 
@@ -22,11 +25,13 @@ class HybridSkinMapTracker(SkinMapTracker):
         max_optical_flow_frames,
         min_optical_flow_track_ratio,
         feature_roi_bottom_fraction,
+        map_expansion_min_coverage_ratio=MAP_EXPANSION_MIN_COVERAGE_RATIO,
     ):
         super().__init__(
             camera_matrix,
             distortion,
             feature_roi_bottom_fraction,
+            map_expansion_min_coverage_ratio,
         )
         self.max_optical_flow_frames = max_optical_flow_frames
         self.min_optical_flow_track_ratio = min_optical_flow_track_ratio
@@ -144,6 +149,7 @@ class HybridSkinMapTracker(SkinMapTracker):
         )
         rvec = cv2.Rodrigues(self.R_map_to_camera)[0]
         tvec = self.t_map_to_camera.reshape(3, 1).copy()
+        pnp_started = start_timer()
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
             map_points,
             image_points,
@@ -157,6 +163,7 @@ class HybridSkinMapTracker(SkinMapTracker):
             confidence=0.999,
             flags=cv2.SOLVEPNP_ITERATIVE,
         )
+        self.last_diagnostics["pnp_ransac_ms"] = elapsed_ms(pnp_started)
 
         inlier_count = 0 if inliers is None else len(inliers)
         self.last_diagnostics["inliers"] = inlier_count
@@ -167,6 +174,7 @@ class HybridSkinMapTracker(SkinMapTracker):
             return None
 
         inlier_indices = inliers.ravel()
+        refinement_started = start_timer()
         rvec, tvec = cv2.solvePnPRefineLM(
             map_points[inlier_indices],
             image_points[inlier_indices],
@@ -174,6 +182,9 @@ class HybridSkinMapTracker(SkinMapTracker):
             self.distortion,
             rvec,
             tvec,
+        )
+        self.last_diagnostics["pnp_refine_ms"] = elapsed_ms(
+            refinement_started
         )
         R_map_to_camera = cv2.Rodrigues(rvec)[0]
         inlier_mask = np.zeros(len(image_points), dtype=bool)
@@ -191,7 +202,11 @@ class HybridSkinMapTracker(SkinMapTracker):
 
     def track_with_optical_flow(self, frame, gray):
         self.reset_diagnostics(0, "optical_flow")
+        optical_flow_started = start_timer()
         tracked_points = self.track_points(gray)
+        self.last_diagnostics["optical_flow_ms"] = elapsed_ms(
+            optical_flow_started
+        )
         if tracked_points is None:
             self.force_lightglue = True
             return None

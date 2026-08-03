@@ -6,6 +6,82 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 
+def save_timing_diagnostics(rows, output_path, recording_name):
+    stages = {
+        "DISK feature extraction": "feature_extraction_ms",
+        "ArUco initial pose": "aruco_pose_ms",
+        "Global map preparation": "global_map_projection_ms",
+        "LightGlue matching": "lightglue_ms",
+        "Optical flow": "optical_flow_ms",
+        "PnP RANSAC": "pnp_ransac_ms",
+        "PnP refinement": "pnp_refine_ms",
+        "Map coverage": "map_coverage_ms",
+        "Map update": "map_update_ms",
+    }
+    labels = []
+    means = []
+    medians = []
+    p95_values = []
+    for label, field in stages.items():
+        values = np.array([row[field] for row in rows], dtype=float)
+        values = values[np.isfinite(values)]
+        if not len(values):
+            continue
+        labels.append(label)
+        means.append(np.mean(values))
+        medians.append(np.median(values))
+        p95_values.append(np.percentile(values, 95))
+
+    positions = np.arange(len(labels))
+    bar_height = 0.25
+    figure, axes = plt.subplots(1, 2, figsize=(18, 8))
+    axes[0].barh(
+        positions - bar_height,
+        means,
+        height=bar_height,
+        label="Mean",
+    )
+    axes[0].barh(
+        positions,
+        medians,
+        height=bar_height,
+        label="Median",
+    )
+    axes[0].barh(
+        positions + bar_height,
+        p95_values,
+        height=bar_height,
+        label="95th percentile",
+    )
+    axes[0].set_yticks(positions, labels)
+    axes[0].set_xlabel("Time [ms]")
+    axes[0].set_title("Time by algorithm stage")
+    axes[0].grid(axis="x")
+    axes[0].legend()
+    axes[0].invert_yaxis()
+
+    frames = np.array([row["frame"] for row in rows])
+    total_time = np.array(
+        [row["tracking_time_ms"] for row in rows],
+        dtype=float,
+    )
+    axes[1].plot(frames, total_time, color="black", label="Total tracking")
+    for label, field in stages.items():
+        values = np.array([row[field] for row in rows], dtype=float)
+        if np.isfinite(values).any():
+            axes[1].plot(frames, values, label=label, alpha=0.75)
+    axes[1].set_xlabel("Frame")
+    axes[1].set_ylabel("Time [ms]")
+    axes[1].set_title("Processing time per frame")
+    axes[1].grid(True)
+    axes[1].legend(fontsize=8)
+
+    figure.suptitle(f"{recording_name}: tracking performance")
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+
+
 def project_map_points(
     map_points,
     result,
@@ -38,7 +114,13 @@ def project_map_points(
     return projected[visible]
 
 
-def camera_view_on_skin_plane(result, camera_matrix, distortion, frame_shape):
+def camera_view_on_skin_plane(
+    result,
+    camera_matrix,
+    distortion,
+    frame_shape,
+    maximum_view_distance_mm,
+):
     height, width = frame_shape[:2]
     image_corners = np.array(
         [
@@ -64,10 +146,34 @@ def camera_view_on_skin_plane(result, camera_matrix, distortion, frame_shape):
     )
     map_rays = (camera_to_map @ camera_rays.T).T
     distances = -camera_position[2] / map_rays[:, 2]
-    return camera_position + distances[:, None] * map_rays
+    intersections = camera_position + distances[:, None] * map_rays
+
+    planar_directions = map_rays[:, :2]
+    planar_directions /= np.linalg.norm(
+        planar_directions,
+        axis=1,
+        keepdims=True,
+    )
+    planar_offsets = intersections[:, :2] - camera_position[:2]
+    planar_distances = np.linalg.norm(planar_offsets, axis=1)
+    clipped = (distances <= 0.0) | (
+        planar_distances > maximum_view_distance_mm
+    )
+    intersections[clipped, :2] = (
+        camera_position[:2]
+        + maximum_view_distance_mm * planar_directions[clipped]
+    )
+    intersections[clipped, 2] = 0.0
+    return intersections
 
 
-def create_top_view_state(tracker, result, frame_shape, frame_index):
+def create_top_view_state(
+    tracker,
+    result,
+    frame_shape,
+    frame_index,
+    maximum_view_distance_mm,
+):
     state = {
         "frame_index": frame_index,
         "map_points": tracker.all_map_points().copy(),
@@ -94,6 +200,7 @@ def create_top_view_state(tracker, result, frame_shape, frame_index):
         tracker.camera_matrix,
         tracker.distortion,
         frame_shape,
+        maximum_view_distance_mm,
     )
     state["inliers"] = result["inliers"]
     state["status"] = "TRACKING"
@@ -838,8 +945,11 @@ def save_mapping_diagnostics(
     visible_landmarks = np.array(
         [row["visible_landmarks"] for row in rows]
     )
-    map_expansion_threshold = np.array(
-        [row["map_expansion_threshold"] for row in rows]
+    map_coverage_ratio = np.array(
+        [row["map_coverage_ratio"] for row in rows]
+    )
+    map_expansion_coverage_threshold = np.array(
+        [row["map_expansion_coverage_threshold"] for row in rows]
     )
     new_features = np.array([row["new_features"] for row in rows])
     nearby_associations = np.array(
@@ -852,7 +962,7 @@ def save_mapping_diagnostics(
     landmarks = np.array([row["landmarks"] for row in rows])
     keyframe_added = np.array([row["keyframe_added"] for row in rows]) == 1
 
-    figure, axes = plt.subplots(4, 1, figsize=(15, 13), sharex=True)
+    figure, axes = plt.subplots(5, 1, figsize=(15, 15), sharex=True)
 
     axes[0].plot(frames, matches, label="PnP correspondences")
     axes[0].plot(frames, inliers, label="PnP inliers")
@@ -892,33 +1002,44 @@ def save_mapping_diagnostics(
         linestyle=":",
         label="Required PnP inliers",
     )
-    axes[1].scatter(
-        frames[keyframe_added],
-        visible_landmarks[keyframe_added],
-        color="red",
-        s=18,
-        label="Keyframe added",
-        zorder=3,
-    )
-    axes[1].plot(
-        frames,
-        map_expansion_threshold,
-        color="orange",
-        linestyle="--",
-        label="Map expansion threshold",
-    )
     axes[1].set_ylabel("Points")
     axes[1].set_ylim(bottom=0.0)
     axes[1].grid(True)
     axes[1].legend()
 
-    axes[2].plot(frames, new_features, label="New features")
     axes[2].plot(
+        frames,
+        100.0 * map_coverage_ratio,
+        color="tab:green",
+        label="Mean grid coverage",
+    )
+    axes[2].plot(
+        frames,
+        100.0 * map_expansion_coverage_threshold,
+        color="orange",
+        linestyle="--",
+        label="Map expansion threshold",
+    )
+    axes[2].scatter(
+        frames[keyframe_added],
+        100.0 * map_coverage_ratio[keyframe_added],
+        color="red",
+        s=18,
+        label="Keyframe added",
+        zorder=3,
+    )
+    axes[2].set_ylabel("ROI coverage [%]")
+    axes[2].set_ylim(0.0, 105.0)
+    axes[2].grid(True)
+    axes[2].legend()
+
+    axes[3].plot(frames, new_features, label="New features")
+    axes[3].plot(
         frames,
         nearby_associations,
         label="Associated with nearby landmarks",
     )
-    axes[2].scatter(
+    axes[3].scatter(
         frames[keyframe_added],
         new_features[keyframe_added],
         color="red",
@@ -926,30 +1047,30 @@ def save_mapping_diagnostics(
         label="Keyframe added",
         zorder=3,
     )
-    axes[2].set_ylabel("Features")
-    axes[2].grid(True)
-    axes[2].legend()
+    axes[3].set_ylabel("Features")
+    axes[3].grid(True)
+    axes[3].legend()
 
-    axes[3].bar(
+    axes[4].bar(
         frames,
         new_landmarks,
         width=1.0,
         color="tab:blue",
         label="New landmarks",
     )
-    axes[3].bar(
+    axes[4].bar(
         frames,
         -removed_landmarks,
         width=1.0,
         color="tab:orange",
         label="Removed landmarks",
     )
-    axes[3].set_ylabel("Landmark change")
-    axes[3].set_xlabel("Frame")
-    axes[3].grid(True)
-    axes[3].legend(loc="upper left")
+    axes[4].set_ylabel("Landmark change")
+    axes[4].set_xlabel("Frame")
+    axes[4].grid(True)
+    axes[4].legend(loc="upper left")
 
-    landmarks_axis = axes[3].twinx()
+    landmarks_axis = axes[4].twinx()
     landmarks_axis.plot(
         frames,
         landmarks,

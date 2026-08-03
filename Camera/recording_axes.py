@@ -1,4 +1,4 @@
-import numpy as np
+﻿import numpy as np
 
 
 # Add a separate verified axis mapping for every recording.
@@ -227,8 +227,175 @@ CAMERA_MAP_TO_DOBOT_BY_RECORDING = {
             [0.0, 1.0, 0.0],
         ]
     ),
+    "arc1cm-close-dark-nolight_Speed-3_2026-07-29_16.12.21": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-close-dark-withlight_Speed-3_2026-07-29_16.08.30": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-close-white-nolight_Speed-3_2026-07-29_16.29.21": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-close-white-withlight_Speed-3_2026-07-29_16.32.22": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-far-dark-nolight_Speed-3_2026-07-29_16.52.01": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-far-dark-withlight_Speed-3_2026-07-29_16.53.23": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-far-white-nolight_Speed-3_2026-07-29_17.03.56": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-far-white-withlight_Speed-3_2026-07-29_17.02.26": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-initial-dark-nolight_Speed-3_2026-07-29_16.48.44": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-initial-dark-withlight_Speed-3_2026-07-29_16.47.01": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-initial-white-nolight_Speed-3_2026-07-29_16.35.50": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc1cm-initial-white-withlight_Speed-3_2026-07-29_16.34.29": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-close-dark-nolight_Speed-3_2026-07-29_16.14.42": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-close-dark-withlight_Speed-3_2026-07-29_16.15.59": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-close-white-nolight_Speed-3_2026-07-29_16.27.38": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-close-white-withlight_Speed-3_2026-07-29_16.25.40": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-far-dark-nolight_Speed-3_2026-07-29_16.56.25": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-far-dark-withlight_Speed-3_2026-07-29_16.55.05": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-far-white-nolight_Speed-3_2026-07-29_16.59.01": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-far-white-withlight_Speed-3_2026-07-29_17.00.49": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-initial-dark-nolight_Speed-3_2026-07-29_16.44.19": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-initial-dark-withlight_Speed-3_2026-07-29_16.45.45": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-initial-white-nolight_Speed-3_2026-07-29_16.37.23": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
+    "arc2cm-initial-white-withlight_Speed-3_2026-07-29_16.38.41": np.array(
+        [
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ]
+    ),
 }
-
 
 # OnlyR uses the opposite pitch direction for the camera orientation.
 CAMERA_EULER_SIGNS_BY_RECORDING = {

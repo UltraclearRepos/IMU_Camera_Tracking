@@ -25,6 +25,7 @@ from tracking_visualization import (
     create_comparison_plots,
     diagnostic_frame,
     save_mapping_diagnostics,
+    save_timing_diagnostics,
     save_top_view_video,
 )
 
@@ -43,6 +44,7 @@ MAX_FRAMES = 100000
 FEATURE_ROI_BOTTOM_FRACTION = 0.70
 MAX_OPTICAL_FLOW_FRAMES = 9  # Maximum consecutive optical-flow frames.
 MIN_OPTICAL_FLOW_TRACK_RATIO = 0.65  # Run LightGlue at this fraction of the initial tracks.
+MAP_EXPANSION_MIN_COVERAGE_RATIO = 0.70
 
 
 SAVE_DIAGNOSTIC_VIDEO = True
@@ -51,6 +53,7 @@ SAVE_TOP_VIEW_VIDEO = True
 TOP_VIEW_VIDEO_FPS = 1.0
 TOP_VIEW_VIDEO_SIZE_PX = 800
 TOP_VIEW_PADDING_MM = 20.0
+TOP_VIEW_MAX_VIEW_DISTANCE_MM = 250.0
 SHOW_PREVIEW = False
 
 
@@ -124,6 +127,7 @@ def main():
         MAX_OPTICAL_FLOW_FRAMES,
         MIN_OPTICAL_FLOW_TRACK_RATIO,
         FEATURE_ROI_BOTTOM_FRACTION,
+        MAP_EXPANSION_MIN_COVERAGE_RATIO,
     )
 
     capture = cv2.VideoCapture(str(VIDEO_PATH))
@@ -198,6 +202,19 @@ def main():
                 "time_s": time_s,
                 "timestamp": video_start_timestamp + time_s,
                 "tracking_time_ms": tracking_time_ms,
+                "feature_extraction_ms": diagnostics[
+                    "feature_extraction_ms"
+                ],
+                "aruco_pose_ms": diagnostics["aruco_pose_ms"],
+                "global_map_projection_ms": diagnostics[
+                    "global_map_projection_ms"
+                ],
+                "lightglue_ms": diagnostics["lightglue_ms"],
+                "optical_flow_ms": diagnostics["optical_flow_ms"],
+                "pnp_ransac_ms": diagnostics["pnp_ransac_ms"],
+                "pnp_refine_ms": diagnostics["pnp_refine_ms"],
+                "map_coverage_ms": diagnostics["map_coverage_ms"],
+                "map_update_ms": diagnostics["map_update_ms"],
                 "x_mm": position[0],
                 "y_mm": position[1],
                 "z_mm": position[2],
@@ -222,8 +239,11 @@ def main():
                 "visible_landmarks": diagnostics[
                     "visible_landmarks"
                 ],
-                "map_expansion_threshold": diagnostics[
-                    "map_expansion_threshold"
+                "map_coverage_ratio": diagnostics[
+                    "map_coverage_ratio"
+                ],
+                "map_expansion_coverage_threshold": diagnostics[
+                    "map_expansion_coverage_threshold"
                 ],
                 "initialization_frames": diagnostics[
                     "initialization_frames"
@@ -251,6 +271,7 @@ def main():
                     result,
                     frame.shape,
                     frame_index,
+                    TOP_VIEW_MAX_VIEW_DISTANCE_MM,
                 )
             )
 
@@ -303,10 +324,16 @@ def main():
     position_plot_path = OUTPUT_DIR / "hybrid_position.png"
     orientation_plot_path = OUTPUT_DIR / "hybrid_orientation.png"
     diagnostics_plot_path = OUTPUT_DIR / "hybrid_mapping_diagnostics.png"
+    timing_plot_path = OUTPUT_DIR / "hybrid_timing_diagnostics.png"
     save_results_csv(rows, csv_path)
     save_mapping_diagnostics(
         rows,
         diagnostics_plot_path,
+        f"{RECORDING_NAME}_hybrid",
+    )
+    save_timing_diagnostics(
+        rows,
+        timing_plot_path,
         f"{RECORDING_NAME}_hybrid",
     )
     position_rmse, orientation_rmse = create_comparison_plots(
@@ -321,6 +348,7 @@ def main():
     print(f"Saved: {position_plot_path}")
     print(f"Saved: {orientation_plot_path}")
     print(f"Saved: {diagnostics_plot_path}")
+    print(f"Saved: {timing_plot_path}")
     if SAVE_DIAGNOSTIC_VIDEO:
         print(f"Saved: {video_path_output}")
     print(f"Position RMSE: {position_rmse:.2f} mm")

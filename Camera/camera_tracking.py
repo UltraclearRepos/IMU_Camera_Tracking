@@ -26,6 +26,7 @@ from tracking_visualization import (
     create_comparison_plots,
     diagnostic_frame,
     save_mapping_diagnostics,
+    save_timing_diagnostics,
     save_top_view_video,
 )
 
@@ -33,13 +34,16 @@ from tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "initial-white-withlight-25deg_Speed-3_2026-07-30_13.06.03"
-DATA_FOLDER = "OnlyR"
+# 1. Dodac landmarki tylko tam gdzie pusto / ewentualnie tam gdzie juz jest pokrycie dodac tylko niewiarygodnie dobre, czyli wtedy np moze byc tak ze dodamy np tylko 20, nie trzeba za kazdym razem dopychac do limitu,
+#    limit powinien byc tylko gorna granica
+
+RECORDING_NAME = "arc1cm-initial-white-withlight_Speed-3_2026-07-29_16.34.29"
+DATA_FOLDER = "LineArc-1-2cm"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
-MAP_EXPANSION_THRESHOLD_MULTIPLIER = 0.7
-FEATURE_ROI_BOTTOM_FRACTION = 0.70
+MAP_EXPANSION_MIN_COVERAGE_RATIO = 0.7
+FEATURE_ROI_BOTTOM_FRACTION = 0.85
 
 
 SAVE_DIAGNOSTIC_VIDEO = True
@@ -48,11 +52,11 @@ SAVE_TOP_VIEW_VIDEO = True
 TOP_VIEW_VIDEO_FPS = 1.0
 TOP_VIEW_VIDEO_SIZE_PX = 800
 TOP_VIEW_PADDING_MM = 20.0
+TOP_VIEW_MAX_VIEW_DISTANCE_MM = 250.0
 SHOW_PREVIEW = False
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_DIR = PROJECT_DIR / "Data" / DATA_FOLDER
 RESULTS_DIR = SCRIPT_DIR / "results" / DATA_FOLDER
 CAMERA_MATRIX_PATH = (
     SCRIPT_DIR
@@ -89,7 +93,8 @@ def load_video_start_timestamp(path):
 def run_tracking(
     recording_name,
     output_dir,
-    map_expansion_threshold_multiplier,
+    data_folder,
+    map_expansion_min_coverage_ratio,
     feature_roi_bottom_fraction,
 ):
     if not torch.cuda.is_available() and DEVICE == "cuda":
@@ -101,16 +106,17 @@ def run_tracking(
     camera_euler_signs = CAMERA_EULER_SIGNS_BY_RECORDING[
         recording_name
     ]
+    data_dir = PROJECT_DIR / "Data" / data_folder
     video_path = next(
-        (DATA_DIR / "videos").glob(
+        (data_dir / "videos").glob(
             f"{recording_name}_{CAMERA_NAME}.*"
         )
     )
     ground_truth_path = (
-        DATA_DIR / "dobot" / f"{recording_name}.csv"
+        data_dir / "dobot" / f"{recording_name}.csv"
     )
     video_timestamp_path = (
-        DATA_DIR
+        data_dir
         / "video_timestamps"
         / f"{recording_name}.csv"
     )
@@ -127,8 +133,8 @@ def run_tracking(
         camera_matrix,
         distortion,
         feature_roi_bottom_fraction=feature_roi_bottom_fraction,
-        map_expansion_threshold_multiplier=(
-            map_expansion_threshold_multiplier
+        map_expansion_min_coverage_ratio=(
+            map_expansion_min_coverage_ratio
         ),
     )
 
@@ -202,6 +208,19 @@ def run_tracking(
                 "time_s": time_s,
                 "timestamp": video_start_timestamp + time_s,
                 "tracking_time_ms": tracking_time_ms,
+                "feature_extraction_ms": diagnostics[
+                    "feature_extraction_ms"
+                ],
+                "aruco_pose_ms": diagnostics["aruco_pose_ms"],
+                "global_map_projection_ms": diagnostics[
+                    "global_map_projection_ms"
+                ],
+                "lightglue_ms": diagnostics["lightglue_ms"],
+                "optical_flow_ms": diagnostics["optical_flow_ms"],
+                "pnp_ransac_ms": diagnostics["pnp_ransac_ms"],
+                "pnp_refine_ms": diagnostics["pnp_refine_ms"],
+                "map_coverage_ms": diagnostics["map_coverage_ms"],
+                "map_update_ms": diagnostics["map_update_ms"],
                 "x_mm": position[0],
                 "y_mm": position[1],
                 "z_mm": position[2],
@@ -222,8 +241,11 @@ def run_tracking(
                 "visible_landmarks": diagnostics[
                     "visible_landmarks"
                 ],
-                "map_expansion_threshold": diagnostics[
-                    "map_expansion_threshold"
+                "map_coverage_ratio": diagnostics[
+                    "map_coverage_ratio"
+                ],
+                "map_expansion_coverage_threshold": diagnostics[
+                    "map_expansion_coverage_threshold"
                 ],
                 "initialization_frames": diagnostics[
                     "initialization_frames"
@@ -251,6 +273,7 @@ def run_tracking(
                     result,
                     frame.shape,
                     frame_index,
+                    TOP_VIEW_MAX_VIEW_DISTANCE_MM,
                 )
             )
 
@@ -299,10 +322,16 @@ def run_tracking(
     position_plot_path = output_dir / "position.png"
     orientation_plot_path = output_dir / "orientation.png"
     diagnostics_plot_path = output_dir / "mapping_diagnostics.png"
+    timing_plot_path = output_dir / "timing_diagnostics.png"
     save_results_csv(rows, csv_path)
     save_mapping_diagnostics(
         rows,
         diagnostics_plot_path,
+        recording_name,
+    )
+    save_timing_diagnostics(
+        rows,
+        timing_plot_path,
         recording_name,
     )
     position_rmse, orientation_rmse = create_comparison_plots(
@@ -322,8 +351,8 @@ def run_tracking(
         "feature_roi_bottom_fraction": (
             feature_roi_bottom_fraction
         ),
-        "map_expansion_threshold_multiplier": (
-            map_expansion_threshold_multiplier
+        "map_expansion_min_coverage_ratio": (
+            map_expansion_min_coverage_ratio
         ),
     }
     metrics_path = output_dir / "metrics.json"
@@ -334,6 +363,7 @@ def run_tracking(
     print(f"Saved: {position_plot_path}")
     print(f"Saved: {orientation_plot_path}")
     print(f"Saved: {diagnostics_plot_path}")
+    print(f"Saved: {timing_plot_path}")
     print(f"Saved: {metrics_path}")
     if SAVE_DIAGNOSTIC_VIDEO:
         print(f"Saved: {video_path_output}")
@@ -352,7 +382,8 @@ def main():
     run_tracking(
         RECORDING_NAME,
         RESULTS_DIR / RECORDING_NAME,
-        MAP_EXPANSION_THRESHOLD_MULTIPLIER,
+        DATA_FOLDER,
+        MAP_EXPANSION_MIN_COVERAGE_RATIO,
         FEATURE_ROI_BOTTOM_FRACTION,
     )
 
