@@ -4,8 +4,9 @@ IMU/sensor-fusion-tracking/Data
 .venv
 Camera/results
 Camera/results_batch
-Data2
-Data3
+Camera/results_DISK_batch
+Camera/calibrations/**.webm
+Data
 Camera/__pycache__
 IMU/__pycache__
 IMU/results

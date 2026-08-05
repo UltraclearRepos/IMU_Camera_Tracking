@@ -9,7 +9,7 @@ from scipy.io import wavfile
 from scipy.signal import correlate2d, stft
 
 
-DATA_FOLDER = "OnlyR"
+DATA_FOLDER = "LineWithR"
 ROOT_DIR = Path(__file__).absolute().parent / "Data" / DATA_FOLDER
 VIDEO_DIR = ROOT_DIR / "videos"
 MICRO_DATA_DIR = ROOT_DIR / "micro_data"
