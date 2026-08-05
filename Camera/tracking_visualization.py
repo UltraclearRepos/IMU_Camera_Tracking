@@ -114,30 +114,20 @@ def project_map_points(
     return projected[visible]
 
 
-def camera_view_on_skin_plane(
+def image_points_on_skin_plane(
+    image_points,
     result,
     camera_matrix,
     distortion,
-    frame_shape,
     maximum_view_distance_mm,
 ):
-    height, width = frame_shape[:2]
-    image_corners = np.array(
-        [
-            [0.0, 0.0],
-            [width - 1.0, 0.0],
-            [width - 1.0, height - 1.0],
-            [0.0, height - 1.0],
-        ],
-        dtype=np.float64,
-    )
-    normalized_corners = cv2.undistortPoints(
-        image_corners.reshape(-1, 1, 2),
+    normalized_points = cv2.undistortPoints(
+        np.asarray(image_points, dtype=np.float64).reshape(-1, 1, 2),
         camera_matrix,
         distortion,
     ).reshape(-1, 2)
     camera_rays = np.column_stack(
-        [normalized_corners, np.ones(4)]
+        [normalized_points, np.ones(len(normalized_points))]
     )
 
     camera_to_map = result["R"].T
@@ -167,6 +157,63 @@ def camera_view_on_skin_plane(
     return intersections
 
 
+def camera_view_on_skin_plane(
+    result,
+    camera_matrix,
+    distortion,
+    frame_shape,
+    maximum_view_distance_mm,
+):
+    height, width = frame_shape[:2]
+    image_corners = np.array(
+        [
+            [0.0, 0.0],
+            [width - 1.0, 0.0],
+            [width - 1.0, height - 1.0],
+            [0.0, height - 1.0],
+        ]
+    )
+    return image_points_on_skin_plane(
+        image_corners,
+        result,
+        camera_matrix,
+        distortion,
+        maximum_view_distance_mm,
+    )
+
+
+def coverage_grid_on_skin_plane(
+    tracker,
+    result,
+    frame_shape,
+    maximum_view_distance_mm,
+):
+    height, width = frame_shape[:2]
+    roi_top = height * (1.0 - tracker.feature_roi_bottom_fraction)
+    grid_lines = []
+
+    for column in range(tracker.map_coverage_grid_columns + 1):
+        x = column * (width - 1.0) / tracker.map_coverage_grid_columns
+        grid_lines.append(np.array([[x, roi_top], [x, height - 1.0]]))
+
+    for row in range(tracker.map_coverage_grid_rows + 1):
+        y = roi_top + row * (
+            height - 1.0 - roi_top
+        ) / tracker.map_coverage_grid_rows
+        grid_lines.append(np.array([[0.0, y], [width - 1.0, y]]))
+
+    return [
+        image_points_on_skin_plane(
+            line,
+            result,
+            tracker.camera_matrix,
+            tracker.distortion,
+            maximum_view_distance_mm,
+        )
+        for line in grid_lines
+    ]
+
+
 def create_top_view_state(
     tracker,
     result,
@@ -180,6 +227,7 @@ def create_top_view_state(
         "inlier_map_points": np.empty((0, 3)),
         "camera_position": None,
         "view_polygon": np.empty((0, 3)),
+        "coverage_grid_lines": [],
         "landmarks": len(tracker.landmarks),
         "inliers": 0,
         "status": (
@@ -199,6 +247,12 @@ def create_top_view_state(
         result,
         tracker.camera_matrix,
         tracker.distortion,
+        frame_shape,
+        maximum_view_distance_mm,
+    )
+    state["coverage_grid_lines"] = coverage_grid_on_skin_plane(
+        tracker,
+        result,
         frame_shape,
         maximum_view_distance_mm,
     )
@@ -261,6 +315,21 @@ def top_view_frame(state, bounds, view_size_pixels):
         pixels[:, 1] = margin + (y_max - points[:, 1]) * scale
         return np.rint(pixels).astype(np.int32)
 
+    def draw_dashed_line(start, end):
+        delta = end.astype(float) - start.astype(float)
+        length = np.linalg.norm(delta)
+        direction = delta / length
+        for offset in np.arange(0.0, length, 8.0):
+            segment_start = start + direction * offset
+            segment_end = start + direction * min(offset + 4.0, length)
+            cv2.line(
+                output,
+                tuple(np.rint(segment_start).astype(int)),
+                tuple(np.rint(segment_end).astype(int)),
+                (85, 85, 85),
+                1,
+            )
+
     grid_step_mm = 50.0
     grid_x = np.arange(
         np.ceil(x_min / grid_step_mm) * grid_step_mm,
@@ -285,6 +354,10 @@ def top_view_frame(state, bounds, view_size_pixels):
     if x_min <= 0.0 <= x_max:
         axis_y = to_pixels([[0.0, y_min], [0.0, y_max]])
         cv2.line(output, axis_y[0], axis_y[1], (40, 210, 80), 2)
+
+    for grid_line in state["coverage_grid_lines"]:
+        line_pixels = to_pixels(grid_line[:, :2])
+        draw_dashed_line(line_pixels[0], line_pixels[1])
 
     map_points = state["map_points"]
     if len(map_points) > 0:
@@ -978,6 +1051,14 @@ def save_mapping_diagnostics(
         linestyle=":",
         color="black",
         label="Required PnP inliers",
+    )
+    axes[0].scatter(
+        frames[keyframe_added],
+        inliers[keyframe_added],
+        color="red",
+        s=24,
+        label="Map expanded",
+        zorder=3,
     )
     axes[0].set_ylabel("Points")
     axes[0].grid(True)

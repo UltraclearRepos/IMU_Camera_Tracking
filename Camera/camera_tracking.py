@@ -11,10 +11,6 @@ import cv2
 import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
-from recording_axes import (
-    CAMERA_EULER_SIGNS_BY_RECORDING,
-    CAMERA_MAP_TO_DOBOT_BY_RECORDING,
-)
 from skin_map_tracker import (
     DEVICE,
     INITIALIZATION_FRAMES,
@@ -37,13 +33,13 @@ from tracking_visualization import (
 # 1. Dodac landmarki tylko tam gdzie pusto / ewentualnie tam gdzie juz jest pokrycie dodac tylko niewiarygodnie dobre, czyli wtedy np moze byc tak ze dodamy np tylko 20, nie trzeba za kazdym razem dopychac do limitu,
 #    limit powinien byc tylko gorna granica
 
-RECORDING_NAME = "arc1cm-initial-white-withlight_Speed-3_2026-07-29_16.34.29"
+RECORDING_NAME = "arc2cm-far-white-withlight_Speed-3_2026-07-29_17.00.49"
 DATA_FOLDER = "LineArc-1-2cm"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
 MAP_EXPANSION_MIN_COVERAGE_RATIO = 0.7
-FEATURE_ROI_BOTTOM_FRACTION = 0.85
+FEATURE_ROI_BOTTOM_FRACTION = 0.7
 
 
 SAVE_DIAGNOSTIC_VIDEO = True
@@ -77,6 +73,16 @@ def camera_position(R_map_to_camera, t_map_to_camera):
     return -R_camera_to_map @ t_map_to_camera.reshape(3)
 
 
+CAMERA_TO_OUTPUT_AXES = np.array(
+    [
+        [-1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [0.0, -1.0, 0.0],
+    ]
+)
+CAMERA_EULER_SIGNS = np.array([1.0, -1.0, 1.0])
+
+
 def save_results_csv(rows, path):
     with path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=rows[0].keys())
@@ -100,12 +106,6 @@ def run_tracking(
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
 
-    camera_map_to_dobot = CAMERA_MAP_TO_DOBOT_BY_RECORDING[
-        recording_name
-    ]
-    camera_euler_signs = CAMERA_EULER_SIGNS_BY_RECORDING[
-        recording_name
-    ]
     data_dir = PROJECT_DIR / "Data" / data_folder
     video_path = next(
         (data_dir / "videos").glob(
@@ -164,6 +164,18 @@ def run_tracking(
     initial_rotation = None
     frame_index = 0
 
+    print("Initializing map...")
+    initialized = False
+    while not initialized and frame_index < MAX_FRAMES:
+        success, frame = capture.read()
+        if not success:
+            break
+
+        initialized = tracker.initialize(frame)
+        frame_index += 1
+
+    print("Map initialized. Starting tracking...")
+
     while frame_index < MAX_FRAMES:
         success, frame = capture.read()
         if not success:
@@ -180,10 +192,11 @@ def run_tracking(
         )
         tracking_times_ms.append(tracking_time_ms)
         diagnostics = tracker.last_diagnostics
-        if result is None:
-            position = np.full(3, np.nan)
-            euler = np.full(3, np.nan)
-        else:
+
+        position = np.full(3, np.nan)
+        euler = np.full(3, np.nan)
+
+        if result is not None:
             absolute_position = camera_position(result["R"], result["t"])
             camera_rotation = result["R"].T
 
@@ -191,14 +204,14 @@ def run_tracking(
                 initial_position = absolute_position.copy()
                 initial_rotation = camera_rotation.copy()
 
-            position = camera_map_to_dobot @ (
+            position = CAMERA_TO_OUTPUT_AXES @ (
                 absolute_position - initial_position
             )
             relative_rotation = initial_rotation.T @ camera_rotation
             euler = Rotation.from_matrix(relative_rotation).as_euler(
                 "xyz", degrees=True
             )
-            euler *= camera_euler_signs
+            euler *= CAMERA_EULER_SIGNS
 
         positions.append(position)
         time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0

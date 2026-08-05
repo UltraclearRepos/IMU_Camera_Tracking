@@ -241,8 +241,7 @@ class HybridSkinMapTracker(SkinMapTracker):
         insufficient_tracks = len(self.active_points) < MIN_MATCHES
 
         if (
-            not self.keyframes
-            or self.force_lightglue
+            self.force_lightglue
             or maximum_flow_frames_reached
             or insufficient_tracks
         ):

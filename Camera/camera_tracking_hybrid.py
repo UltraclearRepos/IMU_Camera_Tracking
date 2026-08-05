@@ -11,10 +11,6 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 from hybrid_skin_map_tracker import HybridSkinMapTracker
-from recording_axes import (
-    CAMERA_EULER_SIGNS_BY_RECORDING,
-    CAMERA_MAP_TO_DOBOT_BY_RECORDING,
-)
 from skin_map_tracker import (
     DEVICE,
     INITIALIZATION_FRAMES,
@@ -38,8 +34,6 @@ RECORDING_NAME = "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25"
 DATA_FOLDER = "Line"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
-CAMERA_MAP_TO_DOBOT = CAMERA_MAP_TO_DOBOT_BY_RECORDING[RECORDING_NAME]
-CAMERA_EULER_SIGNS = CAMERA_EULER_SIGNS_BY_RECORDING[RECORDING_NAME]
 MAX_FRAMES = 100000
 FEATURE_ROI_BOTTOM_FRACTION = 0.70
 MAX_OPTICAL_FLOW_FRAMES = 9  # Maximum consecutive optical-flow frames.
@@ -95,6 +89,16 @@ DISTORTION_PATH = (
 def camera_position(R_map_to_camera, t_map_to_camera):
     R_camera_to_map = R_map_to_camera.T
     return -R_camera_to_map @ t_map_to_camera.reshape(3)
+
+
+CAMERA_TO_OUTPUT_AXES = np.array(
+    [
+        [-1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [0.0, -1.0, 0.0],
+    ]
+)
+CAMERA_EULER_SIGNS = np.array([1.0, -1.0, 1.0])
 
 
 def save_results_csv(rows, path):
@@ -156,6 +160,18 @@ def main():
     initial_rotation = None
     frame_index = 0
 
+    print("Initializing map...")
+    initialized = False
+    while not initialized and frame_index < MAX_FRAMES:
+        success, frame = capture.read()
+        if not success:
+            break
+
+        initialized = tracker.initialize(frame)
+        frame_index += 1
+
+    print("Map initialized. Starting hybrid tracking...")
+
     while frame_index < MAX_FRAMES:
         success, frame = capture.read()
         if not success:
@@ -173,10 +189,10 @@ def main():
         tracking_times_ms.append(tracking_time_ms)
         diagnostics = tracker.last_diagnostics
 
-        if result is None:
-            position = np.full(3, np.nan)
-            euler = np.full(3, np.nan)
-        else:
+        position = np.full(3, np.nan)
+        euler = np.full(3, np.nan)
+
+        if result is not None:
             absolute_position = camera_position(result["R"], result["t"])
             camera_rotation = result["R"].T
 
@@ -184,7 +200,7 @@ def main():
                 initial_position = absolute_position.copy()
                 initial_rotation = camera_rotation.copy()
 
-            position = CAMERA_MAP_TO_DOBOT @ (
+            position = CAMERA_TO_OUTPUT_AXES @ (
                 absolute_position - initial_position
             )
             relative_rotation = initial_rotation.T @ camera_rotation

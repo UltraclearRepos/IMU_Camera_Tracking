@@ -80,6 +80,34 @@ def required_pose_counts(matchable_landmarks):
     return required_matches, required_inliers
 
 
+def camera_aligned_plane_pose(rvec, tvec):
+    R_aruco_to_camera = cv2.Rodrigues(rvec)[0]
+    marker_position = tvec.reshape(3)
+
+    normal_camera = R_aruco_to_camera[:, 2]
+    if normal_camera[2] < 0.0:
+        normal_camera = -normal_camera
+
+    camera_forward = np.array([0.0, -1.0, 0.0])
+    forward_camera = camera_forward - (
+        np.dot(camera_forward, normal_camera) * normal_camera
+    )
+    forward_camera /= np.linalg.norm(forward_camera)
+
+    side_camera = np.cross(normal_camera, forward_camera)
+    side_camera /= np.linalg.norm(side_camera)
+    down_camera = -forward_camera
+
+    R_map_to_camera = np.column_stack(
+        (side_camera, down_camera, normal_camera)
+    )
+    distance_to_skin = (
+        np.dot(normal_camera, marker_position) / normal_camera[2]
+    )
+    t_map_to_camera = np.array([0.0, 0.0, distance_to_skin])
+    return R_map_to_camera, t_map_to_camera
+
+
 class SkinMapTracker:
     def __init__(
         self,
@@ -94,6 +122,8 @@ class SkinMapTracker:
         self.map_expansion_min_coverage_ratio = (
             map_expansion_min_coverage_ratio
         )
+        self.map_coverage_grid_rows = MAP_COVERAGE_GRID_ROWS
+        self.map_coverage_grid_columns = MAP_COVERAGE_GRID_COLUMNS
 
         self.extractor = DISK(max_num_keypoints=MAX_FEATURES).eval().to(DEVICE)
         self.matcher = LightGlue(features="disk").eval().to(DEVICE)
@@ -183,8 +213,7 @@ class SkinMapTracker:
         if not success:
             return None
 
-        R_map_to_camera = cv2.Rodrigues(rvec)[0]
-        return R_map_to_camera, tvec.reshape(3)
+        return camera_aligned_plane_pose(rvec, tvec)
 
     def pixels_to_skin_plane(self, keypoints, R_map_to_camera, t_map_to_camera):
         normalized = cv2.undistortPoints(
@@ -306,7 +335,7 @@ class SkinMapTracker:
             and len(confirmed_indices) >= INITIALIZATION_MIN_LANDMARKS
         )
         if not initialization_ready:
-            return None
+            return False
 
         no_known_features = np.empty(0, dtype=np.int64)
         map_update_started = start_timer()
@@ -323,15 +352,9 @@ class SkinMapTracker:
         )
         self.initialization = None
         self.last_diagnostics.update(map_update)
-
-        return {
-            "R": R_map_to_camera,
-            "t": t_map_to_camera,
-            "inliers": 0,
-            "inlier_map_points": np.empty((0, 3)),
-            "outlier_points": np.empty((0, 2)),
-            "nearby_associations": 0,
-        }
+        self.R_map_to_camera = R_map_to_camera
+        self.t_map_to_camera = t_map_to_camera
+        return True
 
     def all_map_points(self):
         return np.array(
@@ -1154,59 +1177,46 @@ class SkinMapTracker:
             "map_update_ms": np.nan,
         }
 
-    def track(self, frame):
+    def extract_frame_features(self, frame, phase):
         feature_extraction_started = start_timer()
         features = self.extract_features(frame)
         feature_extraction_ms = elapsed_ms(feature_extraction_started)
         feature_count = features["keypoints"].shape[1]
-        self.reset_diagnostics(feature_count, "lightglue")
+        self.reset_diagnostics(feature_count, phase)
         self.last_diagnostics["feature_extraction_ms"] = (
             feature_extraction_ms
         )
+        return features
 
-        if not self.keyframes:
+    def initialize(self, frame):
+        features = self.extract_frame_features(frame, "initialization")
+
+        if self.initialization is None:
             aruco_started = start_timer()
             initial_pose = self.find_initial_pose(frame)
             self.last_diagnostics["aruco_pose_ms"] = elapsed_ms(
                 aruco_started
             )
             if initial_pose is None:
-                if self.initialization is not None:
-                    self.last_diagnostics["initialization_frames"] = (
-                        self.initialization["frames"]
-                    )
-                    self.last_diagnostics["initialization_candidates"] = int(
-                        np.isfinite(
-                            self.initialization["map_points"]
-                        ).all(axis=1).sum()
-                    )
-                    self.last_diagnostics["initialization_confirmed"] = int(
-                        (
-                            self.initialization["observations"]
-                            >= INITIALIZATION_MIN_OBSERVATIONS
-                        ).sum()
-                    )
-                return None
+                return False
 
             R_map_to_camera, t_map_to_camera = initial_pose
             self.last_diagnostics["initialization_aruco_detected"] = 1
-            if self.initialization is None:
-                self.start_initialization(
-                    features,
-                    R_map_to_camera,
-                    t_map_to_camera,
-                )
-                return None
-
-            result = self.update_initialization(
+            self.start_initialization(
                 features,
                 R_map_to_camera,
                 t_map_to_camera,
             )
-            if result is not None:
-                self.R_map_to_camera = result["R"]
-                self.t_map_to_camera = result["t"]
-            return result
+            return False
+
+        return self.update_initialization(
+            features,
+            self.initialization["R"],
+            self.initialization["t"],
+        )
+
+    def track(self, frame):
+        features = self.extract_frame_features(frame, "lightglue")
 
         result = self.match_global_map(features)
 
