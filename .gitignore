@@ -5,6 +5,8 @@ IMU/sensor-fusion-tracking/Data
 Camera/results
 Camera/results_batch
 Camera/results_DISK_batch
+Camera/results_hybrid
+Camera/results_hybrid_DISK_batch
 Camera/calibrations/**.webm
 Data
 Camera/DataOld
