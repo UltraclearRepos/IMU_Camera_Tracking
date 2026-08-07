@@ -1,4 +1,4 @@
-"""Permanently synchronize Data2 IMU and video timestamps to Dobot."""
+"""Permanently synchronize IMU and video timestamps to Dobot."""
 
 import csv
 import json
@@ -17,7 +17,8 @@ DRY_RUN = False
 CAMERA_DELAY_TO_DOBOT_SECONDS = 0.084
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_DIR / "Data2"
+DATA_FOLDER = "firstSkinData"
+DATA_DIR = PROJECT_DIR / "Data" / DATA_FOLDER
 IMU_DIR = DATA_DIR / "imu"
 DOBOT_DIR = DATA_DIR / "dobot"
 VIDEO_TIMESTAMP_DIR = DATA_DIR / "video_timestamps"
@@ -114,7 +115,9 @@ def main():
     names = [name for name in recording_names() if name not in synchronized]
 
     if not names:
-        print("All matching Data2 recordings are already synchronized.")
+        print(
+            f"All matching {DATA_FOLDER} recordings are already synchronized."
+        )
         return
 
     results = estimate_imu_delays(names)

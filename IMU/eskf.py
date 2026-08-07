@@ -16,6 +16,7 @@ from scipy.spatial.transform import Rotation
 # -----------------------------------------------------------------------------
 
 RECORDING_NAME = "skin_low_res_Speed-3_2026-07-21_13.15.30"
+DATA_FOLDER = "firstSkinData"
 INCLUDE_CAMERA_RESULTS = True
 USE_CAMERA_POSE_CORRECTION = True
 CAMERA_POSITION_STD_M = 0.002
@@ -25,17 +26,18 @@ IMU_GYRO_NOISE_MULTIPLIER = 10.0
 
 SCRIPT_DIR = Path(__file__).absolute().parent
 PROJECT_DIR = SCRIPT_DIR.parent
-DATA_DIR = PROJECT_DIR / "Data2"
+DATA_DIR = PROJECT_DIR / "Data" / DATA_FOLDER
 IMU_LOG_PATH = DATA_DIR / "imu" / f"{RECORDING_NAME}.csv"
 GROUND_TRUTH_PATH = DATA_DIR / "dobot" / f"{RECORDING_NAME}.csv"
 CAMERA_RESULTS_PATH = (
     PROJECT_DIR
     / "Camera"
     / "results"
+    / DATA_FOLDER
     / RECORDING_NAME
-    / f"{RECORDING_NAME}_camera.csv"
+    / "camera.csv"
 )
-OUTPUT_DIR = SCRIPT_DIR / "results"
+OUTPUT_DIR = SCRIPT_DIR / "results" / DATA_FOLDER
 OUTPUT_CSV_PATH = OUTPUT_DIR / f"{RECORDING_NAME}_eskf.csv"
 OUTPUT_POSITION_PLOT_PATH = (
     OUTPUT_DIR / f"{RECORDING_NAME}_eskf_vs_gt_position.png"
@@ -929,7 +931,7 @@ def create_comparison_plots(imu_rows):
     )
     title = (
         f"{RECORDING_NAME}: {estimate_label} vs GT\n"
-        "Data2 timestamps synchronized to Dobot"
+        f"{DATA_FOLDER} timestamps synchronized to Dobot"
     )
 
     position_rmse, camera_position_rmse = save_comparison_figure(
