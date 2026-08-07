@@ -33,8 +33,8 @@ from tracking_visualization import (
 # 1. Dodac landmarki tylko tam gdzie pusto / ewentualnie tam gdzie juz jest pokrycie dodac tylko niewiarygodnie dobre, czyli wtedy np moze byc tak ze dodamy np tylko 20, nie trzeba za kazdym razem dopychac do limitu,
 #    limit powinien byc tylko gorna granica
 
-RECORDING_NAME = "arc2cm-far-white-withlight_Speed-3_2026-07-29_17.00.49"
-DATA_FOLDER = "LineArc-1-2cm"
+RECORDING_NAME = "rotated_Speed-3_2026-08-05_14.24.17"
+DATA_FOLDER = "RotatedAruco"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
@@ -99,18 +99,16 @@ def load_video_start_timestamp(path):
 def run_tracking(
     recording_name,
     output_dir,
-    data_folder,
+    data_dir,
     map_expansion_min_coverage_ratio,
     feature_roi_bottom_fraction,
 ):
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
 
-    data_dir = PROJECT_DIR / "Data" / data_folder
+    data_dir = Path(data_dir)
     video_path = next(
-        (data_dir / "videos").glob(
-            f"{recording_name}_{CAMERA_NAME}.*"
-        )
+        (data_dir / "videos").glob(f"{recording_name}_{CAMERA_NAME}.*")
     )
     ground_truth_path = (
         data_dir / "dobot" / f"{recording_name}.csv"
@@ -133,9 +131,7 @@ def run_tracking(
         camera_matrix,
         distortion,
         feature_roi_bottom_fraction=feature_roi_bottom_fraction,
-        map_expansion_min_coverage_ratio=(
-            map_expansion_min_coverage_ratio
-        ),
+        map_expansion_min_coverage_ratio=map_expansion_min_coverage_ratio,
     )
 
     capture = cv2.VideoCapture(str(video_path))
@@ -361,6 +357,10 @@ def run_tracking(
         "position_rmse_mm": float(position_rmse),
         "orientation_rmse_deg": float(orientation_rmse),
         "tracked_percent": tracked_percent,
+        "mean_tracking_time_ms": float(average_tracking_time_ms),
+        "median_tracking_time_ms": float(median_tracking_time_ms),
+        "p95_tracking_time_ms": float(p95_tracking_time_ms),
+        "tracking_fps": float(tracking_fps),
         "feature_roi_bottom_fraction": (
             feature_roi_bottom_fraction
         ),
@@ -395,7 +395,7 @@ def main():
     run_tracking(
         RECORDING_NAME,
         RESULTS_DIR / RECORDING_NAME,
-        DATA_FOLDER,
+        PROJECT_DIR / "Data" / DATA_FOLDER,
         MAP_EXPANSION_MIN_COVERAGE_RATIO,
         FEATURE_ROI_BOTTOM_FRACTION,
     )

@@ -70,6 +70,19 @@ class HybridSkinMapTracker(SkinMapTracker):
             self.force_lightglue = True
             return result
 
+        active_image_points = np.concatenate(
+            (
+                result["inlier_image_points"],
+                result["new_landmark_image_points"],
+            ),
+            axis=0,
+        )
+        active_landmark_ids = np.concatenate(
+            (
+                result["inlier_landmark_ids"],
+                result["new_landmark_ids"],
+            )
+        )
         self.store_active_tracks(
             gray,
             result["inlier_image_points"],
@@ -212,9 +225,6 @@ class HybridSkinMapTracker(SkinMapTracker):
             return None
 
         image_points, landmark_ids = tracked_points
-        track_ratio = len(image_points) / self.lightglue_track_count
-        if track_ratio <= self.min_optical_flow_track_ratio:
-            return self.track_with_lightglue(frame, gray)
 
         result = self.estimate_flow_pose(image_points, landmark_ids)
         if result is None:
@@ -239,11 +249,13 @@ class HybridSkinMapTracker(SkinMapTracker):
             > self.max_optical_flow_frames
         )
         insufficient_tracks = len(self.active_points) < MIN_MATCHES
+        insufficient_track_ratio = len(self.active_points) <= (self.min_optical_flow_track_ratio * self.lightglue_track_count)
 
         if (
             self.force_lightglue
             or maximum_flow_frames_reached
             or insufficient_tracks
+            or insufficient_track_ratio
         ):
             return self.track_with_lightglue(frame, gray)
 

@@ -153,9 +153,7 @@ class SkinMapTracker:
         keypoints = features["keypoints"].clone()
         keypoints[0, :, 1] += roi_top
         features["keypoints"] = keypoints
-        features["image_size"] = features["image_size"].new_tensor(
-            [[width, height]]
-        )
+        features["image_size"] = features["image_size"].new_tensor([[width, height]])
         keep = torch.ones(
             features["keypoints"].shape[1],
             dtype=torch.bool,
@@ -351,7 +349,17 @@ class SkinMapTracker:
             map_update_started
         )
         self.initialization = None
-        self.last_diagnostics.update(map_update)
+        self.last_diagnostics.update(
+            {
+                key: map_update[key]
+                for key in (
+                    "keyframe_added",
+                    "nearby_associations",
+                    "new_landmarks",
+                    "removed_landmarks",
+                )
+            }
+        )
         self.R_map_to_camera = R_map_to_camera
         self.t_map_to_camera = t_map_to_camera
         return True
@@ -396,7 +404,7 @@ class SkinMapTracker:
             + (1.0 - LANDMARK_INLIER_QUALITY_WEIGHT) * match_rate
         )
 
-    def update_landmark_quality(
+    def update_landmark_quality( # maybe we dont need to do it again, maybe with rvec and tvec from previous frame would be enough
         self,
         candidate_landmark_ids,
         candidate_map_points,
@@ -803,6 +811,10 @@ class SkinMapTracker:
                 "nearby_associations": len(nearby_associations),
                 "new_landmarks": 0,
                 "removed_landmarks": 0,
+                "new_landmark_image_points": np.empty(
+                    (0, 2), dtype=np.float32
+                ),
+                "new_landmark_ids": np.empty(0, dtype=np.int64),
             }
 
         protected_landmark_ids = set(
@@ -828,6 +840,10 @@ class SkinMapTracker:
                 "nearby_associations": len(nearby_associations),
                 "new_landmarks": 0,
                 "removed_landmarks": removed_landmarks,
+                "new_landmark_image_points": np.empty(
+                    (0, 2), dtype=np.float32
+                ),
+                "new_landmark_ids": np.empty(0, dtype=np.int64),
             }
 
         camera_rotation = R_map_to_camera.T
@@ -848,6 +864,7 @@ class SkinMapTracker:
                 int(feature_index),
             )
 
+        new_landmark_ids = []
         for feature_index, point in zip(new_feature_indices, new_points):
             landmark_id = self.create_landmark(
                 point,
@@ -856,12 +873,21 @@ class SkinMapTracker:
                 int(feature_index),
             )
             keyframe["landmark_ids"][feature_index] = landmark_id
+            new_landmark_ids.append(landmark_id)
 
         return {
             "keyframe_added": 1,
             "nearby_associations": len(nearby_associations),
             "new_landmarks": len(new_points),
             "removed_landmarks": removed_landmarks,
+            "new_landmark_image_points": np.asarray(
+                keypoints[new_feature_indices],
+                dtype=np.float32,
+            ).reshape(-1, 2),
+            "new_landmark_ids": np.asarray(
+                new_landmark_ids,
+                dtype=np.int64,
+            ),
         }
 
     def should_add_keyframe(self, result):
@@ -1032,6 +1058,7 @@ class SkinMapTracker:
             global_features,
             expected_visible_count,
         ) = visible_map
+
         matchable_landmarks = min(
             expected_visible_count,
             len(current_keypoints),
@@ -1225,16 +1252,11 @@ class SkinMapTracker:
 
         self.R_map_to_camera = result["R"]
         self.t_map_to_camera = result["t"]
+
         coverage_started = start_timer()
-        (
-            result["visible_landmarks"],
-            result["map_coverage_ratio"],
-        ) = self.measure_map_coverage(
-            features["image_size"]
-        )
-        self.last_diagnostics["map_coverage_ms"] = elapsed_ms(
-            coverage_started
-        )
+        result["visible_landmarks"], result["map_coverage_ratio"] = self.measure_map_coverage(features["image_size"])
+        self.last_diagnostics["map_coverage_ms"] = elapsed_ms(coverage_started)
+
         self.map_coverage_ratio = result["map_coverage_ratio"]
         self.last_diagnostics["visible_landmarks"] = result[
             "visible_landmarks"
@@ -1243,6 +1265,8 @@ class SkinMapTracker:
             "map_coverage_ratio"
         ]
         result["nearby_associations"] = 0
+        result["new_landmark_image_points"] = np.empty((0, 2), dtype=np.float32)
+        result["new_landmark_ids"] = np.empty(0, dtype=np.int64)
 
         if self.should_add_keyframe(result):
             map_update_started = start_timer()
@@ -1260,6 +1284,22 @@ class SkinMapTracker:
             result["nearby_associations"] = map_update[
                 "nearby_associations"
             ]
-            self.last_diagnostics.update(map_update)
+            result["new_landmark_image_points"] = map_update[
+                "new_landmark_image_points"
+            ]
+            result["new_landmark_ids"] = map_update[
+                "new_landmark_ids"
+            ]
+            self.last_diagnostics.update(
+                {
+                    key: map_update[key]
+                    for key in (
+                        "keyframe_added",
+                        "nearby_associations",
+                        "new_landmarks",
+                        "removed_landmarks",
+                    )
+                }
+            )
 
         return result

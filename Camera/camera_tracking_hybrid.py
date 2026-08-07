@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ from tracking_visualization import (
     create_top_view_state,
     create_comparison_plots,
     diagnostic_frame,
+    save_hybrid_method_diagnostics,
     save_mapping_diagnostics,
     save_timing_diagnostics,
     save_top_view_video,
@@ -30,8 +32,8 @@ from tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25"
-DATA_FOLDER = "Line"
+RECORDING_NAME = "rotated_Speed-3_2026-08-05_14.24.17"
+DATA_FOLDER = "RotatedAruco"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
@@ -39,6 +41,7 @@ FEATURE_ROI_BOTTOM_FRACTION = 0.70
 MAX_OPTICAL_FLOW_FRAMES = 9  # Maximum consecutive optical-flow frames.
 MIN_OPTICAL_FLOW_TRACK_RATIO = 0.65  # Run LightGlue at this fraction of the initial tracks.
 MAP_EXPANSION_MIN_COVERAGE_RATIO = 0.70
+HYBRID_METHOD_DIAGNOSTIC_WINDOW_FRAMES = 30
 
 
 SAVE_DIAGNOSTIC_VIDEO = True
@@ -52,25 +55,7 @@ SHOW_PREVIEW = False
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_DIR = PROJECT_DIR / "Data" / DATA_FOLDER
-OUTPUT_DIR = SCRIPT_DIR / "results" / DATA_FOLDER / RECORDING_NAME
-VIDEO_PATHS = list(
-    (DATA_DIR / "videos").glob(
-        f"{RECORDING_NAME}_{CAMERA_NAME}.*"
-    )
-)
-if len(VIDEO_PATHS) != 1:
-    raise RuntimeError(
-        f"Expected one video for {RECORDING_NAME} {CAMERA_NAME}, "
-        f"found {len(VIDEO_PATHS)}"
-    )
-VIDEO_PATH = VIDEO_PATHS[0]
-GROUND_TRUTH_PATH = DATA_DIR / "dobot" / f"{RECORDING_NAME}.csv"
-VIDEO_TIMESTAMP_PATH = (
-    DATA_DIR
-    / "video_timestamps"
-    / f"{RECORDING_NAME}.csv"
-)
+RESULTS_DIR = SCRIPT_DIR / "results_hybrid" / DATA_FOLDER
 
 CAMERA_MATRIX_PATH = (
     SCRIPT_DIR
@@ -114,13 +99,41 @@ def load_video_start_timestamp(path):
     return float(row["start_timestamp"])
 
 
-def main():
+def run_tracking(
+    recording_name,
+    output_dir,
+    data_dir,
+    map_expansion_min_coverage_ratio,
+    feature_roi_bottom_fraction,
+    max_optical_flow_frames,
+    min_optical_flow_track_ratio,
+):
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    data_dir = Path(data_dir)
+    video_paths = list(
+        (data_dir / "videos").glob(
+            f"{recording_name}_{CAMERA_NAME}.*"
+        )
+    )
+    if len(video_paths) != 1:
+        raise RuntimeError(
+            f"Expected one video for {recording_name} {CAMERA_NAME}, "
+            f"found {len(video_paths)}"
+        )
+    video_path = video_paths[0]
+    ground_truth_path = data_dir / "dobot" / f"{recording_name}.csv"
+    video_timestamp_path = (
+        data_dir
+        / "video_timestamps"
+        / f"{recording_name}.csv"
+    )
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     video_start_timestamp = load_video_start_timestamp(
-        VIDEO_TIMESTAMP_PATH
+        video_timestamp_path
     )
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
@@ -128,15 +141,15 @@ def main():
     tracker = HybridSkinMapTracker(
         camera_matrix,
         distortion,
-        MAX_OPTICAL_FLOW_FRAMES,
-        MIN_OPTICAL_FLOW_TRACK_RATIO,
-        FEATURE_ROI_BOTTOM_FRACTION,
-        MAP_EXPANSION_MIN_COVERAGE_RATIO,
+        max_optical_flow_frames,
+        min_optical_flow_track_ratio,
+        feature_roi_bottom_fraction,
+        map_expansion_min_coverage_ratio,
     )
 
-    capture = cv2.VideoCapture(str(VIDEO_PATH))
+    capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
-        raise FileNotFoundError(VIDEO_PATH)
+        raise FileNotFoundError(video_path)
 
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -144,7 +157,7 @@ def main():
 
     video_writer = None
     if SAVE_DIAGNOSTIC_VIDEO:
-        video_path_output = OUTPUT_DIR / "hybrid_tracking.mp4"
+        video_path_output = output_dir / "hybrid_tracking.mp4"
         video_writer = cv2.VideoWriter(
             str(video_path_output),
             cv2.VideoWriter_fourcc(*"mp4v"),
@@ -297,7 +310,7 @@ def main():
                 tracker,
                 result,
                 positions,
-                FEATURE_ROI_BOTTOM_FRACTION,
+                feature_roi_bottom_fraction,
                 INITIALIZATION_FRAMES,
                 INITIALIZATION_MIN_LANDMARKS,
                 tracking_time_ms,
@@ -325,7 +338,7 @@ def main():
     if SAVE_TOP_VIEW_VIDEO:
         save_top_view_video(
             top_view_states,
-            OUTPUT_DIR / "hybrid_map_top_view.mp4",
+            output_dir / "hybrid_map_top_view.mp4",
             TOP_VIEW_VIDEO_FPS,
             TOP_VIEW_VIDEO_SIZE_PX,
             TOP_VIEW_PADDING_MM,
@@ -336,35 +349,66 @@ def main():
     p95_tracking_time_ms = np.percentile(tracking_times_ms, 95)
     tracking_fps = 1000.0 / average_tracking_time_ms
 
-    csv_path = OUTPUT_DIR / "camera_hybrid.csv"
-    position_plot_path = OUTPUT_DIR / "hybrid_position.png"
-    orientation_plot_path = OUTPUT_DIR / "hybrid_orientation.png"
-    diagnostics_plot_path = OUTPUT_DIR / "hybrid_mapping_diagnostics.png"
-    timing_plot_path = OUTPUT_DIR / "hybrid_timing_diagnostics.png"
+    csv_path = output_dir / "camera_hybrid.csv"
+    position_plot_path = output_dir / "hybrid_position.png"
+    orientation_plot_path = output_dir / "hybrid_orientation.png"
+    diagnostics_plot_path = output_dir / "hybrid_mapping_diagnostics.png"
+    timing_plot_path = output_dir / "hybrid_timing_diagnostics.png"
+    method_plot_path = output_dir / "hybrid_method_diagnostics.png"
     save_results_csv(rows, csv_path)
     save_mapping_diagnostics(
         rows,
         diagnostics_plot_path,
-        f"{RECORDING_NAME}_hybrid",
+        f"{recording_name}_hybrid",
     )
     save_timing_diagnostics(
         rows,
         timing_plot_path,
-        f"{RECORDING_NAME}_hybrid",
+        f"{recording_name}_hybrid",
+    )
+    save_hybrid_method_diagnostics(
+        rows,
+        method_plot_path,
+        f"{recording_name}_hybrid",
+        HYBRID_METHOD_DIAGNOSTIC_WINDOW_FRAMES,
     )
     position_rmse, orientation_rmse = create_comparison_plots(
         rows,
-        GROUND_TRUTH_PATH,
+        ground_truth_path,
         position_plot_path,
         orientation_plot_path,
-        f"{RECORDING_NAME}_hybrid",
+        f"{recording_name}_hybrid",
     )
+
+    tracked_frames = sum(row["tracked"] for row in rows)
+    tracked_percent = 100.0 * tracked_frames / len(rows)
+    metrics = {
+        "recording": recording_name,
+        "position_rmse_mm": float(position_rmse),
+        "orientation_rmse_deg": float(orientation_rmse),
+        "tracked_percent": tracked_percent,
+        "mean_tracking_time_ms": float(average_tracking_time_ms),
+        "median_tracking_time_ms": float(median_tracking_time_ms),
+        "p95_tracking_time_ms": float(p95_tracking_time_ms),
+        "tracking_fps": float(tracking_fps),
+        "feature_roi_bottom_fraction": feature_roi_bottom_fraction,
+        "map_expansion_min_coverage_ratio": (
+            map_expansion_min_coverage_ratio
+        ),
+        "max_optical_flow_frames": max_optical_flow_frames,
+        "min_optical_flow_track_ratio": min_optical_flow_track_ratio,
+    }
+    metrics_path = output_dir / "metrics.json"
+    with metrics_path.open("w", encoding="utf-8") as file:
+        json.dump(metrics, file, indent=2)
 
     print(f"Saved: {csv_path}")
     print(f"Saved: {position_plot_path}")
     print(f"Saved: {orientation_plot_path}")
     print(f"Saved: {diagnostics_plot_path}")
     print(f"Saved: {timing_plot_path}")
+    print(f"Saved: {method_plot_path}")
+    print(f"Saved: {metrics_path}")
     if SAVE_DIAGNOSTIC_VIDEO:
         print(f"Saved: {video_path_output}")
     print(f"Position RMSE: {position_rmse:.2f} mm")
@@ -374,6 +418,19 @@ def main():
         f"median {median_tracking_time_ms:.1f} ms | "
         f"p95 {p95_tracking_time_ms:.1f} ms | "
         f"{tracking_fps:.1f} FPS"
+    )
+    return metrics
+
+
+def main():
+    run_tracking(
+        RECORDING_NAME,
+        RESULTS_DIR / RECORDING_NAME,
+        PROJECT_DIR / "Data" / DATA_FOLDER,
+        MAP_EXPANSION_MIN_COVERAGE_RATIO,
+        FEATURE_ROI_BOTTOM_FRACTION,
+        MAX_OPTICAL_FLOW_FRAMES,
+        MIN_OPTICAL_FLOW_TRACK_RATIO,
     )
 
 

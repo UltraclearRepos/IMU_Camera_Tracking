@@ -2,15 +2,16 @@ import csv
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-from camera_tracking import run_tracking
+
+from camera_tracking_hybrid import run_tracking
 
 
 # -----------------------------------------------------------------------------
 # Experiment configuration
 # -----------------------------------------------------------------------------
 
-EXPERIMENT_NAME = "realistic_screen_visible_0.7_expansion_threshold_newExpanding"
-DATA_FOLDER = "OnlyR"
+EXPERIMENT_NAME = "real_screen_vis_expansion_0.7_track_vis_ratio_0.7_newExpanding"
+DATA_FOLDER = "LineWithR"
 
 # RECORDINGS = {
 #     "arc1cm-close-dark-nolight_Speed-3_2026-07-29_16.12.21": {
@@ -126,92 +127,95 @@ DATA_FOLDER = "OnlyR"
 #     },
 # }
 
+RECORDINGS = {
+    "initial-white-withlight-25deg_Speed-3_2026-07-30_13.27.38": {
+        "feature_roi_bottom_fraction": 0.85,
+    },
+    "initial-white-nolight-25deg_Speed-3_2026-07-30_13.28.57": {
+        "feature_roi_bottom_fraction": 0.85,
+    },
+    "initial-black-withlight-25deg_Speed-3_2026-07-30_13.46.33": {
+        "feature_roi_bottom_fraction": 0.85,
+    },
+    "initial-black-nolight-25deg_Speed-3_2026-07-30_13.50.30": {
+        "feature_roi_bottom_fraction": 0.85,
+    },
+    "far-white-withlight-25deg_Speed-3_2026-07-30_13.21.53": {
+        "feature_roi_bottom_fraction": 0.70,
+    },
+    "far-white-nolight-25deg_Speed-3_2026-07-30_13.20.24": {
+        "feature_roi_bottom_fraction": 0.70,
+    },
+    "far-black-withlight-25deg_Speed-3_2026-07-30_13.44.45": {
+        "feature_roi_bottom_fraction": 0.70,
+    },
+    "far-black-nolight-25deg_Speed-3_2026-07-30_13.41.36": {
+        "feature_roi_bottom_fraction": 0.70,
+    },
+    "close-white-withlight-25deg_Speed-3_2026-07-30_13.33.14": {
+        "feature_roi_bottom_fraction": 1.00,
+    },
+    "close-white-nolight-25deg_Speed-3_2026-07-30_13.31.23": {
+        "feature_roi_bottom_fraction": 1.00,
+    },
+    "close-black-withlight-25deg_Speed-3_2026-07-30_13.37.05": {
+        "feature_roi_bottom_fraction": 1.00,
+    },
+    "close-black-nolight-25deg_Speed-3_2026-07-30_13.38.42": {
+        "feature_roi_bottom_fraction": 1.00,
+    },
+}
+
+
 # RECORDINGS = {
-#     "initial-white-withlight-25deg_Speed-3_2026-07-30_13.27.38": {
+#     "initial-white-withlight-25deg_Speed-3_2026-07-30_13.06.03": {
 #         "feature_roi_bottom_fraction": 0.85,
 #     },
-#     "initial-white-nolight-25deg_Speed-3_2026-07-30_13.28.57": {
+#     "initial-white-nolight-25deg_Speed-3_2026-07-30_13.07.33": {
 #         "feature_roi_bottom_fraction": 0.85,
 #     },
-#     "initial-black-withlight-25deg_Speed-3_2026-07-30_13.46.33": {
+#     "initial-black-withlight-25deg_Speed-3_2026-07-30_13.56.04": {
 #         "feature_roi_bottom_fraction": 0.85,
 #     },
-#     "initial-black-nolight-25deg_Speed-3_2026-07-30_13.50.30": {
+#     "initial-black-nolight-25deg_Speed-3_2026-07-30_13.55.04": {
 #         "feature_roi_bottom_fraction": 0.85,
 #     },
-#     "far-white-withlight-25deg_Speed-3_2026-07-30_13.21.53": {
+#     "far-white-withlight-25deg_Speed-3_2026-07-30_13.13.13": {
 #         "feature_roi_bottom_fraction": 0.70,
 #     },
-#     "far-white-nolight-25deg_Speed-3_2026-07-30_13.20.24": {
+#     "far-white-nolight-25deg_Speed-3_2026-07-30_13.14.23": {
 #         "feature_roi_bottom_fraction": 0.70,
 #     },
-#     "far-black-withlight-25deg_Speed-3_2026-07-30_13.44.45": {
+#     "far-black-withlight-25deg_Speed-3_2026-07-30_13.58.22": {
 #         "feature_roi_bottom_fraction": 0.70,
 #     },
-#     "far-black-nolight-25deg_Speed-3_2026-07-30_13.41.36": {
+#     "far-black-nolight-25deg_Speed-3_2026-07-30_14.00.25": {
 #         "feature_roi_bottom_fraction": 0.70,
 #     },
-#     "close-white-withlight-25deg_Speed-3_2026-07-30_13.33.14": {
+#     "close-white-withlight-25deg_Speed-3_2026-07-30_13.11.32": {
 #         "feature_roi_bottom_fraction": 1.00,
 #     },
-#     "close-white-nolight-25deg_Speed-3_2026-07-30_13.31.23": {
+#     "close-white-nolight-25deg_Speed-3_2026-07-30_13.10.31": {
 #         "feature_roi_bottom_fraction": 1.00,
 #     },
-#     "close-black-withlight-25deg_Speed-3_2026-07-30_13.37.05": {
+#     "close-black-withlight-25deg_Speed-3_2026-07-30_14.09.41": {
 #         "feature_roi_bottom_fraction": 1.00,
 #     },
-#     "close-black-nolight-25deg_Speed-3_2026-07-30_13.38.42": {
+#     "close-black-nolight-25deg_Speed-3_2026-07-30_14.08.24": {
 #         "feature_roi_bottom_fraction": 1.00,
 #     },
 # }
 
 
-RECORDINGS = {
-    "initial-white-withlight-25deg_Speed-3_2026-07-30_13.06.03": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "initial-white-nolight-25deg_Speed-3_2026-07-30_13.07.33": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "initial-black-withlight-25deg_Speed-3_2026-07-30_13.56.04": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "initial-black-nolight-25deg_Speed-3_2026-07-30_13.55.04": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "far-white-withlight-25deg_Speed-3_2026-07-30_13.13.13": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "far-white-nolight-25deg_Speed-3_2026-07-30_13.14.23": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "far-black-withlight-25deg_Speed-3_2026-07-30_13.58.22": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "far-black-nolight-25deg_Speed-3_2026-07-30_14.00.25": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "close-white-withlight-25deg_Speed-3_2026-07-30_13.11.32": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-    "close-white-nolight-25deg_Speed-3_2026-07-30_13.10.31": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-    "close-black-withlight-25deg_Speed-3_2026-07-30_14.09.41": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-    "close-black-nolight-25deg_Speed-3_2026-07-30_14.08.24": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-}
-
 MAP_EXPANSION_MIN_COVERAGE_RATIO = 0.70
+MAX_OPTICAL_FLOW_FRAMES = 6
+MIN_OPTICAL_FLOW_TRACK_RATIO = 0.9
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = (
     SCRIPT_DIR
-    / "results_DISK_batch"
+    / "results_hybrid_DISK_batch"
     / DATA_FOLDER
     / EXPERIMENT_NAME
 )
@@ -225,6 +229,8 @@ def run_recording(recording_name, parameters):
         SCRIPT_DIR.parent / "Data" / DATA_FOLDER,
         MAP_EXPANSION_MIN_COVERAGE_RATIO,
         parameters["feature_roi_bottom_fraction"],
+        MAX_OPTICAL_FLOW_FRAMES,
+        MIN_OPTICAL_FLOW_TRACK_RATIO,
     )
 
 
@@ -308,8 +314,9 @@ def save_rmse_summary_plot(metrics):
 
     figure.suptitle(
         f"{EXPERIMENT_NAME}\n"
-        "MAP_EXPANSION_MIN_COVERAGE_RATIO = "
-        f"{MAP_EXPANSION_MIN_COVERAGE_RATIO}"
+        f"coverage={MAP_EXPANSION_MIN_COVERAGE_RATIO}, "
+        f"optical flow frames={MAX_OPTICAL_FLOW_FRAMES}, "
+        f"minimum track ratio={MIN_OPTICAL_FLOW_TRACK_RATIO}"
     )
 
     output_path = RESULTS_DIR / "rmse_summary.png"

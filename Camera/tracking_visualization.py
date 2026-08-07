@@ -1170,6 +1170,93 @@ def save_mapping_diagnostics(
     plt.close(figure)
 
 
+def save_hybrid_method_diagnostics(
+    rows,
+    output_path,
+    recording_name,
+    window_frames=30,
+):
+    window_starts = range(0, len(rows), window_frames)
+    window_labels = []
+    optical_flow_counts = []
+    lightglue_counts = []
+    lost_counts = []
+
+    for window_start in window_starts:
+        window_rows = rows[window_start : window_start + window_frames]
+        window_labels.append(
+            f"{window_rows[0]['frame']}-{window_rows[-1]['frame']}"
+        )
+        optical_flow_counts.append(
+            sum(
+                row["tracking_method"] == "optical_flow"
+                for row in window_rows
+            )
+        )
+        lightglue_counts.append(
+            sum(
+                row["tracking_method"] == "lightglue"
+                for row in window_rows
+            )
+        )
+        lost_counts.append(
+            sum(not row["tracked"] for row in window_rows)
+        )
+
+    x = np.arange(len(window_labels))
+    figure_width = max(12.0, 0.55 * len(window_labels))
+    figure, axis = plt.subplots(figsize=(figure_width, 5.5))
+
+    axis.bar(
+        x,
+        optical_flow_counts,
+        color="tab:green",
+        label="Optical flow",
+    )
+    axis.bar(
+        x,
+        lightglue_counts,
+        bottom=optical_flow_counts,
+        color="tab:blue",
+        label="LightGlue",
+    )
+    axis.plot(
+        x,
+        lost_counts,
+        color="tab:red",
+        marker="o",
+        linestyle="--",
+        linewidth=1.5,
+        label="Lost frames",
+    )
+
+    for bar_index, optical_flow_count in enumerate(optical_flow_counts):
+        if optical_flow_count > 0:
+            axis.text(
+                bar_index,
+                optical_flow_count / 2,
+                str(optical_flow_count),
+                ha="center",
+                va="center",
+                color="white",
+                fontsize=8,
+            )
+
+    axis.set_xticks(x, window_labels, rotation=45, ha="right")
+    axis.set_xlabel(f"Frame range ({window_frames}-frame windows)")
+    axis.set_ylabel("Frames")
+    axis.set_ylim(0, window_frames + 2)
+    axis.grid(axis="y", alpha=0.3)
+    axis.legend()
+    axis.set_title(
+        f"{recording_name}: LightGlue and optical-flow usage over time"
+    )
+
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+
+
 def save_optical_flow_diagnostics(
     rows,
     output_path,
