@@ -112,6 +112,7 @@ def run_tracking(
     output_dir,
     data_dir,
     feature_roi_bottom_fraction,
+    reconstruction_method=RECONSTRUCTION_METHOD,
 ):
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
@@ -147,7 +148,7 @@ def run_tracking(
         feature_matching,
         MAPPING_START_FRAME,
         MAPPING_END_FRAME,
-        RECONSTRUCTION_METHOD,
+        reconstruction_method,
         MAPPING_FRAME_STEP,
         MAPPING_SEQUENTIAL_MATCH_OVERLAP,
         MAPPING_MAX_FEATURES,
@@ -415,7 +416,7 @@ def run_tracking(
         ),
         "mapping_start_frame": MAPPING_START_FRAME,
         "mapping_end_frame": MAPPING_END_FRAME,
-        "reconstruction_method": RECONSTRUCTION_METHOD,
+        "reconstruction_method": reconstruction_method,
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": global_map["candidate_landmarks"],
         "map_occupied_grid_cells": global_map["occupied_grid_cells"],

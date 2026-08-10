@@ -553,6 +553,7 @@ class SkinMapBuilder:
                 ba_refine_principal_point=False,
                 ba_refine_extra_params=False,
             )
+            options.ba_use_gpu = True
             options.mapper.init_min_num_inliers = MIN_PAIR_INLIERS
             options.mapper.abs_pose_min_num_inliers = MIN_PAIR_INLIERS
             options.random_seed = 0
