@@ -174,12 +174,14 @@ def create_colmap_camera(camera_matrix, distortion, width, height):
         [fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6],
         dtype=float,
     )
-    return pycolmap.Camera(
+    camera = pycolmap.Camera(
         model="FULL_OPENCV",
         width=width,
         height=height,
         params=parameters,
     )
+    camera.has_prior_focal_length = True
+    return camera
 
 
 def camera_center(R_world_to_camera, t_world_to_camera):
@@ -539,6 +541,9 @@ class SkinMapBuilder:
             options.mapper.bundle_adjustment.refine_focal_length = False
             options.mapper.bundle_adjustment.refine_principal_point = False
             options.mapper.bundle_adjustment.refine_extra_params = False
+            options.mapper.global_positioning.use_gpu = True
+            options.mapper.global_positioning.min_num_images_gpu_solver = 3
+            options.mapper.bundle_adjustment.ceres.use_gpu = True
             mapping = pycolmap.global_mapping
         else:
             options = pycolmap.IncrementalPipelineOptions(
