@@ -41,6 +41,7 @@ FEATURE_ROI_BOTTOM_FRACTION = 0.7
 
 MAPPING_START_FRAME = 270  # First frame used to build the frozen 3D map.
 MAPPING_END_FRAME = 430  # Last frame used to build the frozen 3D map.
+RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
 MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
 MAPPING_SEQUENTIAL_MATCH_OVERLAP = 10  # Previous map images matched per image.
 MAPPING_MAX_FEATURES = 256  # Spatially distributed features passed to LightGlue.
@@ -146,6 +147,7 @@ def run_tracking(
         feature_matching,
         MAPPING_START_FRAME,
         MAPPING_END_FRAME,
+        RECONSTRUCTION_METHOD,
         MAPPING_FRAME_STEP,
         MAPPING_SEQUENTIAL_MATCH_OVERLAP,
         MAPPING_MAX_FEATURES,
@@ -413,6 +415,7 @@ def run_tracking(
         ),
         "mapping_start_frame": MAPPING_START_FRAME,
         "mapping_end_frame": MAPPING_END_FRAME,
+        "reconstruction_method": RECONSTRUCTION_METHOD,
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": global_map["candidate_landmarks"],
         "map_occupied_grid_cells": global_map["occupied_grid_cells"],

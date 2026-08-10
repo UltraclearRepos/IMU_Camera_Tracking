@@ -305,6 +305,7 @@ class SkinMapBuilder:
         feature_matching,
         mapping_start_frame,
         mapping_end_frame,
+        reconstruction_method,
         mapping_frame_step,
         sequential_match_overlap,
         mapping_maximum_features,
@@ -320,6 +321,7 @@ class SkinMapBuilder:
         self.feature_matching = feature_matching
         self.mapping_start_frame = mapping_start_frame
         self.mapping_end_frame = mapping_end_frame
+        self.reconstruction_method = reconstruction_method
         self.mapping_frame_step = mapping_frame_step
         self.sequential_match_overlap = sequential_match_overlap
         self.mapping_maximum_features = mapping_maximum_features
@@ -526,20 +528,34 @@ class SkinMapBuilder:
         )
 
     def reconstruct(self, database_path, images_dir, sparse_dir):
-        options = pycolmap.IncrementalPipelineOptions(
-            multiple_models=False,
-            structure_less_registration_fallback=False,
-            ba_refine_focal_length=False,
-            ba_refine_principal_point=False,
-            ba_refine_extra_params=False,
-        )
-        options.mapper.init_min_num_inliers = MIN_PAIR_INLIERS
-        options.mapper.abs_pose_min_num_inliers = MIN_PAIR_INLIERS
-        options.random_seed = 0
-        options.mapper.random_seed = 0
-        options.triangulation.random_seed = 0
+        if self.reconstruction_method == "global":
+            options = pycolmap.GlobalPipelineOptions(
+                min_num_matches=MIN_PAIR_INLIERS,
+                random_seed=0,
+            )
+            options.mapper.random_seed = 0
+            options.mapper.rotation_averaging.random_seed = 0
+            options.mapper.global_positioning.random_seed = 0
+            options.mapper.bundle_adjustment.refine_focal_length = False
+            options.mapper.bundle_adjustment.refine_principal_point = False
+            options.mapper.bundle_adjustment.refine_extra_params = False
+            mapping = pycolmap.global_mapping
+        else:
+            options = pycolmap.IncrementalPipelineOptions(
+                multiple_models=False,
+                structure_less_registration_fallback=False,
+                ba_refine_focal_length=False,
+                ba_refine_principal_point=False,
+                ba_refine_extra_params=False,
+            )
+            options.mapper.init_min_num_inliers = MIN_PAIR_INLIERS
+            options.mapper.abs_pose_min_num_inliers = MIN_PAIR_INLIERS
+            options.random_seed = 0
+            options.mapper.random_seed = 0
+            options.triangulation.random_seed = 0
+            mapping = pycolmap.incremental_mapping
 
-        reconstructions = pycolmap.incremental_mapping(
+        reconstructions = mapping(
             database_path=database_path,
             image_path=images_dir,
             output_path=sparse_dir,
@@ -1004,6 +1020,7 @@ class SkinMapBuilder:
         summary = {
             "mapping_start_frame": self.mapping_start_frame,
             "mapping_end_frame": self.mapping_end_frame,
+            "reconstruction_method": self.reconstruction_method,
             "mapping_frame_step": self.mapping_frame_step,
             "extracted_images": len(image_names),
             "attempted_image_pairs": frontend_statistics[
