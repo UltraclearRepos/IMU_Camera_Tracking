@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -211,6 +212,101 @@ def create_video_writer(path, fps, size_px):
     )
 
 
+def save_retrieval_diagnostics(diagnostics, output_path):
+    if not diagnostics:
+        return
+
+    entries_by_frame = {}
+    for entry in diagnostics:
+        entries_by_frame.setdefault(entry["current_frame"], []).append(
+            entry
+        )
+
+    figure, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
+    rank_colors = ["tab:blue", "tab:orange", "tab:purple"]
+    maximum_rank = max(map(len, entries_by_frame.values()))
+    for rank in range(maximum_rank):
+        ranked_entries = [
+            entries[rank]
+            for entries in entries_by_frame.values()
+            if rank < len(entries)
+        ]
+        axes[0].plot(
+            [entry["current_frame"] for entry in ranked_entries],
+            [entry["retrieval_score"] for entry in ranked_entries],
+            ".-",
+            color=rank_colors[rank % len(rank_colors)],
+            label=f"Retrieved rank {rank + 1}",
+        )
+
+    frames = [entry["current_frame"] for entry in diagnostics]
+    axes[1].scatter(
+        frames,
+        [entry["raw_matches"] for entry in diagnostics],
+        s=10,
+        color="tab:blue",
+        label="LightGlue matches",
+    )
+    axes[1].scatter(
+        frames,
+        [entry["inliers"] for entry in diagnostics],
+        s=10,
+        color="tab:green",
+        label="Geometry inliers",
+    )
+
+    covered_cells = [
+        min(
+            entry["covered_cells_previous"],
+            entry["covered_cells_current"],
+        )
+        for entry in diagnostics
+    ]
+    axes[2].scatter(
+        frames,
+        covered_cells,
+        s=10,
+        color="tab:purple",
+        label="Covered cells in both images",
+    )
+    axes[2].axhline(
+        diagnostics[0]["required_covered_cells"],
+        color="tab:red",
+        linestyle="--",
+        label="Required covered cells",
+    )
+
+    unique_frames = sorted(entries_by_frame)
+    accepted_counts = [
+        sum(entry["accepted"] for entry in entries_by_frame[frame])
+        for frame in unique_frames
+    ]
+    axes[3].bar(
+        unique_frames,
+        accepted_counts,
+        width=1.0,
+        color="tab:green",
+        label="Accepted retrieved pairs",
+    )
+
+    axes[0].set_ylabel("MNN retrieval score")
+    axes[1].set_ylabel("Points")
+    axes[2].set_ylabel("Image-grid cells")
+    axes[3].set_ylabel("Accepted pairs")
+    axes[3].set_xlabel("Current mapping frame")
+    axes[3].set_ylim(0, maximum_rank + 0.5)
+    axes[0].set_title(
+        "Old-frame retrieval: single-frame scoring, old-sequence support and geometry"
+    )
+    for axis in axes:
+        axis.grid(True)
+        axis.legend()
+    figure.tight_layout()
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+
+
 def save_map_build_top_view(
     global_map,
     output_path,
@@ -218,32 +314,43 @@ def save_map_build_top_view(
     size_px,
     padding_mm,
 ):
-    map_points = global_map["positions"]
-    first_frames = global_map["first_observation_frames"]
+    candidate_points = global_map["candidate_positions"]
+    available_frames = global_map["candidate_available_frames"]
+    selected_indices = global_map["selected_candidate_indices"]
     mapping_frames = global_map["mapping_frames"]
     camera_positions = global_map["mapping_camera_positions"]
     camera_headings = global_map["mapping_camera_headings"]
-    bounds = fixed_bounds(map_points, camera_positions, padding_mm)
-    z_min = np.min(map_points[:, 2])
-    z_max = np.max(map_points[:, 2])
-    colors = depth_colors(map_points, z_min, z_max)
+    retrieval_diagnostics = global_map["retrieval_diagnostics"]
+    retrieval_by_current_frame = {}
+    for entry in retrieval_diagnostics:
+        retrieval_by_current_frame.setdefault(
+            entry["current_frame"],
+            [],
+        ).append(entry)
+    camera_position_by_frame = dict(
+        zip(mapping_frames, camera_positions)
+    )
+    bounds = fixed_bounds(candidate_points, camera_positions, padding_mm)
+    z_min = np.min(candidate_points[:, 2])
+    z_max = np.max(candidate_points[:, 2])
+    colors = depth_colors(candidate_points, z_min, z_max)
     writer = create_video_writer(output_path, fps, size_px)
 
     for camera_index, frame_index in enumerate(mapping_frames):
         image = np.full((size_px, size_px, 3), BACKGROUND_COLOR, np.uint8)
         draw_grid(image, bounds)
 
-        present = first_frames <= frame_index
-        added_now = first_frames == frame_index
+        present = available_frames <= frame_index
+        added_now = available_frames == frame_index
         draw_landmarks(
             image,
-            map_points[present],
+            candidate_points[present],
             colors[present],
             bounds,
         )
         if np.any(added_now):
             new_pixels = world_to_pixels(
-                map_points[added_now, :2], bounds, size_px
+                candidate_points[added_now, :2], bounds, size_px
             )
             for pixel in new_pixels:
                 cv2.circle(
@@ -275,6 +382,44 @@ def save_map_build_top_view(
             (0, 180, 255),
         )
 
+        current_retrieval = retrieval_by_current_frame.get(
+            int(frame_index),
+            [],
+        )
+        current_camera_position = camera_position_by_frame.get(frame_index)
+        for entry in current_retrieval:
+            previous_camera_position = camera_position_by_frame.get(
+                entry["previous_frame"]
+            )
+            if (
+                current_camera_position is None
+                or previous_camera_position is None
+            ):
+                continue
+            connection_pixels = world_to_pixels(
+                np.array(
+                    [
+                        previous_camera_position[:2],
+                        current_camera_position[:2],
+                    ]
+                ),
+                bounds,
+                size_px,
+            )
+            color = (
+                (80, 230, 80)
+                if entry["accepted"]
+                else (80, 80, 220)
+            )
+            dashed_line(
+                image,
+                connection_pixels[0],
+                connection_pixels[1],
+                color,
+                thickness=2,
+                dash_px=4,
+            )
+
         cv2.putText(
             image,
             f"MAP BUILD | frame {frame_index}",
@@ -286,13 +431,35 @@ def save_map_build_top_view(
         )
         cv2.putText(
             image,
-            f"Landmarks: {np.sum(present)}/{len(map_points)} | new: {np.sum(added_now)}",
+            "Candidates available after 3 observations: "
+            f"{np.sum(present)}/{len(candidate_points)} | "
+            f"new: {np.sum(added_now)}",
             (PLOT_MARGIN_PX, 52),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.48,
+            0.43,
             TEXT_COLOR,
             1,
         )
+        for row, entry in enumerate(current_retrieval):
+            status = "OK" if entry["accepted"] else "rejected"
+            cv2.putText(
+                image,
+                f"retrieval <- {entry['previous_frame']} | "
+                f"MNN {entry['votes']} | "
+                f"score {entry['retrieval_score']:.1f} | "
+                f"similarity {entry['mean_similarity']:.2f} | "
+                f"matches {entry['raw_matches']} | "
+                f"inliers {entry['inliers']} | {status}",
+                (PLOT_MARGIN_PX, 76 + 20 * row),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.42,
+                (
+                    (80, 230, 80)
+                    if entry["accepted"]
+                    else (100, 100, 230)
+                ),
+                1,
+            )
         cv2.putText(
             image,
             f"Landmark color: Z = {z_min:.1f} .. {z_max:.1f} mm",
@@ -302,6 +469,96 @@ def save_map_build_top_view(
             TEXT_COLOR,
             1,
         )
+        writer.write(image)
+
+    selected = np.zeros(len(candidate_points), dtype=bool)
+    selected[selected_indices] = True
+    hold_frames = max(1, round(2.0 * fps))
+
+    def final_stage_frame(title, subtitle):
+        image = np.full((size_px, size_px, 3), BACKGROUND_COLOR, np.uint8)
+        draw_grid(image, bounds)
+        trajectory = world_to_pixels(
+            camera_positions[:, :2], bounds, size_px
+        )
+        if len(trajectory) > 1:
+            cv2.polylines(
+                image,
+                [trajectory],
+                False,
+                (255, 180, 0),
+                1,
+                cv2.LINE_AA,
+            )
+        draw_camera(
+            image,
+            camera_positions[-1],
+            camera_headings[-1],
+            bounds,
+            (0, 180, 255),
+        )
+        cv2.putText(
+            image,
+            title,
+            (PLOT_MARGIN_PX, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (80, 230, 80),
+            2,
+        )
+        cv2.putText(
+            image,
+            subtitle,
+            (PLOT_MARGIN_PX, 52),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            TEXT_COLOR,
+            1,
+        )
+        return image
+
+    image = final_stage_frame(
+        "RECONSTRUCTION COMPLETE",
+        f"Quality-filtered candidates: {len(candidate_points)}",
+    )
+    draw_landmarks(image, candidate_points, colors, bounds)
+    for _ in range(hold_frames):
+        writer.write(image)
+
+    image = final_stage_frame(
+        "GLOBAL MAP REDUCTION",
+        f"kept: {np.sum(selected)} | removed: {np.sum(~selected)}",
+    )
+    removed_colors = np.tile((60, 60, 220), (np.sum(~selected), 1))
+    selected_colors = np.tile((60, 220, 60), (np.sum(selected), 1))
+    draw_landmarks(
+        image,
+        candidate_points[~selected],
+        removed_colors,
+        bounds,
+    )
+    draw_landmarks(
+        image,
+        candidate_points[selected],
+        selected_colors,
+        bounds,
+        radius=2,
+    )
+    for _ in range(hold_frames):
+        writer.write(image)
+
+    image = final_stage_frame(
+        "FINAL FROZEN MAP",
+        f"Selected landmarks: {np.sum(selected)}/{len(candidate_points)}",
+    )
+    draw_landmarks(
+        image,
+        candidate_points[selected],
+        colors[selected],
+        bounds,
+        radius=2,
+    )
+    for _ in range(hold_frames):
         writer.write(image)
 
     writer.release()

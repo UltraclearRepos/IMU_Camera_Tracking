@@ -9,8 +9,8 @@ from camera_tracking import run_tracking
 # Experiment configuration
 # -----------------------------------------------------------------------------
 
-EXPERIMENT_NAME = "realistic_screen_visible_0.7_expansion_threshold_newExpanding"
-DATA_FOLDER = "OnlyR"
+EXPERIMENT_NAME = "realistic_screen_visible_0.7_expansion_threshold"
+DATA_FOLDER = "Line"
 
 # RECORDINGS = {
 #     "arc1cm-close-dark-nolight_Speed-3_2026-07-29_16.12.21": {
@@ -87,44 +87,44 @@ DATA_FOLDER = "OnlyR"
 #     },
 # }
 
-# RECORDINGS = {
-#     "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "initialpos-white-nolight_Speed-3_2026-07-29_17.47.53": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "initialpos-dark-nolight_Speed-3_2026-07-28_16.55.02": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "initialpos-dark-withlight_Speed-3_2026-07-28_16.57.56": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "far-white-nolight_Speed-3_2026-07-28_17.06.45": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "far-white-withlight_Speed-3_2026-07-28_17.08.22": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "far-dark-withlight_Speed-3_2026-07-28_17.02.52": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "far-dark-nolight_Speed-3_2026-07-28_17.04.19": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "close-white-withlight_Speed-3_2026-07-28_17.12.37": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "close-white-nolight_Speed-3_2026-07-28_17.14.02": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "close-dark-nolight_Speed-3_2026-07-28_17.16.20": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "close-dark-withlight_Speed-3_2026-07-28_17.17.50": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-# }
+RECORDINGS = {
+    "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25": {
+        "feature_roi_bottom_fraction": 0.85,
+    },
+    "initialpos-white-nolight_Speed-3_2026-07-29_17.47.53": {
+        "feature_roi_bottom_fraction": 0.85,
+    },
+    "initialpos-dark-nolight_Speed-3_2026-07-28_16.55.02": {
+        "feature_roi_bottom_fraction": 0.85,
+    },
+    "initialpos-dark-withlight_Speed-3_2026-07-28_16.57.56": {
+        "feature_roi_bottom_fraction": 0.85,
+    },
+    "far-white-nolight_Speed-3_2026-07-28_17.06.45": {
+        "feature_roi_bottom_fraction": 0.70,
+    },
+    "far-white-withlight_Speed-3_2026-07-28_17.08.22": {
+        "feature_roi_bottom_fraction": 0.70,
+    },
+    "far-dark-withlight_Speed-3_2026-07-28_17.02.52": {
+        "feature_roi_bottom_fraction": 0.70,
+    },
+    "far-dark-nolight_Speed-3_2026-07-28_17.04.19": {
+        "feature_roi_bottom_fraction": 0.70,
+    },
+    "close-white-withlight_Speed-3_2026-07-28_17.12.37": {
+        "feature_roi_bottom_fraction": 1.00,
+    },
+    "close-white-nolight_Speed-3_2026-07-28_17.14.02": {
+        "feature_roi_bottom_fraction": 1.00,
+    },
+    "close-dark-nolight_Speed-3_2026-07-28_17.16.20": {
+        "feature_roi_bottom_fraction": 1.00,
+    },
+    "close-dark-withlight_Speed-3_2026-07-28_17.17.50": {
+        "feature_roi_bottom_fraction": 1.00,
+    },
+}
 
 # RECORDINGS = {
 #     "initial-white-withlight-25deg_Speed-3_2026-07-30_13.27.38": {
@@ -166,44 +166,44 @@ DATA_FOLDER = "OnlyR"
 # }
 
 
-RECORDINGS = {
-    "initial-white-withlight-25deg_Speed-3_2026-07-30_13.06.03": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "initial-white-nolight-25deg_Speed-3_2026-07-30_13.07.33": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "initial-black-withlight-25deg_Speed-3_2026-07-30_13.56.04": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "initial-black-nolight-25deg_Speed-3_2026-07-30_13.55.04": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "far-white-withlight-25deg_Speed-3_2026-07-30_13.13.13": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "far-white-nolight-25deg_Speed-3_2026-07-30_13.14.23": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "far-black-withlight-25deg_Speed-3_2026-07-30_13.58.22": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "far-black-nolight-25deg_Speed-3_2026-07-30_14.00.25": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "close-white-withlight-25deg_Speed-3_2026-07-30_13.11.32": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-    "close-white-nolight-25deg_Speed-3_2026-07-30_13.10.31": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-    "close-black-withlight-25deg_Speed-3_2026-07-30_14.09.41": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-    "close-black-nolight-25deg_Speed-3_2026-07-30_14.08.24": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-}
+# RECORDINGS = {
+#     "initial-white-withlight-25deg_Speed-3_2026-07-30_13.06.03": {
+#         "feature_roi_bottom_fraction": 0.85,
+#     },
+#     "initial-white-nolight-25deg_Speed-3_2026-07-30_13.07.33": {
+#         "feature_roi_bottom_fraction": 0.85,
+#     },
+#     "initial-black-withlight-25deg_Speed-3_2026-07-30_13.56.04": {
+#         "feature_roi_bottom_fraction": 0.85,
+#     },
+#     "initial-black-nolight-25deg_Speed-3_2026-07-30_13.55.04": {
+#         "feature_roi_bottom_fraction": 0.85,
+#     },
+#     "far-white-withlight-25deg_Speed-3_2026-07-30_13.13.13": {
+#         "feature_roi_bottom_fraction": 0.70,
+#     },
+#     "far-white-nolight-25deg_Speed-3_2026-07-30_13.14.23": {
+#         "feature_roi_bottom_fraction": 0.70,
+#     },
+#     "far-black-withlight-25deg_Speed-3_2026-07-30_13.58.22": {
+#         "feature_roi_bottom_fraction": 0.70,
+#     },
+#     "far-black-nolight-25deg_Speed-3_2026-07-30_14.00.25": {
+#         "feature_roi_bottom_fraction": 0.70,
+#     },
+#     "close-white-withlight-25deg_Speed-3_2026-07-30_13.11.32": {
+#         "feature_roi_bottom_fraction": 1.00,
+#     },
+#     "close-white-nolight-25deg_Speed-3_2026-07-30_13.10.31": {
+#         "feature_roi_bottom_fraction": 1.00,
+#     },
+#     "close-black-withlight-25deg_Speed-3_2026-07-30_14.09.41": {
+#         "feature_roi_bottom_fraction": 1.00,
+#     },
+#     "close-black-nolight-25deg_Speed-3_2026-07-30_14.08.24": {
+#         "feature_roi_bottom_fraction": 1.00,
+#     },
+# }
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent.parent

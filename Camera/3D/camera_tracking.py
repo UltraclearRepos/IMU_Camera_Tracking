@@ -20,6 +20,7 @@ from skin_map_tracker import SkinMapTracker
 from top_view_visualization import (
     create_tracking_top_view_state,
     save_map_build_top_view,
+    save_retrieval_diagnostics,
     save_tracking_top_view,
 )
 from tracking_visualization import (
@@ -32,18 +33,25 @@ from tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "far-white-withlight_Speed-3_2026-07-28_17.08.22"
-DATA_FOLDER = "Line"
+RECORDING_NAME = "arc2cm-far-white-withlight_Speed-3_2026-07-29_17.00.49"
+DATA_FOLDER = "LineArc-1-2cm"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
 FEATURE_ROI_BOTTOM_FRACTION = 0.7
 
-MAPPING_START_FRAME = 270  # First frame used to build the frozen 3D map.
-MAPPING_END_FRAME = 430  # Last frame used to build the frozen 3D map.
+MAPPING_START_FRAME = 90  # First frame used to build the frozen 3D map.
+MAPPING_END_FRAME = 420  # Last frame used to build the frozen 3D map.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
 MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
-MAPPING_SEQUENTIAL_MATCH_OVERLAP = 10  # Previous map images matched per image.
+MAPPING_SEQUENTIAL_MATCH_OVERLAP = 5  # Immediately previous map images matched per image.
+MAPPING_ENABLE_RETRIEVAL = False  # Add visually similar older frames to sequential pairs.
+MAPPING_RETRIEVAL_TOP_FRAMES = 3  # Visually similar older frames additionally matched per image.
+MAPPING_RETRIEVAL_MIN_FRAME_GAP = 90  # Ignore recent frames already covered by sequential matching.
+MAPPING_RETRIEVAL_DESCRIPTORS_PER_FRAME = 64  # Spatially distributed DISK descriptors used for retrieval.
+MAPPING_RETRIEVAL_MIN_SEQUENCE_FRAMES = 5  # Actual high-probability old frames required in a sequence.
+MAPPING_RETRIEVAL_MAX_SEQUENCE_GAP = 2  # Maximum index difference between consecutive supporting old frames.
+MAPPING_RETRIEVAL_MIN_COVERED_CELLS = 6  # Minimum occupied image-grid cells in both views.
 MAPPING_MAX_FEATURES = 256  # Spatially distributed features passed to LightGlue.
 MAPPING_FEATURE_GRID_ROWS = 4  # Image grid rows used to distribute map features.
 MAPPING_FEATURE_GRID_COLUMNS = 4  # Image grid columns used to distribute map features.
@@ -151,6 +159,13 @@ def run_tracking(
         reconstruction_method,
         MAPPING_FRAME_STEP,
         MAPPING_SEQUENTIAL_MATCH_OVERLAP,
+        MAPPING_ENABLE_RETRIEVAL,
+        MAPPING_RETRIEVAL_TOP_FRAMES,
+        MAPPING_RETRIEVAL_MIN_FRAME_GAP,
+        MAPPING_RETRIEVAL_DESCRIPTORS_PER_FRAME,
+        MAPPING_RETRIEVAL_MIN_SEQUENCE_FRAMES,
+        MAPPING_RETRIEVAL_MAX_SEQUENCE_GAP,
+        MAPPING_RETRIEVAL_MIN_COVERED_CELLS,
         MAPPING_MAX_FEATURES,
         MAPPING_FEATURE_GRID_ROWS,
         MAPPING_FEATURE_GRID_COLUMNS,
@@ -162,6 +177,10 @@ def run_tracking(
     global_map = map_builder.build(
         video_path,
         output_dir / "map",
+    )
+    save_retrieval_diagnostics(
+        global_map["retrieval_diagnostics"],
+        output_dir / "mapping_retrieval_diagnostics.png",
     )
     (
         mapping_position_rmse,
