@@ -7,6 +7,7 @@ Camera/results_batch
 Camera/results_DISK_batch
 Camera/results_hybrid
 Camera/results_hybrid_DISK_batch
+Camera/results_hybrid_SIFT_batch
 Camera/calibrations/**.webm
 Camera/surface_models
 Camera/3D/__pycache__

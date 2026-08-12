@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import torch
 import time
-from lightglue import DISK, LightGlue
+from lightglue import DISK, SIFT, LightGlue
 from lightglue.utils import rbd
 from scipy.spatial import cKDTree
 
@@ -10,6 +10,7 @@ from scipy.spatial import cKDTree
 # Model and feature extraction
 DEVICE = "cuda"  # Device used by DISK and LightGlue.
 MAX_FEATURES = 512  # Maximum number of DISK features in the current frame.
+FEATURE_TYPES = ("disk", "sift")
 
 # Global map matching and pose estimation
 MIN_MATCHES = 20  # Absolute minimum LightGlue matches required to run PnP.
@@ -115,6 +116,7 @@ class SkinMapTracker:
         distortion,
         feature_roi_bottom_fraction,
         map_expansion_min_coverage_ratio=MAP_EXPANSION_MIN_COVERAGE_RATIO,
+        feature_type="disk",
     ):
         self.camera_matrix = camera_matrix
         self.distortion = distortion
@@ -125,8 +127,26 @@ class SkinMapTracker:
         self.map_coverage_grid_rows = MAP_COVERAGE_GRID_ROWS
         self.map_coverage_grid_columns = MAP_COVERAGE_GRID_COLUMNS
 
-        self.extractor = DISK(max_num_keypoints=MAX_FEATURES).eval().to(DEVICE)
-        self.matcher = LightGlue(features="disk").eval().to(DEVICE)
+        self.feature_type = feature_type.lower()
+        if self.feature_type not in FEATURE_TYPES:
+            raise ValueError(
+                f"feature_type must be one of {FEATURE_TYPES}, got "
+                f"{feature_type!r}"
+            )
+        self.requires_scale_orientation = self.feature_type == "sift"
+
+        if self.feature_type == "disk":
+            self.extractor = DISK(
+                max_num_keypoints=MAX_FEATURES
+            ).eval().to(DEVICE)
+        else:
+            self.extractor = SIFT(
+                max_num_keypoints=MAX_FEATURES,
+                backend="opencv",
+            ).eval().to(DEVICE)
+        self.matcher = LightGlue(
+            features=self.feature_type
+        ).eval().to(DEVICE)
 
         dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
         self.aruco_detector = cv2.aruco.ArucoDetector(dictionary)
@@ -178,7 +198,10 @@ class SkinMapTracker:
                 )
                 keep &= torch.from_numpy(~inside_marker).to(keep.device)
 
-        for name in ("keypoints", "keypoint_scores", "descriptors"):
+        feature_names = ["keypoints", "keypoint_scores", "descriptors"]
+        if self.requires_scale_orientation:
+            feature_names.extend(("scales", "oris"))
+        for name in feature_names:
             features[name] = features[name][:, keep]
         return features
 
@@ -376,6 +399,8 @@ class SkinMapTracker:
         descriptor,
         keyframe_id,
         feature_index,
+        scale=None,
+        orientation=None,
     ):
         landmark_id = self.next_landmark_id
         self.next_landmark_id += 1
@@ -389,6 +414,11 @@ class SkinMapTracker:
             "match_count": 0,
             "inlier_count": 0,
         }
+        if self.requires_scale_orientation:
+            self.landmarks[landmark_id]["scale"] = float(scale)
+            self.landmarks[landmark_id]["orientation"] = float(
+                orientation
+            )
         return landmark_id
 
     def landmark_quality(self, landmark):
@@ -542,12 +572,16 @@ class SkinMapTracker:
         feature_data,
         feature_indices,
     ):
-        return (
+        scores = (
             feature_data["keypoint_scores"]
             .detach()
             .cpu()
-            .numpy()[feature_indices]
+            .numpy()
         )
+        if self.feature_type == "sift" and len(scores):
+            order = np.argsort(np.argsort(scores))
+            scores = 50.0 + 50.0 * order / max(len(scores) - 1, 1)
+        return scores[feature_indices]
 
     def select_new_landmarks(
         self,
@@ -754,6 +788,11 @@ class SkinMapTracker:
         feature_data = rbd(features)
         keypoints = feature_data["keypoints"].detach().cpu().numpy()
         descriptors = feature_data["descriptors"].detach().cpu().numpy()
+        scales = None
+        orientations = None
+        if self.requires_scale_orientation:
+            scales = feature_data["scales"].detach().cpu().numpy()
+            orientations = feature_data["oris"].detach().cpu().numpy()
         landmark_ids = np.full(len(keypoints), -1, dtype=np.int64)
         keyframe_id = len(self.keyframes)
 
@@ -871,6 +910,12 @@ class SkinMapTracker:
                 descriptors[feature_index],
                 keyframe_id,
                 int(feature_index),
+                None if scales is None else scales[feature_index],
+                (
+                    None
+                    if orientations is None
+                    else orientations[feature_index]
+                ),
             )
             keyframe["landmark_ids"][feature_index] = landmark_id
             new_landmark_ids.append(landmark_id)
@@ -980,6 +1025,17 @@ class SkinMapTracker:
         descriptors = np.array(
             [self.landmarks[landmark_id]["descriptor"] for landmark_id in landmark_ids]
         )
+        scales = None
+        orientations = None
+        if self.requires_scale_orientation:
+            scales = np.array(
+                [self.landmarks[landmark_id]["scale"] for landmark_id in landmark_ids],
+                dtype=np.float32,
+            )
+            orientations = np.array(
+                [self.landmarks[landmark_id]["orientation"] for landmark_id in landmark_ids],
+                dtype=np.float32,
+            )
 
         rvec = cv2.Rodrigues(self.R_map_to_camera)[0]
         projected_points, _ = cv2.projectPoints(
@@ -1016,6 +1072,9 @@ class SkinMapTracker:
         map_points = map_points[matching_area]
         projected_points = projected_points[matching_area]
         descriptors = descriptors[matching_area]
+        if self.requires_scale_orientation:
+            scales = scales[matching_area]
+            orientations = orientations[matching_area]
         if not len(landmark_ids):
             return None
 
@@ -1033,6 +1092,17 @@ class SkinMapTracker:
             )[None],
             "image_size": current_features["image_size"],
         }
+        if self.requires_scale_orientation:
+            global_features["scales"] = torch.as_tensor(
+                scales,
+                device=descriptor_tensor.device,
+                dtype=descriptor_tensor.dtype,
+            )[None]
+            global_features["oris"] = torch.as_tensor(
+                orientations,
+                device=descriptor_tensor.device,
+                dtype=descriptor_tensor.dtype,
+            )[None]
         return (
             landmark_ids,
             map_points,

@@ -26,12 +26,14 @@ class HybridSkinMapTracker(SkinMapTracker):
         min_optical_flow_track_ratio,
         feature_roi_bottom_fraction,
         map_expansion_min_coverage_ratio=MAP_EXPANSION_MIN_COVERAGE_RATIO,
+        feature_type="disk",
     ):
         super().__init__(
             camera_matrix,
             distortion,
             feature_roi_bottom_fraction,
             map_expansion_min_coverage_ratio,
+            feature_type,
         )
         self.max_optical_flow_frames = max_optical_flow_frames
         self.min_optical_flow_track_ratio = min_optical_flow_track_ratio

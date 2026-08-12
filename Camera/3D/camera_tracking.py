@@ -42,10 +42,11 @@ FEATURE_ROI_BOTTOM_FRACTION = 0.7
 FEATURE_TYPE = "disk"  # "disk" or "sift".
 
 MAPPING_START_FRAME = 90  # First frame used to build the frozen 3D map.
-MAPPING_END_FRAME = 420  # Last frame used to build the frozen 3D map.
+MAPPING_END_FRAME = 419  # Last frame used to build the frozen 3D map.
+TRACKING_START_FRAME = 420  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
 MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
-MAPPING_SEQUENTIAL_MATCH_OVERLAP = 5  # Immediately previous map images matched per image.
+MAPPING_SEQUENTIAL_MATCH_OVERLAP = 10  # Immediately previous map images matched per image.
 MAPPING_ENABLE_RETRIEVAL = False  # Add visually similar older frames to sequential pairs.
 MAPPING_RETRIEVAL_TOP_FRAMES = 3  # Visually similar older frames additionally matched per image.
 MAPPING_RETRIEVAL_MIN_FRAME_GAP = 90  # Ignore recent frames already covered by sequential matching.
@@ -125,6 +126,7 @@ def run_tracking(
     reconstruction_method,
     mapping_start_frame,
     mapping_end_frame,
+    tracking_start_frame,
     feature_type,
     mapping_frame_step,
     mapping_sequential_match_overlap,
@@ -187,10 +189,12 @@ def run_tracking(
         GLOBAL_MAP_GRID_COLUMNS,
         GLOBAL_MAP_REPROJECTION_ERROR_WEIGHT,
     )
+    map_build_started = time.perf_counter()
     global_map = map_builder.build(
         video_path,
         output_dir / "map",
     )
+    map_build_wall_time_s = time.perf_counter() - map_build_started
     save_retrieval_diagnostics(
         global_map["retrieval_diagnostics"],
         output_dir / "mapping_retrieval_diagnostics.png",
@@ -249,16 +253,17 @@ def run_tracking(
     tracking_times_ms = []
     initial_position = None
     initial_rotation = None
-    for _ in range(mapping_end_frame + 1):
+    for _ in range(tracking_start_frame):
         success, _ = capture.read()
         if not success:
             break
 
-    frame_index = mapping_end_frame + 1
+    frame_index = tracking_start_frame
     print(
         f"Frozen 3D map ready. Starting tracking at frame {frame_index}..."
     )
 
+    tracking_wall_started = time.perf_counter()
     while frame_index < MAX_FRAMES:
         success, frame = capture.read()
         if not success:
@@ -399,6 +404,7 @@ def run_tracking(
         if frame_index % 100 == 0:
             print(f"Frame {frame_index}/{frame_count}, keyframes: {len(tracker.keyframes)}")
         frame_index += 1
+    tracking_wall_time_s = time.perf_counter() - tracking_wall_started
 
     capture.release()
     if video_writer is not None:
@@ -449,11 +455,14 @@ def run_tracking(
         "median_tracking_time_ms": float(median_tracking_time_ms),
         "p95_tracking_time_ms": float(p95_tracking_time_ms),
         "tracking_fps": float(tracking_fps),
+        "map_build_wall_time_s": float(map_build_wall_time_s),
+        "tracking_wall_time_s": float(tracking_wall_time_s),
         "feature_roi_bottom_fraction": (
             feature_roi_bottom_fraction
         ),
         "mapping_start_frame": mapping_start_frame,
         "mapping_end_frame": mapping_end_frame,
+        "tracking_start_frame": tracking_start_frame,
         "reconstruction_method": reconstruction_method,
         "feature_type": feature_type,
         "mapping_frame_step": mapping_frame_step,
@@ -518,6 +527,7 @@ def main():
         reconstruction_method=RECONSTRUCTION_METHOD,
         mapping_start_frame=MAPPING_START_FRAME,
         mapping_end_frame=MAPPING_END_FRAME,
+        tracking_start_frame=TRACKING_START_FRAME,
         feature_type=FEATURE_TYPE,
         mapping_frame_step=MAPPING_FRAME_STEP,
         mapping_sequential_match_overlap=(

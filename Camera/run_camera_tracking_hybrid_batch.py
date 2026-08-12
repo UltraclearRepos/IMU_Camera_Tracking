@@ -1,4 +1,5 @@
 import csv
+import math
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -12,6 +13,7 @@ from camera_tracking_hybrid import run_tracking
 
 EXPERIMENT_NAME = "real_screen_vis_expansion_0.7_track_vis_ratio_0.7_newExpanding"
 DATA_FOLDER = "LineArc-1-2cm"
+FEATURE_TYPE = "disk"  # "disk" or "sift".
 
 RECORDINGS = {
     "arc1cm-close-dark-nolight_Speed-3_2026-07-29_16.12.21": {
@@ -215,7 +217,7 @@ MIN_OPTICAL_FLOW_TRACK_RATIO = 0.9
 SCRIPT_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = (
     SCRIPT_DIR
-    / "results_hybrid_DISK_batch"
+    / f"results_hybrid_{FEATURE_TYPE.upper()}_batch"
     / DATA_FOLDER
     / EXPERIMENT_NAME
 )
@@ -231,6 +233,7 @@ def run_recording(recording_name, parameters):
         parameters["feature_roi_bottom_fraction"],
         MAX_OPTICAL_FLOW_FRAMES,
         MIN_OPTICAL_FLOW_TRACK_RATIO,
+        FEATURE_TYPE,
     )
 
 
@@ -246,6 +249,8 @@ def save_summary_csv(metrics):
 def add_value_labels(axis, bars, unit):
     for bar in bars:
         value = bar.get_width()
+        if not math.isfinite(value):
+            continue
         axis.text(
             value,
             bar.get_y() + bar.get_height() / 2,
@@ -261,6 +266,7 @@ def save_rmse_summary_plot(metrics):
         item["orientation_rmse_deg"] for item in metrics
     ]
     tracked_percent = [item["tracked_percent"] for item in metrics]
+    y_positions = range(len(metrics))
 
     figure_height = max(6.0, 0.55 * len(metrics))
     figure, axes = plt.subplots(
@@ -271,7 +277,7 @@ def save_rmse_summary_plot(metrics):
     )
 
     position_bars = axes[0].barh(
-        recording_names,
+        y_positions,
         position_rmse,
         color="tab:blue",
     )
@@ -282,7 +288,7 @@ def save_rmse_summary_plot(metrics):
     add_value_labels(axes[0], position_bars, "mm")
 
     orientation_bars = axes[1].barh(
-        recording_names,
+        y_positions,
         orientation_rmse,
         color="tab:orange",
     )
@@ -293,7 +299,7 @@ def save_rmse_summary_plot(metrics):
     add_value_labels(axes[1], orientation_bars, "deg")
 
     tracked_bars = axes[2].barh(
-        recording_names,
+        y_positions,
         tracked_percent,
         color="tab:green",
     )
@@ -302,6 +308,10 @@ def save_rmse_summary_plot(metrics):
     axes[2].set_xlim(0, 100)
     axes[2].grid(axis="x", alpha=0.3)
     axes[2].invert_yaxis()
+
+    for axis in axes:
+        axis.set_yticks(y_positions)
+        axis.set_yticklabels(recording_names)
 
     for bar, tracked in zip(tracked_bars, tracked_percent):
         axes[2].text(

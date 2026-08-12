@@ -15,6 +15,7 @@ from camera_tracking import (
     MAPPING_RETRIEVAL_TOP_FRAMES,
     MAPPING_SEQUENTIAL_MATCH_OVERLAP,
     MAPPING_START_FRAME,
+    TRACKING_START_FRAME,
     run_tracking,
 )
 
@@ -70,6 +71,7 @@ def main():
         reconstruction_method=arguments.reconstruction_method,
         mapping_start_frame=MAPPING_START_FRAME,
         mapping_end_frame=MAPPING_END_FRAME,
+        tracking_start_frame=TRACKING_START_FRAME,
         feature_type=FEATURE_TYPE,
         mapping_frame_step=MAPPING_FRAME_STEP,
         mapping_sequential_match_overlap=(

@@ -107,6 +107,7 @@ def run_tracking(
     feature_roi_bottom_fraction,
     max_optical_flow_frames,
     min_optical_flow_track_ratio,
+    feature_type="disk",
 ):
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
@@ -145,6 +146,7 @@ def run_tracking(
         min_optical_flow_track_ratio,
         feature_roi_bottom_fraction,
         map_expansion_min_coverage_ratio,
+        feature_type,
     )
 
     capture = cv2.VideoCapture(str(video_path))
@@ -392,6 +394,7 @@ def run_tracking(
         "p95_tracking_time_ms": float(p95_tracking_time_ms),
         "tracking_fps": float(tracking_fps),
         "feature_roi_bottom_fraction": feature_roi_bottom_fraction,
+        "feature_type": feature_type,
         "map_expansion_min_coverage_ratio": (
             map_expansion_min_coverage_ratio
         ),

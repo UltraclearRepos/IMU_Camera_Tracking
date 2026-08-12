@@ -1,6 +1,7 @@
 import argparse
 import csv
 import json
+import math
 import shutil
 from pathlib import Path
 
@@ -51,6 +52,7 @@ def run_recording(
         reconstruction_method=config["reconstruction_method"],
         mapping_start_frame=config["mapping_start_frame"],
         mapping_end_frame=config["mapping_end_frame"],
+        tracking_start_frame=config["tracking_start_frame"],
         feature_type=config["feature_type"],
         mapping_frame_step=config["mapping_frame_step"],
         mapping_sequential_match_overlap=config[
@@ -80,9 +82,42 @@ def save_summary_csv(metrics, results_dir):
     return output_path
 
 
+def format_duration(seconds):
+    minutes, seconds = divmod(seconds, 60.0)
+    hours, minutes = divmod(int(minutes), 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:04.1f}"
+
+
+def print_execution_times(metrics):
+    print("\nMap and tracking execution times:")
+    for item in metrics:
+        print(
+            f"{item['recording']}: map "
+            f"{format_duration(item['map_build_wall_time_s'])} | "
+            f"tracking "
+            f"{format_duration(item['tracking_wall_time_s'])} | "
+            f"tracking FPS {item['tracking_fps']:.2f}"
+        )
+
+    total_map_time_s = sum(
+        item["map_build_wall_time_s"] for item in metrics
+    )
+    total_tracking_time_s = sum(
+        item["tracking_wall_time_s"] for item in metrics
+    )
+    print(
+        f"TOTAL: map {format_duration(total_map_time_s)} | "
+        f"tracking {format_duration(total_tracking_time_s)} | "
+        "combined "
+        f"{format_duration(total_map_time_s + total_tracking_time_s)}"
+    )
+
+
 def add_value_labels(axis, bars, unit):
     for bar in bars:
         value = bar.get_width()
+        if not math.isfinite(value):
+            continue
         axis.text(
             value,
             bar.get_y() + bar.get_height() / 2,
@@ -100,6 +135,7 @@ def save_rmse_summary_plot(metrics, experiment_name, results_dir):
         item["orientation_rmse_deg"] for item in metrics
     ]
     tracked_percent = [item["tracked_percent"] for item in metrics]
+    y_positions = range(len(metrics))
 
     figure_height = max(6.0, 0.55 * len(metrics))
     figure, axes = plt.subplots(
@@ -110,7 +146,7 @@ def save_rmse_summary_plot(metrics, experiment_name, results_dir):
     )
 
     position_bars = axes[0].barh(
-        recording_names,
+        y_positions,
         position_rmse,
         color="tab:blue",
     )
@@ -121,7 +157,7 @@ def save_rmse_summary_plot(metrics, experiment_name, results_dir):
     add_value_labels(axes[0], position_bars, "mm")
 
     orientation_bars = axes[1].barh(
-        recording_names,
+        y_positions,
         orientation_rmse,
         color="tab:orange",
     )
@@ -132,7 +168,7 @@ def save_rmse_summary_plot(metrics, experiment_name, results_dir):
     add_value_labels(axes[1], orientation_bars, "deg")
 
     tracked_bars = axes[2].barh(
-        recording_names,
+        y_positions,
         tracked_percent,
         color="tab:green",
     )
@@ -141,6 +177,10 @@ def save_rmse_summary_plot(metrics, experiment_name, results_dir):
     axes[2].set_xlim(0, 100)
     axes[2].grid(axis="x", alpha=0.3)
     axes[2].invert_yaxis()
+
+    for axis in axes:
+        axis.set_yticks(y_positions)
+        axis.set_yticklabels(recording_names)
 
     for bar, tracked in zip(tracked_bars, tracked_percent):
         axes[2].text(
@@ -194,7 +234,8 @@ def main():
             f"\n[{index}/{len(recordings)}] Running {recording_name} | "
             f"features={config['feature_type']} | mapping="
             f"{config['mapping_start_frame']}.."
-            f"{config['mapping_end_frame']}"
+            f"{config['mapping_end_frame']} | tracking="
+            f"{config['tracking_start_frame']}"
         )
         metrics.append(
             run_recording(
@@ -216,6 +257,7 @@ def main():
     print(f"\nSaved: {saved_config_path}")
     print(f"Saved: {csv_path}")
     print(f"Saved: {plot_path}")
+    print_execution_times(metrics)
 
 
 if __name__ == "__main__":

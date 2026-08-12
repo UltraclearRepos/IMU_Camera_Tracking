@@ -40,7 +40,13 @@ def feature_roi_bottom_fraction(recording_name):
     )
 
 
-def run_recording(algorithm, data_dir, output_dir, recording_name):
+def run_recording(
+    algorithm,
+    feature_type,
+    data_dir,
+    output_dir,
+    recording_name,
+):
     recording_output_dir = output_dir / recording_name
     roi_bottom_fraction = feature_roi_bottom_fraction(recording_name)
 
@@ -51,6 +57,7 @@ def run_recording(algorithm, data_dir, output_dir, recording_name):
             data_dir,
             MAP_EXPANSION_MIN_COVERAGE_RATIO,
             roi_bottom_fraction,
+            feature_type,
         )
 
     return run_hybrid_tracking(
@@ -61,6 +68,7 @@ def run_recording(algorithm, data_dir, output_dir, recording_name):
         roi_bottom_fraction,
         MAX_OPTICAL_FLOW_FRAMES,
         MIN_OPTICAL_FLOW_TRACK_RATIO,
+        feature_type,
     )
 
 
@@ -83,11 +91,13 @@ def main():
     for index, recording_name in enumerate(recording_names, start=1):
         print(
             f"[{index}/{len(recording_names)}] "
-            f"Running {recording_name} with {arguments.algorithm}"
+            f"Running {recording_name} with {arguments.algorithm} "
+            f"and {arguments.feature_type}"
         )
         metrics.append(
             run_recording(
                 arguments.algorithm,
+                arguments.feature_type,
                 arguments.data_dir,
                 arguments.output_dir,
                 recording_name,
@@ -114,6 +124,11 @@ def parse_arguments():
     parser.add_argument(
         "--algorithm",
         choices=("lightglue", "hybrid"),
+        required=True,
+    )
+    parser.add_argument(
+        "--feature-type",
+        choices=("disk", "sift"),
         required=True,
     )
     parser.add_argument("--data-dir", type=Path, required=True)
