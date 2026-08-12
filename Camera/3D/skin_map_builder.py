@@ -9,9 +9,9 @@ import pycolmap
 import torch
 from scipy.spatial.transform import Rotation
 
+from aruco_reference import create_aruco_detector, detect_aruco_pose
 
-ARUCO_ID = 7
-ARUCO_SIZE_MM = 20.0
+
 MIN_ARUCO_ALIGNMENT_FRAMES = 3
 
 MIN_PAIR_MATCHES = 20
@@ -72,13 +72,17 @@ def select_spatially_distributed_features(
         rank += 1
 
     selected_indices = np.asarray(selected_indices, dtype=int)
-    return {
+    selected = {
         "keypoints": features["keypoints"][selected_indices],
         "descriptors": features["descriptors"][selected_indices],
         "scores": features["scores"][selected_indices],
         "image_size": features["image_size"],
         "roi_top": roi_top,
     }
+    for name in ("scales", "oris"):
+        if name in features:
+            selected[name] = features[name][selected_indices]
+    return selected
 
 
 def select_retrieval_features(features, maximum_descriptors):
@@ -502,19 +506,6 @@ def select_uniform_landmarks(
     )
 
 
-def aruco_object_points():
-    half = ARUCO_SIZE_MM / 2.0
-    return np.array(
-        [
-            [-half, half, 0.0],
-            [half, half, 0.0],
-            [half, -half, 0.0],
-            [-half, -half, 0.0],
-        ],
-        dtype=np.float64,
-    )
-
-
 def create_colmap_camera(camera_matrix, distortion, width, height):
     distortion = distortion.reshape(-1)
     distortion = np.pad(distortion, (0, max(0, 8 - len(distortion))))
@@ -602,7 +593,10 @@ def print_map_build_timing(timing):
         ("setup_s", "Setup"),
         ("frame_read_s", "Frame reading"),
         ("image_save_s", "Image saving"),
-        ("disk_and_feature_selection_s", "DISK + feature selection"),
+        (
+            "feature_extraction_and_selection_s",
+            "Feature extraction + selection",
+        ),
         ("retrieval_voting_s", "Old-frame descriptor voting"),
         ("aruco_detection_s", "ArUco detection"),
         (
@@ -718,29 +712,15 @@ class SkinMapBuilder:
             global_map_reprojection_error_weight
         )
 
-        dictionary = cv2.aruco.getPredefinedDictionary(
-            cv2.aruco.DICT_4X4_50
-        )
-        self.aruco_detector = cv2.aruco.ArucoDetector(dictionary)
+        self.aruco_detector = create_aruco_detector()
 
     def detect_aruco_pose(self, frame):
-        corners, ids, _ = self.aruco_detector.detectMarkers(frame)
-        if ids is None or ARUCO_ID not in ids.flatten():
-            return None
-
-        marker_index = np.where(ids.flatten() == ARUCO_ID)[0][0]
-        image_points = corners[marker_index].reshape(4, 2).astype(np.float64)
-        success, rvec, tvec = cv2.solvePnP(
-            aruco_object_points(),
-            image_points,
+        return detect_aruco_pose(
+            frame,
             self.camera_matrix,
             self.distortion,
-            flags=cv2.SOLVEPNP_IPPE_SQUARE,
+            self.aruco_detector,
         )
-        if not success:
-            return None
-
-        return cv2.Rodrigues(rvec)[0], tvec.reshape(3)
 
     def collect_and_match_mapping_frames(
         self,
@@ -780,7 +760,7 @@ class SkinMapBuilder:
         retrieval_verified_pair_count = 0
         frame_read_seconds = 0.0
         image_save_seconds = 0.0
-        disk_seconds = 0.0
+        feature_extraction_seconds = 0.0
         aruco_seconds = 0.0
         image_database_write_seconds = 0.0
         lightglue_seconds = 0.0
@@ -810,7 +790,7 @@ class SkinMapBuilder:
             cv2.imwrite(str(images_dir / image_name), frame)
             image_save_seconds += time.perf_counter() - saving_started
 
-            disk_started = time.perf_counter()
+            feature_extraction_started = time.perf_counter()
             detected_features = self.feature_matching.extract(frame)
             features = select_spatially_distributed_features(
                 detected_features,
@@ -818,7 +798,9 @@ class SkinMapBuilder:
                 self.mapping_feature_grid_rows,
                 self.mapping_feature_grid_columns,
             )
-            disk_seconds += time.perf_counter() - disk_started
+            feature_extraction_seconds += (
+                time.perf_counter() - feature_extraction_started
+            )
             features_by_name[image_name] = features
             current_retrieval_features = None
             if self.enable_retrieval:
@@ -1067,7 +1049,9 @@ class SkinMapBuilder:
             "setup_seconds": setup_seconds,
             "frame_read_seconds": frame_read_seconds,
             "image_save_seconds": image_save_seconds,
-            "disk_and_selection_seconds": disk_seconds,
+            "feature_extraction_and_selection_seconds": (
+                feature_extraction_seconds
+            ),
             "aruco_detection_seconds": aruco_seconds,
             "image_database_write_seconds": (
                 image_database_write_seconds
@@ -1136,7 +1120,7 @@ class SkinMapBuilder:
             key=lambda reconstruction: reconstruction.num_reg_images(),
         )
 
-    def align_to_first_camera(self, reconstruction, aruco_poses):
+    def align_to_aruco(self, reconstruction, aruco_poses):
         registered_aruco_images = sorted(
             [
                 image
@@ -1152,33 +1136,22 @@ class SkinMapBuilder:
             )
 
         reference_image = registered_aruco_images[0]
-        R_aruco_to_reference, t_aruco_to_reference = aruco_poses[
-            reference_image.name
-        ]
 
         rotation_candidates = []
         sfm_centers = []
-        reference_centers = []
+        aruco_centers = []
 
         for image in registered_aruco_images:
             R_aruco_to_camera, t_aruco_to_camera = aruco_poses[image.name]
-            R_reference_to_camera = (
-                R_aruco_to_camera @ R_aruco_to_reference.T
-            )
-            t_reference_to_camera = (
-                t_aruco_to_camera
-                - R_reference_to_camera @ t_aruco_to_reference
-            )
-
             R_sfm_to_camera = image.cam_from_world().rotation.matrix()
             rotation_candidates.append(
-                R_reference_to_camera.T @ R_sfm_to_camera
+                R_aruco_to_camera.T @ R_sfm_to_camera
             )
             sfm_centers.append(image.projection_center())
-            reference_centers.append(
+            aruco_centers.append(
                 camera_center(
-                    R_reference_to_camera,
-                    t_reference_to_camera,
+                    R_aruco_to_camera,
+                    t_aruco_to_camera,
                 )
             )
 
@@ -1186,23 +1159,23 @@ class SkinMapBuilder:
             rotation_candidates
         ).mean().as_matrix()
         sfm_centers = np.asarray(sfm_centers)
-        reference_centers = np.asarray(reference_centers)
+        aruco_centers = np.asarray(aruco_centers)
         rotated_centers = (rotation @ sfm_centers.T).T
 
         rotated_mean = np.mean(rotated_centers, axis=0)
-        reference_mean = np.mean(reference_centers, axis=0)
+        aruco_mean = np.mean(aruco_centers, axis=0)
         rotated_centered = rotated_centers - rotated_mean
-        reference_centered = reference_centers - reference_mean
+        aruco_centered = aruco_centers - aruco_mean
         scale = np.sum(
-            rotated_centered * reference_centered
+            rotated_centered * aruco_centered
         ) / np.sum(rotated_centered**2)
-        translation = reference_mean - scale * rotated_mean
+        translation = aruco_mean - scale * rotated_mean
 
         aligned_centers = scale * rotated_centers + translation
         alignment_rmse = np.sqrt(
             np.mean(
                 np.sum(
-                    (aligned_centers - reference_centers) ** 2,
+                    (aligned_centers - aruco_centers) ** 2,
                     axis=1,
                 )
             )
@@ -1214,6 +1187,7 @@ class SkinMapBuilder:
             "alignment_rmse_mm": alignment_rmse,
             "alignment_frames": len(registered_aruco_images),
             "reference_image": reference_image.name,
+            "coordinate_frame": "aruco",
         }
 
     def transform_points(self, points, alignment):
@@ -1318,9 +1292,16 @@ class SkinMapBuilder:
 
         descriptors = []
         scores = []
+        include_scale_orientation = (
+            self.feature_matching.requires_scale_orientation
+        )
+        scales = []
+        orientations = []
         for point in selected_points:
             point_descriptors = []
             point_scores = []
+            point_scales = []
+            point_orientations = []
             for observation in point.track.elements:
                 image = reconstruction.images[observation.image_id]
                 point_descriptors.append(
@@ -1333,11 +1314,30 @@ class SkinMapBuilder:
                         observation.point2D_idx
                     ]
                 )
+                if include_scale_orientation:
+                    point_scales.append(
+                        features_by_name[image.name]["scales"][
+                            observation.point2D_idx
+                        ]
+                    )
+                    point_orientations.append(
+                        features_by_name[image.name]["oris"][
+                            observation.point2D_idx
+                        ]
+                    )
 
             descriptor = np.mean(point_descriptors, axis=0)
             descriptor /= np.linalg.norm(descriptor)
             descriptors.append(descriptor)
             scores.append(np.mean(point_scores))
+            if include_scale_orientation:
+                scales.append(np.mean(point_scales))
+                orientations.append(
+                    np.arctan2(
+                        np.mean(np.sin(point_orientations)),
+                        np.mean(np.cos(point_orientations)),
+                    )
+                )
 
         descriptors = np.asarray(descriptors, dtype=np.float32)
 
@@ -1370,7 +1370,7 @@ class SkinMapBuilder:
                 R_map_to_camera.T @ np.array([0.0, -1.0, 0.0])
             )
 
-        return {
+        global_map = {
             "positions": positions,
             "descriptors": descriptors,
             "scores": np.asarray(scores, dtype=np.float32),
@@ -1411,14 +1411,21 @@ class SkinMapBuilder:
             "mapping_reference_frame": frame_number(
                 alignment["reference_image"]
             ),
+            "coordinate_frame": alignment["coordinate_frame"],
             "initial_R": initial_R,
             "initial_t": initial_t,
             "last_mapping_image": last_image.name,
         }
+        if include_scale_orientation:
+            global_map["scales"] = np.asarray(scales, dtype=np.float32)
+            global_map["oris"] = np.asarray(
+                orientations,
+                dtype=np.float32,
+            )
+        return global_map
 
     def save_map(self, global_map, output_path):
-        np.savez_compressed(
-            output_path,
+        saved_arrays = dict(
             positions=global_map["positions"],
             descriptors=global_map["descriptors"],
             scores=global_map["scores"],
@@ -1448,6 +1455,7 @@ class SkinMapBuilder:
             mapping_reference_frame=global_map[
                 "mapping_reference_frame"
             ],
+            coordinate_frame=global_map["coordinate_frame"],
             mapping_extracted_image_count=global_map[
                 "mapping_extracted_image_count"
             ],
@@ -1460,6 +1468,10 @@ class SkinMapBuilder:
             initial_t=global_map["initial_t"],
             last_mapping_image=global_map["last_mapping_image"],
         )
+        for name in ("scales", "oris"):
+            if name in global_map:
+                saved_arrays[name] = global_map[name]
+        np.savez_compressed(output_path, **saved_arrays)
 
     def build(self, video_path, output_dir):
         build_started = time.perf_counter()
@@ -1503,7 +1515,7 @@ class SkinMapBuilder:
         )
 
         alignment_started = time.perf_counter()
-        alignment = self.align_to_first_camera(
+        alignment = self.align_to_aruco(
             reconstruction,
             aruco_poses,
         )
@@ -1587,9 +1599,11 @@ class SkinMapBuilder:
                 "image_save_s": frame_processing_statistics[
                     "image_save_seconds"
                 ],
-                "disk_and_feature_selection_s": frame_processing_statistics[
-                    "disk_and_selection_seconds"
-                ],
+                "feature_extraction_and_selection_s": (
+                    frame_processing_statistics[
+                        "feature_extraction_and_selection_seconds"
+                    ]
+                ),
                 "retrieval_voting_s": frame_processing_statistics[
                     "retrieval_voting_seconds"
                 ],
@@ -1632,10 +1646,12 @@ class SkinMapBuilder:
         }
 
         summary = {
+            "feature_type": self.feature_matching.feature_type,
             "mapping_start_frame": self.mapping_start_frame,
             "mapping_end_frame": self.mapping_end_frame,
             "reconstruction_method": self.reconstruction_method,
             "mapping_frame_step": self.mapping_frame_step,
+            "map_coordinate_frame": global_map["coordinate_frame"],
             "sequential_match_overlap": self.sequential_match_overlap,
             "retrieval_enabled": self.enable_retrieval,
             "retrieval_top_frames": self.retrieval_top_frames,

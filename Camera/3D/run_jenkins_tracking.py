@@ -5,7 +5,18 @@ from pathlib import Path
 
 import pycolmap
 
-from camera_tracking import run_tracking
+from camera_tracking import (
+    FEATURE_TYPE,
+    MAPPING_ENABLE_RETRIEVAL,
+    MAPPING_END_FRAME,
+    MAPPING_FRAME_STEP,
+    MAPPING_RETRIEVAL_MAX_SEQUENCE_GAP,
+    MAPPING_RETRIEVAL_MIN_SEQUENCE_FRAMES,
+    MAPPING_RETRIEVAL_TOP_FRAMES,
+    MAPPING_SEQUENTIAL_MATCH_OVERLAP,
+    MAPPING_START_FRAME,
+    run_tracking,
+)
 
 
 FEATURE_ROI_BY_DISTANCE = {
@@ -56,7 +67,22 @@ def main():
         arguments.output_dir,
         arguments.data_dir,
         feature_roi_bottom_fraction(arguments.recording),
-        arguments.reconstruction_method,
+        reconstruction_method=arguments.reconstruction_method,
+        mapping_start_frame=MAPPING_START_FRAME,
+        mapping_end_frame=MAPPING_END_FRAME,
+        feature_type=FEATURE_TYPE,
+        mapping_frame_step=MAPPING_FRAME_STEP,
+        mapping_sequential_match_overlap=(
+            MAPPING_SEQUENTIAL_MATCH_OVERLAP
+        ),
+        mapping_enable_retrieval=MAPPING_ENABLE_RETRIEVAL,
+        mapping_retrieval_top_frames=MAPPING_RETRIEVAL_TOP_FRAMES,
+        mapping_retrieval_min_sequence_frames=(
+            MAPPING_RETRIEVAL_MIN_SEQUENCE_FRAMES
+        ),
+        mapping_retrieval_max_sequence_gap=(
+            MAPPING_RETRIEVAL_MAX_SEQUENCE_GAP
+        ),
     )
     metrics["total_pipeline_seconds"] = time.perf_counter() - started
     metrics["pycolmap_version"] = str(pycolmap.__version__)

@@ -12,7 +12,7 @@ os.environ["TORCH_HOME"] = str(PROJECT_DIR / ".venv" / "torch_cache")
 import cv2
 import numpy as np
 import torch
-from feature_matching import DEVICE, DiskLightGlue
+from feature_matching import DEVICE, LightGlueFeatureMatching
 from mapping_evaluation import evaluate_final_mapping_poses
 from scipy.spatial.transform import Rotation
 from skin_map_builder import SkinMapBuilder
@@ -39,6 +39,7 @@ CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
 FEATURE_ROI_BOTTOM_FRACTION = 0.7
+FEATURE_TYPE = "disk"  # "disk" or "sift".
 
 MAPPING_START_FRAME = 90  # First frame used to build the frozen 3D map.
 MAPPING_END_FRAME = 420  # Last frame used to build the frozen 3D map.
@@ -48,7 +49,7 @@ MAPPING_SEQUENTIAL_MATCH_OVERLAP = 5  # Immediately previous map images matched 
 MAPPING_ENABLE_RETRIEVAL = False  # Add visually similar older frames to sequential pairs.
 MAPPING_RETRIEVAL_TOP_FRAMES = 3  # Visually similar older frames additionally matched per image.
 MAPPING_RETRIEVAL_MIN_FRAME_GAP = 90  # Ignore recent frames already covered by sequential matching.
-MAPPING_RETRIEVAL_DESCRIPTORS_PER_FRAME = 64  # Spatially distributed DISK descriptors used for retrieval.
+MAPPING_RETRIEVAL_DESCRIPTORS_PER_FRAME = 64  # Spatially distributed descriptors used for retrieval.
 MAPPING_RETRIEVAL_MIN_SEQUENCE_FRAMES = 5  # Actual high-probability old frames required in a sequence.
 MAPPING_RETRIEVAL_MAX_SEQUENCE_GAP = 2  # Maximum index difference between consecutive supporting old frames.
 MAPPING_RETRIEVAL_MIN_COVERED_CELLS = 6  # Minimum occupied image-grid cells in both views.
@@ -120,8 +121,19 @@ def run_tracking(
     output_dir,
     data_dir,
     feature_roi_bottom_fraction,
-    reconstruction_method=RECONSTRUCTION_METHOD,
+    *,
+    reconstruction_method,
+    mapping_start_frame,
+    mapping_end_frame,
+    feature_type,
+    mapping_frame_step,
+    mapping_sequential_match_overlap,
+    mapping_enable_retrieval,
+    mapping_retrieval_top_frames,
+    mapping_retrieval_min_sequence_frames,
+    mapping_retrieval_max_sequence_gap,
 ):
+    feature_type = feature_type.lower()
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
 
@@ -146,25 +158,26 @@ def run_tracking(
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
     distortion = np.load(DISTORTION_PATH)
-    feature_matching = DiskLightGlue(
+    feature_matching = LightGlueFeatureMatching(
         feature_roi_bottom_fraction,
+        feature_type=feature_type,
         mask_aruco_features=MASK_ARUCO_FEATURES,
     )
     map_builder = SkinMapBuilder(
         camera_matrix,
         distortion,
         feature_matching,
-        MAPPING_START_FRAME,
-        MAPPING_END_FRAME,
+        mapping_start_frame,
+        mapping_end_frame,
         reconstruction_method,
-        MAPPING_FRAME_STEP,
-        MAPPING_SEQUENTIAL_MATCH_OVERLAP,
-        MAPPING_ENABLE_RETRIEVAL,
-        MAPPING_RETRIEVAL_TOP_FRAMES,
+        mapping_frame_step,
+        mapping_sequential_match_overlap,
+        mapping_enable_retrieval,
+        mapping_retrieval_top_frames,
         MAPPING_RETRIEVAL_MIN_FRAME_GAP,
         MAPPING_RETRIEVAL_DESCRIPTORS_PER_FRAME,
-        MAPPING_RETRIEVAL_MIN_SEQUENCE_FRAMES,
-        MAPPING_RETRIEVAL_MAX_SEQUENCE_GAP,
+        mapping_retrieval_min_sequence_frames,
+        mapping_retrieval_max_sequence_gap,
         MAPPING_RETRIEVAL_MIN_COVERED_CELLS,
         MAPPING_MAX_FEATURES,
         MAPPING_FEATURE_GRID_ROWS,
@@ -236,12 +249,12 @@ def run_tracking(
     tracking_times_ms = []
     initial_position = None
     initial_rotation = None
-    for _ in range(MAPPING_END_FRAME + 1):
+    for _ in range(mapping_end_frame + 1):
         success, _ = capture.read()
         if not success:
             break
 
-    frame_index = MAPPING_END_FRAME + 1
+    frame_index = mapping_end_frame + 1
     print(
         f"Frozen 3D map ready. Starting tracking at frame {frame_index}..."
     )
@@ -342,6 +355,12 @@ def run_tracking(
                 "initialization_matches": diagnostics[
                     "initialization_matches"
                 ],
+                "initialization_position_difference_mm": diagnostics[
+                    "initialization_position_difference_mm"
+                ],
+                "initialization_orientation_difference_deg": diagnostics[
+                    "initialization_orientation_difference_deg"
+                ],
                 "landmarks": len(tracker.landmarks),
                 "keyframe_added": diagnostics["keyframe_added"],
                 "keyframes": len(tracker.keyframes),
@@ -433,9 +452,22 @@ def run_tracking(
         "feature_roi_bottom_fraction": (
             feature_roi_bottom_fraction
         ),
-        "mapping_start_frame": MAPPING_START_FRAME,
-        "mapping_end_frame": MAPPING_END_FRAME,
+        "mapping_start_frame": mapping_start_frame,
+        "mapping_end_frame": mapping_end_frame,
         "reconstruction_method": reconstruction_method,
+        "feature_type": feature_type,
+        "mapping_frame_step": mapping_frame_step,
+        "mapping_sequential_match_overlap": (
+            mapping_sequential_match_overlap
+        ),
+        "mapping_enable_retrieval": mapping_enable_retrieval,
+        "mapping_retrieval_top_frames": mapping_retrieval_top_frames,
+        "mapping_retrieval_min_sequence_frames": (
+            mapping_retrieval_min_sequence_frames
+        ),
+        "mapping_retrieval_max_sequence_gap": (
+            mapping_retrieval_max_sequence_gap
+        ),
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": global_map["candidate_landmarks"],
         "map_occupied_grid_cells": global_map["occupied_grid_cells"],
@@ -483,6 +515,22 @@ def main():
         RESULTS_DIR / RECORDING_NAME,
         PROJECT_DIR / "Data" / DATA_FOLDER,
         FEATURE_ROI_BOTTOM_FRACTION,
+        reconstruction_method=RECONSTRUCTION_METHOD,
+        mapping_start_frame=MAPPING_START_FRAME,
+        mapping_end_frame=MAPPING_END_FRAME,
+        feature_type=FEATURE_TYPE,
+        mapping_frame_step=MAPPING_FRAME_STEP,
+        mapping_sequential_match_overlap=(
+            MAPPING_SEQUENTIAL_MATCH_OVERLAP
+        ),
+        mapping_enable_retrieval=MAPPING_ENABLE_RETRIEVAL,
+        mapping_retrieval_top_frames=MAPPING_RETRIEVAL_TOP_FRAMES,
+        mapping_retrieval_min_sequence_frames=(
+            MAPPING_RETRIEVAL_MIN_SEQUENCE_FRAMES
+        ),
+        mapping_retrieval_max_sequence_gap=(
+            MAPPING_RETRIEVAL_MAX_SEQUENCE_GAP
+        ),
     )
 
 

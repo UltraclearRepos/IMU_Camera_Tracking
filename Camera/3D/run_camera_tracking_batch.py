@@ -1,232 +1,78 @@
+import argparse
 import csv
+import json
+import shutil
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 from camera_tracking import run_tracking
 
 
-# -----------------------------------------------------------------------------
-# Experiment configuration
-# -----------------------------------------------------------------------------
-
-EXPERIMENT_NAME = "realistic_screen_visible_0.7_expansion_threshold"
-DATA_FOLDER = "Line"
-
-# RECORDINGS = {
-#     "arc1cm-close-dark-nolight_Speed-3_2026-07-29_16.12.21": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "arc1cm-close-dark-withlight_Speed-3_2026-07-29_16.08.30": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "arc1cm-close-white-nolight_Speed-3_2026-07-29_16.29.21": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "arc1cm-close-white-withlight_Speed-3_2026-07-29_16.32.22": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "arc1cm-far-dark-nolight_Speed-3_2026-07-29_16.52.01": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "arc1cm-far-dark-withlight_Speed-3_2026-07-29_16.53.23": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "arc1cm-far-white-nolight_Speed-3_2026-07-29_17.03.56": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "arc1cm-far-white-withlight_Speed-3_2026-07-29_17.02.26": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "arc1cm-initial-dark-nolight_Speed-3_2026-07-29_16.48.44": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "arc1cm-initial-dark-withlight_Speed-3_2026-07-29_16.47.01": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "arc1cm-initial-white-nolight_Speed-3_2026-07-29_16.35.50": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "arc1cm-initial-white-withlight_Speed-3_2026-07-29_16.34.29": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "arc2cm-close-dark-nolight_Speed-3_2026-07-29_16.14.42": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "arc2cm-close-dark-withlight_Speed-3_2026-07-29_16.15.59": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "arc2cm-close-white-nolight_Speed-3_2026-07-29_16.27.38": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "arc2cm-close-white-withlight_Speed-3_2026-07-29_16.25.40": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "arc2cm-far-dark-nolight_Speed-3_2026-07-29_16.56.25": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "arc2cm-far-dark-withlight_Speed-3_2026-07-29_16.55.05": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "arc2cm-far-white-nolight_Speed-3_2026-07-29_16.59.01": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "arc2cm-far-white-withlight_Speed-3_2026-07-29_17.00.49": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "arc2cm-initial-dark-nolight_Speed-3_2026-07-29_16.44.19": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "arc2cm-initial-dark-withlight_Speed-3_2026-07-29_16.45.45": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "arc2cm-initial-white-nolight_Speed-3_2026-07-29_16.37.23": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "arc2cm-initial-white-withlight_Speed-3_2026-07-29_16.38.41": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-# }
-
-RECORDINGS = {
-    "initialpos-white-withlight_Speed-3_2026-07-29_17.46.25": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "initialpos-white-nolight_Speed-3_2026-07-29_17.47.53": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "initialpos-dark-nolight_Speed-3_2026-07-28_16.55.02": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "initialpos-dark-withlight_Speed-3_2026-07-28_16.57.56": {
-        "feature_roi_bottom_fraction": 0.85,
-    },
-    "far-white-nolight_Speed-3_2026-07-28_17.06.45": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "far-white-withlight_Speed-3_2026-07-28_17.08.22": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "far-dark-withlight_Speed-3_2026-07-28_17.02.52": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "far-dark-nolight_Speed-3_2026-07-28_17.04.19": {
-        "feature_roi_bottom_fraction": 0.70,
-    },
-    "close-white-withlight_Speed-3_2026-07-28_17.12.37": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-    "close-white-nolight_Speed-3_2026-07-28_17.14.02": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-    "close-dark-nolight_Speed-3_2026-07-28_17.16.20": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-    "close-dark-withlight_Speed-3_2026-07-28_17.17.50": {
-        "feature_roi_bottom_fraction": 1.00,
-    },
-}
-
-# RECORDINGS = {
-#     "initial-white-withlight-25deg_Speed-3_2026-07-30_13.27.38": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "initial-white-nolight-25deg_Speed-3_2026-07-30_13.28.57": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "initial-black-withlight-25deg_Speed-3_2026-07-30_13.46.33": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "initial-black-nolight-25deg_Speed-3_2026-07-30_13.50.30": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "far-white-withlight-25deg_Speed-3_2026-07-30_13.21.53": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "far-white-nolight-25deg_Speed-3_2026-07-30_13.20.24": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "far-black-withlight-25deg_Speed-3_2026-07-30_13.44.45": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "far-black-nolight-25deg_Speed-3_2026-07-30_13.41.36": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "close-white-withlight-25deg_Speed-3_2026-07-30_13.33.14": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "close-white-nolight-25deg_Speed-3_2026-07-30_13.31.23": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "close-black-withlight-25deg_Speed-3_2026-07-30_13.37.05": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "close-black-nolight-25deg_Speed-3_2026-07-30_13.38.42": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-# }
-
-
-# RECORDINGS = {
-#     "initial-white-withlight-25deg_Speed-3_2026-07-30_13.06.03": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "initial-white-nolight-25deg_Speed-3_2026-07-30_13.07.33": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "initial-black-withlight-25deg_Speed-3_2026-07-30_13.56.04": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "initial-black-nolight-25deg_Speed-3_2026-07-30_13.55.04": {
-#         "feature_roi_bottom_fraction": 0.85,
-#     },
-#     "far-white-withlight-25deg_Speed-3_2026-07-30_13.13.13": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "far-white-nolight-25deg_Speed-3_2026-07-30_13.14.23": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "far-black-withlight-25deg_Speed-3_2026-07-30_13.58.22": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "far-black-nolight-25deg_Speed-3_2026-07-30_14.00.25": {
-#         "feature_roi_bottom_fraction": 0.70,
-#     },
-#     "close-white-withlight-25deg_Speed-3_2026-07-30_13.11.32": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "close-white-nolight-25deg_Speed-3_2026-07-30_13.10.31": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "close-black-withlight-25deg_Speed-3_2026-07-30_14.09.41": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-#     "close-black-nolight-25deg_Speed-3_2026-07-30_14.08.24": {
-#         "feature_roi_bottom_fraction": 1.00,
-#     },
-# }
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = SCRIPT_DIR.parent.parent
-RESULTS_DIR = (
-    SCRIPT_DIR
-    / "results_DISK_batch"
-    / DATA_FOLDER
-    / EXPERIMENT_NAME
-)
+DEFAULT_CONFIG_PATH = SCRIPT_DIR / "batch_config.json"
 
 
-def run_recording(recording_name, parameters):
-    recording_output_dir = RESULTS_DIR / recording_name
-    return run_tracking(
-        recording_name,
-        recording_output_dir,
-        PROJECT_DIR / "Data" / DATA_FOLDER,
-        parameters["feature_roi_bottom_fraction"],
+def load_experiment_config(path):
+    with Path(path).open(encoding="utf-8") as file:
+        return json.load(file)
+
+
+def resolve_data_dir(config):
+    return PROJECT_DIR / "Data" / config["data_folder"]
+
+
+def resolve_results_dir(config, override):
+    if override is not None:
+        return override
+    return (
+        SCRIPT_DIR
+        / "results_batch"
+        / config["data_folder"]
+        / config["experiment_name"]
     )
 
 
-def save_summary_csv(metrics):
-    output_path = RESULTS_DIR / "rmse_summary.csv"
+def run_recording(
+    recording_name,
+    recording_parameters,
+    config,
+    data_dir,
+    results_dir,
+):
+    recording_output_dir = (
+        results_dir / config["feature_type"] / recording_name
+    )
+    return run_tracking(
+        recording_name,
+        recording_output_dir,
+        data_dir,
+        recording_parameters["feature_roi_bottom_fraction"],
+        reconstruction_method=config["reconstruction_method"],
+        mapping_start_frame=config["mapping_start_frame"],
+        mapping_end_frame=config["mapping_end_frame"],
+        feature_type=config["feature_type"],
+        mapping_frame_step=config["mapping_frame_step"],
+        mapping_sequential_match_overlap=config[
+            "mapping_sequential_match_overlap"
+        ],
+        mapping_enable_retrieval=config[
+            "mapping_enable_retrieval"
+        ],
+        mapping_retrieval_top_frames=config[
+            "mapping_retrieval_top_frames"
+        ],
+        mapping_retrieval_min_sequence_frames=config[
+            "mapping_retrieval_min_sequence_frames"
+        ],
+        mapping_retrieval_max_sequence_gap=config[
+            "mapping_retrieval_max_sequence_gap"
+        ],
+    )
+
+
+def save_summary_csv(metrics, results_dir):
+    output_path = results_dir / "rmse_summary.csv"
     with output_path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=metrics[0].keys())
         writer.writeheader()
@@ -245,8 +91,10 @@ def add_value_labels(axis, bars, unit):
         )
 
 
-def save_rmse_summary_plot(metrics):
-    recording_names = [item["recording"] for item in metrics]
+def save_rmse_summary_plot(metrics, experiment_name, results_dir):
+    recording_names = [
+        f"{item['recording']} [{item['feature_type']}]" for item in metrics
+    ]
     position_rmse = [item["position_rmse_mm"] for item in metrics]
     orientation_rmse = [
         item["orientation_rmse_deg"] for item in metrics
@@ -303,32 +151,70 @@ def save_rmse_summary_plot(metrics):
             va="center",
         )
 
-    figure.suptitle(EXPERIMENT_NAME)
-
-    output_path = RESULTS_DIR / "rmse_summary.png"
+    figure.suptitle(experiment_name)
+    output_path = results_dir / "rmse_summary.png"
     figure.savefig(output_path, dpi=180)
     plt.close(figure)
     return output_path
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Run 3D camera-tracking experiments from a JSON file."
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help=f"Experiment JSON (default: {DEFAULT_CONFIG_PATH.name}).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Override the output directory from the configuration.",
+    )
+    return parser.parse_args()
 
 def main():
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    arguments = parse_arguments()
+    config = load_experiment_config(arguments.config)
+    data_dir = resolve_data_dir(config)
+    results_dir = resolve_results_dir(config, arguments.output_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_config_path = results_dir / "config.json"
+    shutil.copy2(arguments.config, saved_config_path)
 
     metrics = []
-    for index, (recording_name, parameters) in enumerate(
-        RECORDINGS.items(),
+    recordings = config["recordings"]
+    for index, (recording_name, recording_parameters) in enumerate(
+        recordings.items(),
         start=1,
     ):
         print(
-            f"\n[{index}/{len(RECORDINGS)}] "
-            f"Running {recording_name}"
+            f"\n[{index}/{len(recordings)}] Running {recording_name} | "
+            f"features={config['feature_type']} | mapping="
+            f"{config['mapping_start_frame']}.."
+            f"{config['mapping_end_frame']}"
         )
-        metrics.append(run_recording(recording_name, parameters))
+        metrics.append(
+            run_recording(
+                recording_name,
+                recording_parameters,
+                config,
+                data_dir,
+                results_dir,
+            )
+        )
 
-    csv_path = save_summary_csv(metrics)
-    plot_path = save_rmse_summary_plot(metrics)
+    csv_path = save_summary_csv(metrics, results_dir)
+    plot_path = save_rmse_summary_plot(
+        metrics,
+        config["experiment_name"],
+        results_dir,
+    )
 
-    print(f"\nSaved: {csv_path}")
+    print(f"\nSaved: {saved_config_path}")
+    print(f"Saved: {csv_path}")
     print(f"Saved: {plot_path}")
 
 

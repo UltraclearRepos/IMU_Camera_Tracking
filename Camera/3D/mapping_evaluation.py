@@ -117,6 +117,7 @@ def evaluate_final_mapping_poses(
 
     estimate_positions = (
         camera_to_output_axes
+        @ reference_rotation.T
         @ (camera_positions - reference_position).T
     ).T
     estimate_euler = relative_euler(

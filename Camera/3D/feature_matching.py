@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import torch
-from lightglue import DISK, LightGlue
+from lightglue import DISK, SIFT, LightGlue
 from lightglue.utils import rbd
 
 
@@ -9,6 +9,7 @@ DEVICE = "cuda"
 MAX_FEATURES = 512
 MASK_ARUCO_FEATURES = True
 ARUCO_MASK_MARGIN_PX = 6
+FEATURE_TYPES = ("disk", "sift")
 
 
 def frame_to_tensor(frame, device):
@@ -17,19 +18,39 @@ def frame_to_tensor(frame, device):
     return image.to(device)
 
 
-class DiskLightGlue:
+class LightGlueFeatureMatching:
     def __init__(
         self,
         feature_roi_bottom_fraction,
+        feature_type="disk",
         mask_aruco_features=MASK_ARUCO_FEATURES,
     ):
+        feature_type = feature_type.lower()
+        if feature_type not in FEATURE_TYPES:
+            raise ValueError(
+                f"feature_type must be one of {FEATURE_TYPES}, got "
+                f"{feature_type!r}"
+            )
+
         self.device = DEVICE
+        self.feature_type = feature_type
+        self.requires_scale_orientation = feature_type == "sift"
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
         self.mask_aruco_features = mask_aruco_features
-        self.extractor = DISK(max_num_keypoints=MAX_FEATURES).eval().to(
+        if feature_type == "disk":
+            self.extractor = DISK(
+                max_num_keypoints=MAX_FEATURES
+            ).eval().to(self.device)
+        else:
+            # OpenCV exposes response, scale and orientation for every SIFT
+            # point. LightGlue matching still runs on DEVICE.
+            self.extractor = SIFT(
+                max_num_keypoints=MAX_FEATURES,
+                backend="opencv",
+            ).eval().to(self.device)
+        self.matcher = LightGlue(features=feature_type).eval().to(
             self.device
         )
-        self.matcher = LightGlue(features="disk").eval().to(self.device)
 
         dictionary = cv2.aruco.getPredefinedDictionary(
             cv2.aruco.DICT_4X4_50
@@ -53,20 +74,32 @@ class DiskLightGlue:
         descriptors = features["descriptors"].detach().cpu().numpy().copy()
         scores = features["keypoint_scores"].detach().cpu().numpy().copy()
         keypoints[:, 1] += roi_top
+        scales = None
+        orientations = None
+        if self.requires_scale_orientation:
+            scales = features["scales"].detach().cpu().numpy().copy()
+            orientations = features["oris"].detach().cpu().numpy().copy()
 
         if self.mask_aruco_features:
             keep = self.points_outside_aruco(frame, keypoints)
             keypoints = keypoints[keep]
             descriptors = descriptors[keep]
             scores = scores[keep]
+            if self.requires_scale_orientation:
+                scales = scales[keep]
+                orientations = orientations[keep]
 
-        return {
+        result = {
             "keypoints": keypoints.astype(np.float32),
             "descriptors": descriptors.astype(np.float32),
             "scores": scores.astype(np.float32),
             "image_size": np.array([width, height], dtype=np.float32),
             "roi_top": roi_top,
         }
+        if self.requires_scale_orientation:
+            result["scales"] = scales.astype(np.float32)
+            result["oris"] = orientations.astype(np.float32)
+        return result
 
     def points_outside_aruco(self, frame, keypoints):
         corners, _, _ = self.aruco_detector.detectMarkers(frame)
@@ -89,7 +122,7 @@ class DiskLightGlue:
         return mask[pixels[:, 1], pixels[:, 0]] > 0
 
     def as_lightglue_features(self, features):
-        return {
+        result = {
             "keypoints": torch.as_tensor(
                 features["keypoints"],
                 device=self.device,
@@ -111,6 +144,18 @@ class DiskLightGlue:
                 dtype=torch.float32,
             )[None],
         }
+        if self.requires_scale_orientation:
+            result["scales"] = torch.as_tensor(
+                features["scales"],
+                device=self.device,
+                dtype=torch.float32,
+            )[None]
+            result["oris"] = torch.as_tensor(
+                features["oris"],
+                device=self.device,
+                dtype=torch.float32,
+            )[None]
+        return result
 
     def match(self, features0, features1):
         lightglue_features0 = self.as_lightglue_features(features0)

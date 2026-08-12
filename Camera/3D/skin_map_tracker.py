@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import torch
 
+from aruco_reference import create_aruco_detector, detect_aruco_pose
 from feature_matching import DEVICE
 
 
@@ -13,6 +14,8 @@ MIN_INLIERS = 20
 MIN_INLIER_RATIO = 0.125
 MAX_REPROJECTION_ERROR_PX = 3.0
 GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80
+MAX_INITIALIZATION_POSITION_DIFFERENCE_MM = 30.0
+MAX_INITIALIZATION_ORIENTATION_DIFFERENCE_DEG = 20.0
 
 MAP_COVERAGE_GRID_ROWS = 4
 MAP_COVERAGE_GRID_COLUMNS = 4
@@ -57,11 +60,27 @@ class SkinMapTracker:
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
         self.feature_matching = feature_matching
 
-        self.map_points = global_map["positions"]
+        if global_map.get("coordinate_frame") != "aruco":
+            raise ValueError(
+                "The frozen map must use the ArUco coordinate frame"
+            )
+
+        self.map_points = global_map["positions"].copy()
         self.map_descriptors = global_map["descriptors"]
         self.map_scores = global_map["scores"]
-        self.R_map_to_camera = global_map["initial_R"].copy()
-        self.t_map_to_camera = global_map["initial_t"].copy()
+        self.map_scales = global_map.get("scales")
+        self.map_orientations = global_map.get("oris")
+        if self.feature_matching.requires_scale_orientation and (
+            self.map_scales is None or self.map_orientations is None
+        ):
+            raise ValueError(
+                "SIFT global map must contain landmark scales and "
+                "orientations"
+            )
+        self.R_map_to_camera = np.eye(3, dtype=np.float64)
+        self.t_map_to_camera = np.zeros(3, dtype=np.float64)
+        self.initialized = False
+        self.aruco_detector = create_aruco_detector()
 
         self.landmarks = {
             landmark_id: {
@@ -70,8 +89,8 @@ class SkinMapTracker:
             }
             for landmark_id in range(len(self.map_points))
         }
-        self.keyframes = [global_map["last_mapping_image"]]
-        self.initialization = None
+        self.keyframes = []
+        self.initialization = {"frames": 0}
         self.map_coverage_grid_rows = MAP_COVERAGE_GRID_ROWS
         self.map_coverage_grid_columns = MAP_COVERAGE_GRID_COLUMNS
         self.map_coverage_ratio = 0.0
@@ -79,6 +98,19 @@ class SkinMapTracker:
 
     def all_map_points(self):
         return self.map_points
+
+    def initialize_working_map(self, R_aruco_to_camera, t_aruco_to_camera):
+        self.map_points = (
+            R_aruco_to_camera @ self.map_points.T
+        ).T + t_aruco_to_camera
+        for landmark_id, landmark in self.landmarks.items():
+            landmark["position"] = self.map_points[landmark_id]
+
+        self.R_map_to_camera = np.eye(3, dtype=np.float64)
+        self.t_map_to_camera = np.zeros(3, dtype=np.float64)
+        self.initialized = True
+        self.initialization = None
+        self.keyframes = ["tracking_start"]
 
     def visible_global_map(self, current_features):
         rvec = cv2.Rodrigues(self.R_map_to_camera)[0]
@@ -119,6 +151,9 @@ class SkinMapTracker:
             "scores": self.map_scores[matching_area],
             "image_size": current_features["image_size"],
         }
+        if self.feature_matching.requires_scale_orientation:
+            global_features["scales"] = self.map_scales[matching_area]
+            global_features["oris"] = self.map_orientations[matching_area]
         return (
             landmark_ids,
             self.map_points[matching_area],
@@ -174,6 +209,8 @@ class SkinMapTracker:
             "initialization_matches": 0,
             "initialization_points": np.empty((0, 2)),
             "initialization_aruco_detected": 0,
+            "initialization_position_difference_mm": np.nan,
+            "initialization_orientation_difference_deg": np.nan,
             "feature_extraction_ms": np.nan,
             "aruco_pose_ms": np.nan,
             "global_map_projection_ms": np.nan,
@@ -195,6 +232,30 @@ class SkinMapTracker:
             feature_extraction_ms
         )
 
+        initializing = not self.initialized
+        if initializing:
+            self.initialization["frames"] += 1
+            self.last_diagnostics["initialization_frames"] = (
+                self.initialization["frames"]
+            )
+            aruco_started = start_timer()
+            aruco_pose = detect_aruco_pose(
+                frame,
+                self.camera_matrix,
+                self.distortion,
+                self.aruco_detector,
+            )
+            self.last_diagnostics["aruco_pose_ms"] = elapsed_ms(
+                aruco_started
+            )
+            if aruco_pose is None:
+                return None
+
+            self.last_diagnostics["initialization_aruco_detected"] = 1
+            self.R_map_to_camera, self.t_map_to_camera = aruco_pose
+            aruco_R = self.R_map_to_camera.copy()
+            aruco_t = self.t_map_to_camera.copy()
+
         projection_started = start_timer()
         visible_map = self.visible_global_map(current_features)
         self.last_diagnostics["global_map_projection_ms"] = elapsed_ms(
@@ -210,6 +271,10 @@ class SkinMapTracker:
             expected_visible_count,
         ) = visible_map
         self.last_diagnostics["visible_landmarks"] = expected_visible_count
+        if initializing:
+            self.last_diagnostics["initialization_candidates"] = (
+                expected_visible_count
+            )
 
         matchable_landmarks = min(
             expected_visible_count,
@@ -228,6 +293,8 @@ class SkinMapTracker:
         )
         self.last_diagnostics["lightglue_ms"] = elapsed_ms(matching_started)
         self.last_diagnostics["matches"] = len(matches)
+        if initializing:
+            self.last_diagnostics["initialization_matches"] = len(matches)
         self.last_diagnostics["new_features"] = (
             len(current_features["keypoints"])
             - len(np.unique(matches[:, 1]))
@@ -288,6 +355,42 @@ class SkinMapTracker:
         self.R_map_to_camera = cv2.Rodrigues(rvec)[0]
         self.t_map_to_camera = tvec.reshape(3)
 
+        if initializing:
+            aruco_center = -aruco_R.T @ aruco_t
+            pnp_center = (
+                -self.R_map_to_camera.T @ self.t_map_to_camera
+            )
+            position_difference = float(
+                np.linalg.norm(pnp_center - aruco_center)
+            )
+            rotation_difference = (
+                self.R_map_to_camera @ aruco_R.T
+            )
+            orientation_difference = float(
+                np.degrees(
+                    np.arccos(
+                        np.clip(
+                            (np.trace(rotation_difference) - 1.0) / 2.0,
+                            -1.0,
+                            1.0,
+                        )
+                    )
+                )
+            )
+            self.last_diagnostics[
+                "initialization_position_difference_mm"
+            ] = position_difference
+            self.last_diagnostics[
+                "initialization_orientation_difference_deg"
+            ] = orientation_difference
+            if (
+                position_difference
+                > MAX_INITIALIZATION_POSITION_DIFFERENCE_MM
+                or orientation_difference
+                > MAX_INITIALIZATION_ORIENTATION_DIFFERENCE_DEG
+            ):
+                return None
+
         projected_visible, _ = cv2.projectPoints(
             visible_map_points,
             rvec,
@@ -309,11 +412,31 @@ class SkinMapTracker:
 
         inlier_mask = np.zeros(len(matches), dtype=bool)
         inlier_mask[inlier_indices] = True
+        result_R = self.R_map_to_camera
+        result_t = self.t_map_to_camera
+        result_map_points = map_points[inlier_indices]
+        if initializing:
+            self.last_diagnostics["initialization_confirmed"] = inlier_count
+            self.last_diagnostics["initialization_points"] = image_points[
+                inlier_indices
+            ]
+            initialization_R = self.R_map_to_camera.copy()
+            initialization_t = self.t_map_to_camera.copy()
+            result_map_points = (
+                initialization_R @ result_map_points.T
+            ).T + initialization_t
+            self.initialize_working_map(
+                initialization_R,
+                initialization_t,
+            )
+            result_R = self.R_map_to_camera
+            result_t = self.t_map_to_camera
+
         return {
-            "R": self.R_map_to_camera,
-            "t": self.t_map_to_camera,
+            "R": result_R,
+            "t": result_t,
             "inliers": inlier_count,
-            "inlier_map_points": map_points[inlier_indices],
+            "inlier_map_points": result_map_points,
             "inlier_image_points": image_points[inlier_indices],
             "inlier_landmark_ids": landmark_ids[inlier_indices],
             "outlier_points": image_points[~inlier_mask],
