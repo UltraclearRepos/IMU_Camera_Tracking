@@ -3,6 +3,10 @@ import csv
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from coordinate_frames import (
+    tcp_displacements_to_camera_axes,
+    tcp_rotations_to_camera_axes,
+)
 from tracking_visualization import save_comparison_figure
 
 
@@ -101,8 +105,6 @@ def evaluate_final_mapping_poses(
     ground_truth_path,
     output_dir,
     recording_name,
-    camera_to_output_axes,
-    camera_euler_signs,
 ):
     frames = global_map["mapping_frames"]
     times_s = global_map["mapping_times_s"]
@@ -116,15 +118,13 @@ def evaluate_final_mapping_poses(
     reference_rotation = camera_rotations[reference_index]
 
     estimate_positions = (
-        camera_to_output_axes
-        @ reference_rotation.T
+        reference_rotation.T
         @ (camera_positions - reference_position).T
     ).T
     estimate_euler = relative_euler(
         camera_rotations,
         reference_rotation,
     )
-    estimate_euler *= camera_euler_signs
 
     gt_times, gt_positions, gt_euler = load_ground_truth(ground_truth_path)
     gt_euler = np.degrees(np.unwrap(np.radians(gt_euler), axis=0))
@@ -160,9 +160,6 @@ def evaluate_final_mapping_poses(
         gt_times,
         gt_euler,
     )[0]
-    ground_truth_positions = (
-        interpolated_gt_positions - reference_gt_position
-    )
     ground_truth_rotations = Rotation.from_euler(
         "xyz",
         interpolated_gt_euler,
@@ -173,10 +170,19 @@ def evaluate_final_mapping_poses(
         reference_gt_euler,
         degrees=True,
     ).as_matrix()
-    ground_truth_euler = relative_euler(
-        ground_truth_rotations,
-        reference_gt_rotation,
+    tcp_displacements = (
+        reference_gt_rotation.T
+        @ (interpolated_gt_positions - reference_gt_position).T
+    ).T
+    ground_truth_positions = tcp_displacements_to_camera_axes(
+        tcp_displacements
     )
+    relative_gt_rotations = (
+        reference_gt_rotation.T @ ground_truth_rotations
+    )
+    ground_truth_euler = Rotation.from_matrix(
+        tcp_rotations_to_camera_axes(relative_gt_rotations)
+    ).as_euler("xyz", degrees=True)
 
     position_component_errors = estimate_positions - ground_truth_positions
     position_errors = np.linalg.norm(position_component_errors, axis=1)

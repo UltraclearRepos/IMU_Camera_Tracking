@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -212,101 +211,6 @@ def create_video_writer(path, fps, size_px):
     )
 
 
-def save_retrieval_diagnostics(diagnostics, output_path):
-    if not diagnostics:
-        return
-
-    entries_by_frame = {}
-    for entry in diagnostics:
-        entries_by_frame.setdefault(entry["current_frame"], []).append(
-            entry
-        )
-
-    figure, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
-    rank_colors = ["tab:blue", "tab:orange", "tab:purple"]
-    maximum_rank = max(map(len, entries_by_frame.values()))
-    for rank in range(maximum_rank):
-        ranked_entries = [
-            entries[rank]
-            for entries in entries_by_frame.values()
-            if rank < len(entries)
-        ]
-        axes[0].plot(
-            [entry["current_frame"] for entry in ranked_entries],
-            [entry["retrieval_score"] for entry in ranked_entries],
-            ".-",
-            color=rank_colors[rank % len(rank_colors)],
-            label=f"Retrieved rank {rank + 1}",
-        )
-
-    frames = [entry["current_frame"] for entry in diagnostics]
-    axes[1].scatter(
-        frames,
-        [entry["raw_matches"] for entry in diagnostics],
-        s=10,
-        color="tab:blue",
-        label="LightGlue matches",
-    )
-    axes[1].scatter(
-        frames,
-        [entry["inliers"] for entry in diagnostics],
-        s=10,
-        color="tab:green",
-        label="Geometry inliers",
-    )
-
-    covered_cells = [
-        min(
-            entry["covered_cells_previous"],
-            entry["covered_cells_current"],
-        )
-        for entry in diagnostics
-    ]
-    axes[2].scatter(
-        frames,
-        covered_cells,
-        s=10,
-        color="tab:purple",
-        label="Covered cells in both images",
-    )
-    axes[2].axhline(
-        diagnostics[0]["required_covered_cells"],
-        color="tab:red",
-        linestyle="--",
-        label="Required covered cells",
-    )
-
-    unique_frames = sorted(entries_by_frame)
-    accepted_counts = [
-        sum(entry["accepted"] for entry in entries_by_frame[frame])
-        for frame in unique_frames
-    ]
-    axes[3].bar(
-        unique_frames,
-        accepted_counts,
-        width=1.0,
-        color="tab:green",
-        label="Accepted retrieved pairs",
-    )
-
-    axes[0].set_ylabel("MNN retrieval score")
-    axes[1].set_ylabel("Points")
-    axes[2].set_ylabel("Image-grid cells")
-    axes[3].set_ylabel("Accepted pairs")
-    axes[3].set_xlabel("Current mapping frame")
-    axes[3].set_ylim(0, maximum_rank + 0.5)
-    axes[0].set_title(
-        "Old-frame retrieval: single-frame scoring, old-sequence support and geometry"
-    )
-    for axis in axes:
-        axis.grid(True)
-        axis.legend()
-    figure.tight_layout()
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output_path, dpi=160)
-    plt.close(figure)
-
-
 def save_map_build_top_view(
     global_map,
     output_path,
@@ -320,16 +224,6 @@ def save_map_build_top_view(
     mapping_frames = global_map["mapping_frames"]
     camera_positions = global_map["mapping_camera_positions"]
     camera_headings = global_map["mapping_camera_headings"]
-    retrieval_diagnostics = global_map["retrieval_diagnostics"]
-    retrieval_by_current_frame = {}
-    for entry in retrieval_diagnostics:
-        retrieval_by_current_frame.setdefault(
-            entry["current_frame"],
-            [],
-        ).append(entry)
-    camera_position_by_frame = dict(
-        zip(mapping_frames, camera_positions)
-    )
     bounds = fixed_bounds(candidate_points, camera_positions, padding_mm)
     z_min = np.min(candidate_points[:, 2])
     z_max = np.max(candidate_points[:, 2])
@@ -382,44 +276,6 @@ def save_map_build_top_view(
             (0, 180, 255),
         )
 
-        current_retrieval = retrieval_by_current_frame.get(
-            int(frame_index),
-            [],
-        )
-        current_camera_position = camera_position_by_frame.get(frame_index)
-        for entry in current_retrieval:
-            previous_camera_position = camera_position_by_frame.get(
-                entry["previous_frame"]
-            )
-            if (
-                current_camera_position is None
-                or previous_camera_position is None
-            ):
-                continue
-            connection_pixels = world_to_pixels(
-                np.array(
-                    [
-                        previous_camera_position[:2],
-                        current_camera_position[:2],
-                    ]
-                ),
-                bounds,
-                size_px,
-            )
-            color = (
-                (80, 230, 80)
-                if entry["accepted"]
-                else (80, 80, 220)
-            )
-            dashed_line(
-                image,
-                connection_pixels[0],
-                connection_pixels[1],
-                color,
-                thickness=2,
-                dash_px=4,
-            )
-
         cv2.putText(
             image,
             f"MAP BUILD | frame {frame_index}",
@@ -440,26 +296,6 @@ def save_map_build_top_view(
             TEXT_COLOR,
             1,
         )
-        for row, entry in enumerate(current_retrieval):
-            status = "OK" if entry["accepted"] else "rejected"
-            cv2.putText(
-                image,
-                f"retrieval <- {entry['previous_frame']} | "
-                f"MNN {entry['votes']} | "
-                f"score {entry['retrieval_score']:.1f} | "
-                f"similarity {entry['mean_similarity']:.2f} | "
-                f"matches {entry['raw_matches']} | "
-                f"inliers {entry['inliers']} | {status}",
-                (PLOT_MARGIN_PX, 76 + 20 * row),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.42,
-                (
-                    (80, 230, 80)
-                    if entry["accepted"]
-                    else (100, 100, 230)
-                ),
-                1,
-            )
         cv2.putText(
             image,
             f"Landmark color: Z = {z_min:.1f} .. {z_max:.1f} mm",

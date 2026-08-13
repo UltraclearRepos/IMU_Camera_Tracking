@@ -20,7 +20,6 @@ from skin_map_tracker import SkinMapTracker
 from top_view_visualization import (
     create_tracking_top_view_state,
     save_map_build_top_view,
-    save_retrieval_diagnostics,
     save_tracking_top_view,
 )
 from tracking_visualization import (
@@ -47,13 +46,6 @@ TRACKING_START_FRAME = 420  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
 MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
 MAPPING_SEQUENTIAL_MATCH_OVERLAP = 10  # Immediately previous map images matched per image.
-MAPPING_ENABLE_RETRIEVAL = False  # Add visually similar older frames to sequential pairs.
-MAPPING_RETRIEVAL_TOP_FRAMES = 3  # Visually similar older frames additionally matched per image.
-MAPPING_RETRIEVAL_MIN_FRAME_GAP = 90  # Ignore recent frames already covered by sequential matching.
-MAPPING_RETRIEVAL_DESCRIPTORS_PER_FRAME = 64  # Spatially distributed descriptors used for retrieval.
-MAPPING_RETRIEVAL_MIN_SEQUENCE_FRAMES = 5  # Actual high-probability old frames required in a sequence.
-MAPPING_RETRIEVAL_MAX_SEQUENCE_GAP = 2  # Maximum index difference between consecutive supporting old frames.
-MAPPING_RETRIEVAL_MIN_COVERED_CELLS = 6  # Minimum occupied image-grid cells in both views.
 MAPPING_MAX_FEATURES = 256  # Spatially distributed features passed to LightGlue.
 MAPPING_FEATURE_GRID_ROWS = 4  # Image grid rows used to distribute map features.
 MAPPING_FEATURE_GRID_COLUMNS = 4  # Image grid columns used to distribute map features.
@@ -94,16 +86,6 @@ def camera_position(R_map_to_camera, t_map_to_camera):
     return -R_camera_to_map @ t_map_to_camera.reshape(3)
 
 
-CAMERA_TO_OUTPUT_AXES = np.array(
-    [
-        [-1.0, 0.0, 0.0],
-        [0.0, 0.0, -1.0],
-        [0.0, -1.0, 0.0],
-    ]
-)
-CAMERA_EULER_SIGNS = np.array([1.0, -1.0, 1.0])
-
-
 def save_results_csv(rows, path):
     with path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=rows[0].keys())
@@ -130,10 +112,6 @@ def run_tracking(
     feature_type,
     mapping_frame_step,
     mapping_sequential_match_overlap,
-    mapping_enable_retrieval,
-    mapping_retrieval_top_frames,
-    mapping_retrieval_min_sequence_frames,
-    mapping_retrieval_max_sequence_gap,
 ):
     feature_type = feature_type.lower()
     if not torch.cuda.is_available() and DEVICE == "cuda":
@@ -174,13 +152,6 @@ def run_tracking(
         reconstruction_method,
         mapping_frame_step,
         mapping_sequential_match_overlap,
-        mapping_enable_retrieval,
-        mapping_retrieval_top_frames,
-        MAPPING_RETRIEVAL_MIN_FRAME_GAP,
-        MAPPING_RETRIEVAL_DESCRIPTORS_PER_FRAME,
-        mapping_retrieval_min_sequence_frames,
-        mapping_retrieval_max_sequence_gap,
-        MAPPING_RETRIEVAL_MIN_COVERED_CELLS,
         MAPPING_MAX_FEATURES,
         MAPPING_FEATURE_GRID_ROWS,
         MAPPING_FEATURE_GRID_COLUMNS,
@@ -195,10 +166,6 @@ def run_tracking(
         output_dir / "map",
     )
     map_build_wall_time_s = time.perf_counter() - map_build_started
-    save_retrieval_diagnostics(
-        global_map["retrieval_diagnostics"],
-        output_dir / "mapping_retrieval_diagnostics.png",
-    )
     (
         mapping_position_rmse,
         mapping_orientation_rmse,
@@ -209,8 +176,6 @@ def run_tracking(
         ground_truth_path,
         output_dir,
         recording_name,
-        CAMERA_TO_OUTPUT_AXES,
-        CAMERA_EULER_SIGNS,
     )
     if SAVE_MAP_BUILD_TOP_VIEW:
         map_build_top_view_path = output_dir / "map_build_top_view.mp4"
@@ -292,14 +257,11 @@ def run_tracking(
                 initial_position = absolute_position.copy()
                 initial_rotation = camera_rotation.copy()
 
-            position = CAMERA_TO_OUTPUT_AXES @ (
-                absolute_position - initial_position
-            )
+            position = absolute_position - initial_position
             relative_rotation = initial_rotation.T @ camera_rotation
             euler = Rotation.from_matrix(relative_rotation).as_euler(
                 "xyz", degrees=True
             )
-            euler *= CAMERA_EULER_SIGNS
 
         positions.append(position)
         time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
@@ -469,14 +431,6 @@ def run_tracking(
         "mapping_sequential_match_overlap": (
             mapping_sequential_match_overlap
         ),
-        "mapping_enable_retrieval": mapping_enable_retrieval,
-        "mapping_retrieval_top_frames": mapping_retrieval_top_frames,
-        "mapping_retrieval_min_sequence_frames": (
-            mapping_retrieval_min_sequence_frames
-        ),
-        "mapping_retrieval_max_sequence_gap": (
-            mapping_retrieval_max_sequence_gap
-        ),
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": global_map["candidate_landmarks"],
         "map_occupied_grid_cells": global_map["occupied_grid_cells"],
@@ -532,14 +486,6 @@ def main():
         mapping_frame_step=MAPPING_FRAME_STEP,
         mapping_sequential_match_overlap=(
             MAPPING_SEQUENTIAL_MATCH_OVERLAP
-        ),
-        mapping_enable_retrieval=MAPPING_ENABLE_RETRIEVAL,
-        mapping_retrieval_top_frames=MAPPING_RETRIEVAL_TOP_FRAMES,
-        mapping_retrieval_min_sequence_frames=(
-            MAPPING_RETRIEVAL_MIN_SEQUENCE_FRAMES
-        ),
-        mapping_retrieval_max_sequence_gap=(
-            MAPPING_RETRIEVAL_MAX_SEQUENCE_GAP
         ),
     )
 

@@ -6,7 +6,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pycolmap
-import torch
 from scipy.spatial.transform import Rotation
 
 from aruco_reference import create_aruco_detector, detect_aruco_pose
@@ -19,9 +18,7 @@ MIN_PAIR_INLIERS = 20
 
 MIN_POINT_TRACK_LENGTH = 3
 MAX_POINT_REPROJECTION_ERROR_PX = 3.0
-RETRIEVAL_ROBUST_Z_THRESHOLD = 2.0
-RETRIEVAL_RELATIVE_SCORE_THRESHOLD = 0.55
-RETRIEVAL_SEQUENCE_AMBIGUITY_RATIO = 1.10
+
 
 
 def select_spatially_distributed_features(
@@ -83,355 +80,6 @@ def select_spatially_distributed_features(
         if name in features:
             selected[name] = features[name][selected_indices]
     return selected
-
-
-def select_retrieval_features(features, maximum_descriptors):
-    # Mapping features are already ordered round-robin across image-grid
-    # cells, so retaining that order gives retrieval broad spatial support.
-    indices = np.arange(
-        min(maximum_descriptors, len(features["descriptors"]))
-    )
-    descriptors = features["descriptors"][indices]
-    norms = np.linalg.norm(descriptors, axis=1, keepdims=True)
-    return {
-        "descriptors": descriptors
-        / np.maximum(norms, np.finfo(np.float32).eps),
-        "keypoints": features["keypoints"][indices],
-        "image_size": features["image_size"],
-        "roi_top": features["roi_top"],
-    }
-
-
-def score_similar_frames(
-    current_features,
-    eligible_names,
-    retrieval_features_by_name,
-    device,
-    grid_rows,
-    grid_columns,
-    minimum_covered_cells,
-):
-    current_descriptors = current_features["descriptors"]
-    if not eligible_names or not len(current_descriptors):
-        return []
-
-    valid_names = [
-        name
-        for name in eligible_names
-        if len(retrieval_features_by_name[name]["descriptors"])
-    ]
-    if not valid_names:
-        return []
-
-    descriptor_counts = np.asarray(
-        [
-            len(retrieval_features_by_name[name]["descriptors"])
-            for name in valid_names
-        ],
-        dtype=np.int64,
-    )
-    maximum_previous_descriptors = int(np.max(descriptor_counts))
-    descriptor_dimension = current_descriptors.shape[1]
-    previous_descriptors = np.zeros(
-        (
-            len(valid_names),
-            maximum_previous_descriptors,
-            descriptor_dimension,
-        ),
-        dtype=np.float32,
-    )
-    for frame_index, previous_name in enumerate(valid_names):
-        descriptors = retrieval_features_by_name[previous_name][
-            "descriptors"
-        ]
-        previous_descriptors[frame_index, : len(descriptors)] = (
-            descriptors
-        )
-
-    query = torch.as_tensor(
-        current_descriptors,
-        dtype=torch.float32,
-        device=device,
-    )
-    previous = torch.as_tensor(
-        previous_descriptors,
-        dtype=torch.float32,
-        device=device,
-    )
-    counts = torch.as_tensor(descriptor_counts, device=device)
-    similarities = torch.einsum("qd,fnd->fqn", query, previous)
-    valid_previous = (
-        torch.arange(maximum_previous_descriptors, device=device)[None]
-        < counts[:, None]
-    )
-    similarities = similarities.masked_fill(
-        ~valid_previous[:, None, :],
-        -torch.inf,
-    )
-
-    query_values, query_best_previous = similarities.max(dim=2)
-    previous_best_query = similarities.argmax(dim=1)
-    best_previous_query = torch.gather(
-        previous_best_query,
-        1,
-        query_best_previous,
-    )
-    query_indices = torch.arange(
-        similarities.shape[1],
-        device=device,
-    )[None]
-    mutual = best_previous_query == query_indices
-
-    if maximum_previous_descriptors > 1:
-        query_second = torch.topk(
-            similarities,
-            k=2,
-            dim=2,
-        ).values[:, :, 1]
-        query_second = torch.where(
-            counts[:, None] > 1,
-            query_second,
-            torch.zeros_like(query_second),
-        )
-    else:
-        query_second = torch.zeros_like(query_values)
-    if similarities.shape[1] > 1:
-        previous_second = torch.topk(
-            similarities,
-            k=2,
-            dim=1,
-        ).values[:, 1, :]
-    else:
-        previous_second = torch.zeros(
-            (
-                similarities.shape[0],
-                similarities.shape[2],
-            ),
-            dtype=similarities.dtype,
-            device=device,
-        )
-    matched_previous_second = torch.gather(
-        previous_second,
-        1,
-        query_best_previous,
-    )
-    query_margins = torch.clamp(
-        query_values - query_second,
-        min=0.0,
-    )
-    previous_margins = torch.clamp(
-        query_values - matched_previous_second,
-        min=0.0,
-    )
-    distinctiveness = torch.sqrt(query_margins * previous_margins)
-    weights = (
-        torch.clamp(query_values, min=0.0)
-        * distinctiveness
-        * mutual
-    )
-
-    mutual_np = mutual.detach().cpu().numpy()
-    best_previous_np = query_best_previous.detach().cpu().numpy()
-    similarities_np = query_values.detach().cpu().numpy()
-    retrieval_scores = weights.sum(dim=1).detach().cpu().numpy()
-
-    candidates = []
-    for frame_index, previous_name in enumerate(valid_names):
-        previous_features = retrieval_features_by_name[previous_name]
-        query_indices_np = np.flatnonzero(mutual_np[frame_index])
-        if not len(query_indices_np):
-            continue
-        previous_indices_np = best_previous_np[
-            frame_index,
-            query_indices_np,
-        ]
-        mutual_similarities = similarities_np[
-            frame_index,
-            query_indices_np,
-        ]
-        covered_cells_current = occupied_image_grid_cells(
-            current_features["keypoints"][query_indices_np],
-            current_features,
-            grid_rows,
-            grid_columns,
-        )
-        covered_cells_previous = occupied_image_grid_cells(
-            previous_features["keypoints"][previous_indices_np],
-            previous_features,
-            grid_rows,
-            grid_columns,
-        )
-        if min(
-            covered_cells_current,
-            covered_cells_previous,
-        ) < minimum_covered_cells:
-            continue
-
-        candidates.append(
-            {
-                "image_name": previous_name,
-                "previous_frame": frame_number(previous_name),
-                "votes": int(len(query_indices_np)),
-                "mean_similarity": float(np.mean(mutual_similarities)),
-                "retrieval_score": float(
-                    retrieval_scores[frame_index]
-                ),
-                "covered_cells_current": covered_cells_current,
-                "covered_cells_previous": covered_cells_previous,
-            }
-        )
-    candidates.sort(
-        key=lambda candidate: candidate["retrieval_score"],
-        reverse=True,
-    )
-    return candidates
-
-
-def select_old_frame_sequence(
-    candidates,
-    maximum_frames,
-    minimum_sequence_frames,
-    maximum_sequence_gap,
-):
-    if not candidates:
-        return [], [], None
-
-    scores = np.asarray(
-        [candidate["retrieval_score"] for candidate in candidates],
-        dtype=np.float64,
-    )
-    median_score = float(np.median(scores))
-    mad = float(np.median(np.abs(scores - median_score)))
-    robust_sigma = 1.4826 * mad
-    robust_threshold = median_score + (
-        RETRIEVAL_ROBUST_Z_THRESHOLD * robust_sigma
-    )
-    relative_threshold = (
-        RETRIEVAL_RELATIVE_SCORE_THRESHOLD * float(np.max(scores))
-    )
-    score_threshold = max(robust_threshold, relative_threshold)
-    strong_candidates = [
-        candidate
-        for candidate in candidates
-        if candidate["retrieval_score"] >= score_threshold
-    ]
-    strong_candidates.sort(key=lambda item: item["previous_frame"])
-
-    sequences = []
-    for candidate in strong_candidates:
-        if (
-            not sequences
-            or candidate["previous_frame"]
-            - sequences[-1][-1]["previous_frame"]
-            > maximum_sequence_gap
-        ):
-            sequences.append([candidate])
-        else:
-            sequences[-1].append(candidate)
-
-    sequences = [
-        sequence
-        for sequence in sequences
-        if len(sequence) >= minimum_sequence_frames
-    ]
-    if not sequences:
-        return [], candidates[:maximum_frames], {
-            "score_threshold": score_threshold,
-            "support_frames": len(strong_candidates),
-            "sequence_frames": 0,
-            "ambiguous": False,
-        }
-
-    def sequence_score(sequence):
-        top_scores = sorted(
-            (item["retrieval_score"] for item in sequence),
-            reverse=True,
-        )[:maximum_frames]
-        return float(np.mean(top_scores))
-
-    ranked_sequences = sorted(
-        sequences,
-        key=sequence_score,
-        reverse=True,
-    )
-    best_sequence = ranked_sequences[0]
-    best_sequence_score = sequence_score(best_sequence)
-    second_sequence_score = (
-        sequence_score(ranked_sequences[1])
-        if len(ranked_sequences) > 1
-        else 0.0
-    )
-    ambiguous = (
-        second_sequence_score > 0.0
-        and best_sequence_score
-        < RETRIEVAL_SEQUENCE_AMBIGUITY_RATIO * second_sequence_score
-    )
-    sequence_info = {
-        "score_threshold": score_threshold,
-        "support_frames": len(strong_candidates),
-        "sequence_frames": len(best_sequence),
-        "sequence_start": best_sequence[0]["previous_frame"],
-        "sequence_end": best_sequence[-1]["previous_frame"],
-        "sequence_score": best_sequence_score,
-        "second_sequence_score": second_sequence_score,
-        "ambiguous": ambiguous,
-    }
-    if ambiguous:
-        return [], candidates[:maximum_frames], sequence_info
-
-    selected = []
-    for candidate in sorted(
-        best_sequence,
-        key=lambda item: item["retrieval_score"],
-        reverse=True,
-    ):
-        if all(
-            abs(
-                candidate["previous_frame"]
-                - selected_candidate["previous_frame"]
-            ) >= 2
-            for selected_candidate in selected
-        ):
-            selected.append(candidate)
-        if len(selected) == maximum_frames:
-            break
-    if len(selected) < maximum_frames:
-        for candidate in sorted(
-            best_sequence,
-            key=lambda item: item["retrieval_score"],
-            reverse=True,
-        ):
-            if candidate not in selected:
-                selected.append(candidate)
-            if len(selected) == maximum_frames:
-                break
-
-    for candidate in selected:
-        candidate["sequence_frames"] = len(best_sequence)
-        candidate["sequence_start"] = best_sequence[0]["previous_frame"]
-        candidate["sequence_end"] = best_sequence[-1]["previous_frame"]
-    return selected, selected, sequence_info
-
-
-def occupied_image_grid_cells(keypoints, features, rows, columns):
-    if not len(keypoints):
-        return 0
-
-    width, height = features["image_size"]
-    roi_top = features["roi_top"]
-    column_indices = np.floor(
-        keypoints[:, 0] * columns / width
-    ).astype(int)
-    row_indices = np.floor(
-        (keypoints[:, 1] - roi_top)
-        * rows
-        / (height - roi_top)
-    ).astype(int)
-    column_indices = np.clip(column_indices, 0, columns - 1)
-    row_indices = np.clip(row_indices, 0, rows - 1)
-    return len(
-        np.unique(row_indices * columns + column_indices)
-    )
 
 
 def select_uniform_landmarks(
@@ -597,7 +245,6 @@ def print_map_build_timing(timing):
             "feature_extraction_and_selection_s",
             "Feature extraction + selection",
         ),
-        ("retrieval_voting_s", "Old-frame descriptor voting"),
         ("aruco_detection_s", "ArUco detection"),
         (
             "image_and_keypoints_database_write_s",
@@ -636,15 +283,6 @@ def print_map_build_timing(timing):
         f"pairs: {online['verified_pairs']}/"
         f"{online['attempted_pairs']} verified"
     )
-    print(
-        "    Sequential pairs: "
-        f"{online['sequential_verified_pairs']}/"
-        f"{online['sequential_attempted_pairs']} | "
-        "retrieved pairs: "
-        f"{online['retrieval_verified_pairs']}/"
-        f"{online['retrieval_attempted_pairs']}"
-    )
-
     print("  AFTER COLLECTION - executed after the last mapping frame")
     for key, label in after_stages:
         print(f"    {label}: {after[key]:.2f} s")
@@ -666,13 +304,6 @@ class SkinMapBuilder:
         reconstruction_method,
         mapping_frame_step,
         sequential_match_overlap,
-        enable_retrieval,
-        retrieval_top_frames,
-        retrieval_min_frame_gap,
-        retrieval_descriptors_per_frame,
-        retrieval_min_sequence_frames,
-        retrieval_max_sequence_gap,
-        retrieval_min_covered_cells,
         mapping_maximum_features,
         mapping_feature_grid_rows,
         mapping_feature_grid_columns,
@@ -689,19 +320,6 @@ class SkinMapBuilder:
         self.reconstruction_method = reconstruction_method
         self.mapping_frame_step = mapping_frame_step
         self.sequential_match_overlap = sequential_match_overlap
-        self.enable_retrieval = enable_retrieval
-        self.retrieval_top_frames = retrieval_top_frames
-        self.retrieval_min_frame_gap = retrieval_min_frame_gap
-        self.retrieval_descriptors_per_frame = (
-            retrieval_descriptors_per_frame
-        )
-        self.retrieval_min_sequence_frames = (
-            retrieval_min_sequence_frames
-        )
-        self.retrieval_max_sequence_gap = (
-            retrieval_max_sequence_gap
-        )
-        self.retrieval_min_covered_cells = retrieval_min_covered_cells
         self.mapping_maximum_features = mapping_maximum_features
         self.mapping_feature_grid_rows = mapping_feature_grid_rows
         self.mapping_feature_grid_columns = mapping_feature_grid_columns
@@ -745,19 +363,13 @@ class SkinMapBuilder:
         image_names = []
         image_ids = {}
         features_by_name = {}
-        retrieval_features_by_name = {}
         aruco_poses = {}
         frame_times_by_name = {}
-        retrieval_diagnostics = []
 
         geometry_options = pycolmap.TwoViewGeometryOptions()
         geometry_options.ransac.random_seed = 0
         pair_count = 0
         attempted_pair_count = 0
-        sequential_attempted_pair_count = 0
-        sequential_verified_pair_count = 0
-        retrieval_attempted_pair_count = 0
-        retrieval_verified_pair_count = 0
         frame_read_seconds = 0.0
         image_save_seconds = 0.0
         feature_extraction_seconds = 0.0
@@ -766,7 +378,6 @@ class SkinMapBuilder:
         lightglue_seconds = 0.0
         geometry_seconds = 0.0
         pair_database_write_seconds = 0.0
-        retrieval_voting_seconds = 0.0
 
         for _ in range(self.mapping_start_frame):
             success, _ = capture.read()
@@ -802,15 +413,6 @@ class SkinMapBuilder:
                 time.perf_counter() - feature_extraction_started
             )
             features_by_name[image_name] = features
-            current_retrieval_features = None
-            if self.enable_retrieval:
-                current_retrieval_features = select_retrieval_features(
-                    features,
-                    self.retrieval_descriptors_per_frame,
-                )
-                retrieval_features_by_name[image_name] = (
-                    current_retrieval_features
-                )
             frame_times_by_name[image_name] = (
                 capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
             )
@@ -836,127 +438,8 @@ class SkinMapBuilder:
             sequential_names = image_names[
                 -self.sequential_match_overlap :
             ]
-            scored_retrieval_candidates = []
-            retrieval_candidates = []
-            diagnostic_candidates = []
-            retrieval_sequence_info = None
-            if self.enable_retrieval:
-                eligible_retrieval_names = [
-                    previous_name
-                    for previous_name in image_names
-                    if frame_index - frame_number(previous_name)
-                    >= self.retrieval_min_frame_gap
-                ]
-                voting_started = time.perf_counter()
-                scored_retrieval_candidates = score_similar_frames(
-                    current_retrieval_features,
-                    eligible_retrieval_names,
-                    retrieval_features_by_name,
-                    self.feature_matching.device,
-                    self.mapping_feature_grid_rows,
-                    self.mapping_feature_grid_columns,
-                    self.retrieval_min_covered_cells,
-                )
-                (
-                    retrieval_candidates,
-                    diagnostic_candidates,
-                    retrieval_sequence_info,
-                ) = select_old_frame_sequence(
-                    scored_retrieval_candidates,
-                    self.retrieval_top_frames,
-                    self.retrieval_min_sequence_frames,
-                    self.retrieval_max_sequence_gap,
-                )
-                retrieval_voting_seconds += (
-                    time.perf_counter() - voting_started
-                )
-
-            for candidate in scored_retrieval_candidates:
-                candidate["current_frame"] = frame_index
-
-            selected_retrieval_names = {
-                candidate["image_name"]
-                for candidate in retrieval_candidates
-            }
-            frame_retrieval_diagnostics = []
-            for candidate in diagnostic_candidates:
-                selected_for_geometry = (
-                    candidate["image_name"] in selected_retrieval_names
-                )
-                diagnostic = {
-                    "current_frame": frame_index,
-                    "previous_frame": candidate["previous_frame"],
-                    "votes": candidate["votes"],
-                    "mean_similarity": candidate["mean_similarity"],
-                    "retrieval_score": candidate["retrieval_score"],
-                    "raw_matches": 0,
-                    "inliers": 0,
-                    "geometry": "not_estimated",
-                    "covered_cells_previous": candidate[
-                        "covered_cells_previous"
-                    ],
-                    "covered_cells_current": candidate[
-                        "covered_cells_current"
-                    ],
-                    "required_covered_cells": (
-                        self.retrieval_min_covered_cells
-                    ),
-                    "sequence_frames": (
-                        retrieval_sequence_info["sequence_frames"]
-                        if retrieval_sequence_info is not None
-                        else 0
-                    ),
-                    "required_sequence_frames": (
-                        self.retrieval_min_sequence_frames
-                    ),
-                    "maximum_sequence_gap": (
-                        self.retrieval_max_sequence_gap
-                    ),
-                    "sequence_start": (
-                        retrieval_sequence_info.get("sequence_start")
-                        if retrieval_sequence_info is not None
-                        else None
-                    ),
-                    "sequence_end": (
-                        retrieval_sequence_info.get("sequence_end")
-                        if retrieval_sequence_info is not None
-                        else None
-                    ),
-                    "score_threshold": (
-                        retrieval_sequence_info["score_threshold"]
-                        if retrieval_sequence_info is not None
-                        else None
-                    ),
-                    "rejection_reason": (
-                        "too_few_matches"
-                        if selected_for_geometry
-                        else (
-                            "ambiguous_old_sequence"
-                            if retrieval_sequence_info is not None
-                            and retrieval_sequence_info["ambiguous"]
-                            else "old_sequence_not_found"
-                        )
-                    ),
-                    "accepted": False,
-                }
-                candidate["diagnostic"] = diagnostic
-                retrieval_diagnostics.append(diagnostic)
-                frame_retrieval_diagnostics.append(diagnostic)
-
-            retrieval_by_name = {
-                candidate["image_name"]: candidate
-                for candidate in retrieval_candidates
-            }
-            frames_to_match = sequential_names + list(retrieval_by_name)
-
-            for previous_name in frames_to_match:
-                retrieval_candidate = retrieval_by_name.get(previous_name)
-                is_retrieval = retrieval_candidate is not None
+            for previous_name in sequential_names:
                 attempted_pair_count += 1
-                if is_retrieval:
-                    retrieval_attempted_pair_count += 1
-                else:
-                    sequential_attempted_pair_count += 1
 
                 matching_started = time.perf_counter()
                 matches = self.feature_matching.match(
@@ -964,11 +447,6 @@ class SkinMapBuilder:
                     features,
                 )
                 lightglue_seconds += time.perf_counter() - matching_started
-                raw_match_count = len(matches)
-                diagnostic = None
-                if is_retrieval:
-                    diagnostic = retrieval_candidate["diagnostic"]
-                    diagnostic["raw_matches"] = raw_match_count
                 if len(matches) < MIN_PAIR_MATCHES:
                     continue
 
@@ -982,15 +460,6 @@ class SkinMapBuilder:
                     geometry_options,
                 )
                 geometry_seconds += time.perf_counter() - geometry_started
-                inlier_count = len(geometry.inlier_matches)
-                if diagnostic is not None:
-                    diagnostic["inliers"] = inlier_count
-                    diagnostic["geometry"] = (
-                        pycolmap.TwoViewGeometryConfiguration(
-                            geometry.config
-                        ).name
-                    )
-                    diagnostic["rejection_reason"] = "too_few_inliers"
                 if len(geometry.inlier_matches) < MIN_PAIR_INLIERS:
                     continue
 
@@ -1005,33 +474,13 @@ class SkinMapBuilder:
                     time.perf_counter() - writing_started
                 )
                 pair_count += 1
-                if is_retrieval:
-                    diagnostic["accepted"] = True
-                    diagnostic["rejection_reason"] = None
-                    retrieval_verified_pair_count += 1
-                else:
-                    sequential_verified_pair_count += 1
 
             image_names.append(image_name)
-            retrieval_log = ", ".join(
-                f"{item['previous_frame']}: "
-                f"mnn{item['votes']} r{item['retrieval_score']:.2f} "
-                f"s{item['mean_similarity']:.3f} "
-                f"m{item['raw_matches']} "
-                f"i{item['inliers']} "
-                f"g{item['geometry']} "
-                f"cells{min(item['covered_cells_previous'], item['covered_cells_current'])} "
-                f"{'OK' if item['accepted'] else item['rejection_reason']}"
-                for item in frame_retrieval_diagnostics
-            )
             print(
                 f"Mapping frame processing: frame {frame_index}/"
                 f"{self.mapping_end_frame} | "
                 f"features: {len(features['keypoints'])} | "
-                f"verified pairs: {pair_count} | "
-                f"retrieval scored: {len(scored_retrieval_candidates)} | "
-                f"old-sequence selected: {len(retrieval_candidates)} | "
-                f"retrieval: {retrieval_log or 'not available'}"
+                f"verified pairs: {pair_count}"
             )
 
         capture.release()
@@ -1039,13 +488,6 @@ class SkinMapBuilder:
         statistics = {
             "attempted_pairs": attempted_pair_count,
             "verified_pairs": pair_count,
-            "sequential_attempted_pairs": (
-                sequential_attempted_pair_count
-            ),
-            "sequential_verified_pairs": sequential_verified_pair_count,
-            "retrieval_attempted_pairs": retrieval_attempted_pair_count,
-            "retrieval_verified_pairs": retrieval_verified_pair_count,
-            "retrieval_diagnostics": retrieval_diagnostics,
             "setup_seconds": setup_seconds,
             "frame_read_seconds": frame_read_seconds,
             "image_save_seconds": image_save_seconds,
@@ -1059,7 +501,6 @@ class SkinMapBuilder:
             "lightglue_seconds": lightglue_seconds,
             "geometry_verification_seconds": geometry_seconds,
             "pair_database_write_seconds": pair_database_write_seconds,
-            "retrieval_voting_seconds": retrieval_voting_seconds,
             "mapping_frame_processing_wall_seconds": (
                 time.perf_counter() - frame_processing_started
             ),
@@ -1528,9 +969,6 @@ class SkinMapBuilder:
             alignment,
             frame_times_by_name,
         )
-        global_map["retrieval_diagnostics"] = (
-            frame_processing_statistics["retrieval_diagnostics"]
-        )
         map_finalization_seconds = (
             time.perf_counter() - map_finalization_started
         )
@@ -1572,26 +1010,6 @@ class SkinMapBuilder:
                 "verified_pairs": frame_processing_statistics[
                     "verified_pairs"
                 ],
-                "sequential_attempted_pairs": (
-                    frame_processing_statistics[
-                        "sequential_attempted_pairs"
-                    ]
-                ),
-                "sequential_verified_pairs": (
-                    frame_processing_statistics[
-                        "sequential_verified_pairs"
-                    ]
-                ),
-                "retrieval_attempted_pairs": (
-                    frame_processing_statistics[
-                        "retrieval_attempted_pairs"
-                    ]
-                ),
-                "retrieval_verified_pairs": (
-                    frame_processing_statistics[
-                        "retrieval_verified_pairs"
-                    ]
-                ),
                 "setup_s": frame_processing_statistics["setup_seconds"],
                 "frame_read_s": frame_processing_statistics[
                     "frame_read_seconds"
@@ -1604,9 +1022,6 @@ class SkinMapBuilder:
                         "feature_extraction_and_selection_seconds"
                     ]
                 ),
-                "retrieval_voting_s": frame_processing_statistics[
-                    "retrieval_voting_seconds"
-                ],
                 "aruco_detection_s": frame_processing_statistics[
                     "aruco_detection_seconds"
                 ],
@@ -1653,21 +1068,6 @@ class SkinMapBuilder:
             "mapping_frame_step": self.mapping_frame_step,
             "map_coordinate_frame": global_map["coordinate_frame"],
             "sequential_match_overlap": self.sequential_match_overlap,
-            "retrieval_enabled": self.enable_retrieval,
-            "retrieval_top_frames": self.retrieval_top_frames,
-            "retrieval_min_frame_gap": self.retrieval_min_frame_gap,
-            "retrieval_descriptors_per_frame": (
-                self.retrieval_descriptors_per_frame
-            ),
-            "retrieval_min_sequence_frames": (
-                self.retrieval_min_sequence_frames
-            ),
-            "retrieval_max_sequence_gap": (
-                self.retrieval_max_sequence_gap
-            ),
-            "retrieval_min_covered_cells": (
-                self.retrieval_min_covered_cells
-            ),
             "extracted_images": len(image_names),
             "attempted_image_pairs": frame_processing_statistics[
                 "attempted_pairs"
@@ -1675,26 +1075,6 @@ class SkinMapBuilder:
             "verified_image_pairs": frame_processing_statistics[
                 "verified_pairs"
             ],
-            "sequential_attempted_image_pairs": (
-                frame_processing_statistics[
-                    "sequential_attempted_pairs"
-                ]
-            ),
-            "sequential_verified_image_pairs": (
-                frame_processing_statistics[
-                    "sequential_verified_pairs"
-                ]
-            ),
-            "retrieval_attempted_image_pairs": (
-                frame_processing_statistics[
-                    "retrieval_attempted_pairs"
-                ]
-            ),
-            "retrieval_verified_image_pairs": (
-                frame_processing_statistics[
-                    "retrieval_verified_pairs"
-                ]
-            ),
             "registered_images": reconstruction.num_reg_images(),
             "landmarks": len(global_map["positions"]),
             "candidate_landmarks": global_map["candidate_landmarks"],
@@ -1721,15 +1101,6 @@ class SkinMapBuilder:
             "w", encoding="utf-8"
         ) as file:
             json.dump(track_length_statistics, file, indent=2)
-        with (output_dir / "retrieval_diagnostics.json").open(
-            "w", encoding="utf-8"
-        ) as file:
-            json.dump(
-                global_map["retrieval_diagnostics"],
-                file,
-                indent=2,
-            )
-
         print(f"Saved frozen 3D map: {map_path}")
         print(
             "Saved track statistics: "

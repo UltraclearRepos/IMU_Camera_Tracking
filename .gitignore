@@ -7,12 +7,13 @@ Camera/results_batch
 Camera/results_DISK_batch
 Camera/results_hybrid
 Camera/results_hybrid_DISK_batch
-Camera/results_hybrid_SIFT_batch
+Camera/results_SIFT_batch
 Camera/calibrations/**.webm
 Camera/surface_models
 Camera/3D/__pycache__
 Camera/3D/results
 Camera/3D/results_DISK_batch
+Camera/3D/jenkins_results
 Data
 Camera/DataOld
 Camera/__pycache__

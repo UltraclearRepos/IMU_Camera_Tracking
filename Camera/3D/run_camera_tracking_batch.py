@@ -58,18 +58,6 @@ def run_recording(
         mapping_sequential_match_overlap=config[
             "mapping_sequential_match_overlap"
         ],
-        mapping_enable_retrieval=config[
-            "mapping_enable_retrieval"
-        ],
-        mapping_retrieval_top_frames=config[
-            "mapping_retrieval_top_frames"
-        ],
-        mapping_retrieval_min_sequence_frames=config[
-            "mapping_retrieval_min_sequence_frames"
-        ],
-        mapping_retrieval_max_sequence_gap=config[
-            "mapping_retrieval_max_sequence_gap"
-        ],
     )
 
 

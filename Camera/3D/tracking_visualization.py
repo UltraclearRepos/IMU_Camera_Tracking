@@ -5,6 +5,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from coordinate_frames import (
+    tcp_displacements_to_camera_axes,
+    tcp_rotations_to_camera_axes,
+)
+
 
 def save_timing_diagnostics(rows, output_path, recording_name):
     stages = {
@@ -810,20 +815,11 @@ def load_ground_truth(path):
                 [float(row[axis]) for axis in ("roll", "pitch", "yaw")]
             )
 
-    positions = np.array(positions)
-    positions = positions - positions[0]
-    orientation_matrices = Rotation.from_euler(
-        "xyz",
-        np.array(orientations),
-        degrees=True,
-    ).as_matrix()
-    relative_orientation_matrices = (
-        orientation_matrices[0].T @ orientation_matrices
+    return (
+        np.asarray(timestamps),
+        np.asarray(positions),
+        np.asarray(orientations),
     )
-    relative_orientations = Rotation.from_matrix(
-        relative_orientation_matrices
-    ).as_euler("xyz", degrees=True)
-    return np.array(timestamps), positions, relative_orientations
 
 
 def save_comparison_figure(
@@ -916,7 +912,7 @@ def create_comparison_plots(
     )
     gt_time, gt_positions, gt_euler = load_ground_truth(gt_path)
 
-    gt = np.column_stack(
+    interpolated_gt_positions = np.column_stack(
         [
             np.interp(camera_time, gt_time, gt_positions[:, axis])
             for axis in range(3)
@@ -925,7 +921,7 @@ def create_comparison_plots(
     unwrapped_gt_euler = np.degrees(
         np.unwrap(np.radians(gt_euler), axis=0)
     )
-    gt_euler = np.column_stack(
+    interpolated_gt_euler = np.column_stack(
         [
             np.interp(camera_time, gt_time, unwrapped_gt_euler[:, axis])
             for axis in range(3)
@@ -934,14 +930,60 @@ def create_comparison_plots(
 
     within_ground_truth = camera_time >= gt_time[0]
     within_ground_truth &= camera_time <= gt_time[-1]
+    tracker_valid = np.isfinite(estimate).all(axis=1)
+    tracker_valid &= np.isfinite(estimate_euler).all(axis=1)
+    reference_timestamp = camera_time[
+        np.flatnonzero(tracker_valid)[0]
+    ] if np.any(tracker_valid) else camera_time[0]
     camera_time = camera_time[within_ground_truth]
     estimate = estimate[within_ground_truth]
     estimate_euler = estimate_euler[within_ground_truth]
-    gt = gt[within_ground_truth]
-    gt_euler = gt_euler[within_ground_truth]
+    interpolated_gt_positions = interpolated_gt_positions[
+        within_ground_truth
+    ]
+    interpolated_gt_euler = interpolated_gt_euler[within_ground_truth]
 
     valid = np.isfinite(estimate).all(axis=1)
     valid &= np.isfinite(estimate_euler).all(axis=1)
+    reference_gt_position = np.column_stack(
+        [
+            np.interp(
+                [reference_timestamp],
+                gt_time,
+                gt_positions[:, axis],
+            )
+            for axis in range(3)
+        ]
+    )[0]
+    reference_gt_euler = np.column_stack(
+        [
+            np.interp(
+                [reference_timestamp],
+                gt_time,
+                unwrapped_gt_euler[:, axis],
+            )
+            for axis in range(3)
+        ]
+    )[0]
+    reference_gt_rotation = Rotation.from_euler(
+        "xyz",
+        reference_gt_euler,
+        degrees=True,
+    ).as_matrix()
+    gt_rotations = Rotation.from_euler(
+        "xyz",
+        interpolated_gt_euler,
+        degrees=True,
+    ).as_matrix()
+    tcp_displacements = (
+        reference_gt_rotation.T
+        @ (interpolated_gt_positions - reference_gt_position).T
+    ).T
+    gt = tcp_displacements_to_camera_axes(tcp_displacements)
+    relative_gt_rotations = reference_gt_rotation.T @ gt_rotations
+    gt_euler = Rotation.from_matrix(
+        tcp_rotations_to_camera_axes(relative_gt_rotations)
+    ).as_euler("xyz", degrees=True)
     plot_time = camera_time - min(camera_time[0], gt_time[0])
 
     position_component_errors = np.full_like(estimate, np.nan)
