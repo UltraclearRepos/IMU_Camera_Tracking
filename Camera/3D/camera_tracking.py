@@ -44,7 +44,7 @@ MAPPING_START_FRAME = 90  # First frame used to build the frozen 3D map.
 MAPPING_END_FRAME = 419  # Last frame used to build the frozen 3D map.
 TRACKING_START_FRAME = 420  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
-MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
+MAPPING_FRAME_STEP = 5  # Use every Nth frame during map construction.
 MAPPING_SEQUENTIAL_MATCH_OVERLAP = 10  # Immediately previous map images matched per image.
 MAPPING_MAX_FEATURES = 256  # Spatially distributed features passed to LightGlue.
 MAPPING_FEATURE_GRID_ROWS = 4  # Image grid rows used to distribute map features.
@@ -66,7 +66,7 @@ TOP_VIEW_PADDING_MM = 20.0
 SHOW_PREVIEW = False
 
 
-RESULTS_DIR = SCRIPT_DIR / "results" / DATA_FOLDER
+RESULTS_DIR = SCRIPT_DIR / "results" / DATA_FOLDER / RECONSTRUCTION_METHOD
 CAMERA_MATRIX_PATH = (
     CAMERA_DIR
     / "calibrations"
@@ -237,6 +237,7 @@ def run_tracking(
         if DEVICE == "cuda":
             torch.cuda.synchronize()
         tracking_started = time.perf_counter()
+        was_initializing = not tracker.initialized
         result = tracker.track(frame)
         if DEVICE == "cuda":
             torch.cuda.synchronize()
@@ -265,6 +266,27 @@ def run_tracking(
 
         positions.append(position)
         time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        if (
+            was_initializing
+            and diagnostics["initialization_aruco_detected"]
+        ):
+            aruco_decision = (
+                "accepted"
+                if diagnostics["initialization_aruco_accepted"]
+                else "rejected"
+            )
+            print(
+                f"Frame {frame_index} ({time_s:.3f} s): ArUco "
+                f"RMS={diagnostics['initialization_aruco_reprojection_rms_px']:.2f} px, "
+                f"max={diagnostics['initialization_aruco_reprojection_max_px']:.2f} px, "
+                f"min side={diagnostics['initialization_aruco_min_side_length_px']:.1f} px "
+                f"-> {aruco_decision}"
+            )
+            if diagnostics["initialization_aruco_accepted"]:
+                print(
+                    f"Tracking initialized from ArUco at frame "
+                    f"{frame_index} ({time_s:.3f} s)."
+                )
         rows.append(
             {
                 "frame": frame_index,
@@ -322,11 +344,17 @@ def run_tracking(
                 "initialization_matches": diagnostics[
                     "initialization_matches"
                 ],
-                "initialization_position_difference_mm": diagnostics[
-                    "initialization_position_difference_mm"
+                "initialization_aruco_accepted": diagnostics[
+                    "initialization_aruco_accepted"
                 ],
-                "initialization_orientation_difference_deg": diagnostics[
-                    "initialization_orientation_difference_deg"
+                "initialization_aruco_reprojection_rms_px": diagnostics[
+                    "initialization_aruco_reprojection_rms_px"
+                ],
+                "initialization_aruco_reprojection_max_px": diagnostics[
+                    "initialization_aruco_reprojection_max_px"
+                ],
+                "initialization_aruco_min_side_length_px": diagnostics[
+                    "initialization_aruco_min_side_length_px"
                 ],
                 "landmarks": len(tracker.landmarks),
                 "keyframe_added": diagnostics["keyframe_added"],

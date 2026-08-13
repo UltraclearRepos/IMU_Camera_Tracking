@@ -10,7 +10,12 @@ def create_aruco_detector():
     dictionary = cv2.aruco.getPredefinedDictionary(
         cv2.aruco.DICT_4X4_50
     )
-    return cv2.aruco.ArucoDetector(dictionary)
+    parameters = cv2.aruco.DetectorParameters()
+    parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+    parameters.cornerRefinementWinSize = 5
+    parameters.cornerRefinementMaxIterations = 30
+    parameters.cornerRefinementMinAccuracy = 0.01
+    return cv2.aruco.ArucoDetector(dictionary, parameters)
 
 
 def aruco_object_points():
@@ -48,4 +53,31 @@ def detect_aruco_pose(
     if not success:
         return None
 
-    return cv2.Rodrigues(rvec)[0], tvec.reshape(3)
+    projected_points, _ = cv2.projectPoints(
+        aruco_object_points(),
+        rvec,
+        tvec,
+        camera_matrix,
+        distortion,
+    )
+    corner_errors_px = np.linalg.norm(
+        projected_points.reshape(4, 2) - image_points,
+        axis=1,
+    )
+    marker_side_lengths_px = np.linalg.norm(
+        image_points - np.roll(image_points, -1, axis=0),
+        axis=1,
+    )
+
+    return (
+        cv2.Rodrigues(rvec)[0],
+        tvec.reshape(3),
+        {
+            "reprojection_rms_px": float(
+                np.sqrt(np.mean(corner_errors_px**2))
+            ),
+            "reprojection_max_px": float(np.max(corner_errors_px)),
+            "corner_errors_px": corner_errors_px,
+            "min_side_length_px": float(np.min(marker_side_lengths_px)),
+        },
+    )

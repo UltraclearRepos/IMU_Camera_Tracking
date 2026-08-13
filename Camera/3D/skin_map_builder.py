@@ -583,7 +583,9 @@ class SkinMapBuilder:
         aruco_centers = []
 
         for image in registered_aruco_images:
-            R_aruco_to_camera, t_aruco_to_camera = aruco_poses[image.name]
+            R_aruco_to_camera, t_aruco_to_camera, _ = aruco_poses[
+                image.name
+            ]
             R_sfm_to_camera = image.cam_from_world().rotation.matrix()
             rotation_candidates.append(
                 R_aruco_to_camera.T @ R_sfm_to_camera

@@ -615,11 +615,12 @@ def diagnostic_frame(
                 -1,
             )
 
-        aruco_status = (
-            "detected"
-            if diagnostics["initialization_aruco_detected"]
-            else "not detected"
-        )
+        if not diagnostics["initialization_aruco_detected"]:
+            aruco_status = "not detected"
+        elif diagnostics["initialization_aruco_accepted"]:
+            aruco_status = "accepted"
+        else:
+            aruco_status = "rejected by quality gate"
         cv2.putText(
             output,
             f"ArUco: {aruco_status}",
@@ -631,12 +632,7 @@ def diagnostic_frame(
         )
         cv2.putText(
             output,
-            (
-                f"Frames: {diagnostics['initialization_frames']}"
-                f"/{initialization_frames} | confirmed: "
-                f"{diagnostics['initialization_confirmed']}"
-                f"/{initialization_min_landmarks}"
-            ),
+            f"Frames checked: {diagnostics['initialization_frames']}",
             (12, 75),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
@@ -646,11 +642,24 @@ def diagnostic_frame(
         cv2.putText(
             output,
             (
-                f"Candidates: {diagnostics['initialization_candidates']}"
-                f" | consistent now: "
-                f"{diagnostics['initialization_matches']}"
+                "ArUco reprojection RMS/max: "
+                f"{diagnostics['initialization_aruco_reprojection_rms_px']:.2f}"
+                "/"
+                f"{diagnostics['initialization_aruco_reprojection_max_px']:.2f} px"
             ),
             (12, 98),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+        )
+        cv2.putText(
+            output,
+            (
+                "Marker min side: "
+                f"{diagnostics['initialization_aruco_min_side_length_px']:.1f} px"
+            ),
+            (12, 121),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
             (255, 255, 255),
