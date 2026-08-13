@@ -13,6 +13,17 @@ TCP_TO_CAMERA_AXES = np.array(
 )
 
 
+# Provisional fixed orientation of the IMU rigidly mounted to the camera.
+# It converts a vector expressed in IMU axes into native OpenCV camera axes.
+CAMERA_FROM_IMU = np.array(
+    [
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, -1.0, 0.0],
+    ]
+)
+
+
 def tcp_displacements_to_camera_axes(displacements):
     return (TCP_TO_CAMERA_AXES @ np.asarray(displacements).T).T
 
@@ -25,3 +36,7 @@ def tcp_rotations_to_camera_axes(rotations):
         rotations,
         TCP_TO_CAMERA_AXES.T,
     )
+
+
+def imu_vectors_to_camera_axes(vectors):
+    return (CAMERA_FROM_IMU @ np.asarray(vectors).T).T

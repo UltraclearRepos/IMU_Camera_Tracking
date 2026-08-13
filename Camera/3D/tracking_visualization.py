@@ -1054,6 +1054,187 @@ def create_comparison_plots(
     return position_rmse, orientation_rmse
 
 
+def save_3d_tracking_diagnostics(rows, gt_path, output_path, recording_name):
+    """Diagnose metric pose estimation and 3D observability during tracking."""
+    frames = np.asarray([row["frame"] for row in rows])
+    timestamps = np.asarray([row["timestamp"] for row in rows], dtype=float)
+    estimate_positions = np.asarray(
+        [[row["x_mm"], row["y_mm"], row["z_mm"]] for row in rows],
+        dtype=float,
+    )
+    estimate_euler = np.asarray(
+        [[row["roll_deg"], row["pitch_deg"], row["yaw_deg"]] for row in rows],
+        dtype=float,
+    )
+    valid = np.isfinite(estimate_positions).all(axis=1)
+    valid &= np.isfinite(estimate_euler).all(axis=1)
+
+    gt_time, gt_positions, gt_euler = load_ground_truth(gt_path)
+    unwrapped_gt_euler = np.degrees(np.unwrap(np.radians(gt_euler), axis=0))
+    reference_time = (
+        timestamps[np.flatnonzero(valid)[0]] if np.any(valid) else timestamps[0]
+    )
+    reference_position = np.column_stack(
+        [
+            np.interp([reference_time], gt_time, gt_positions[:, axis])
+            for axis in range(3)
+        ]
+    )[0]
+    reference_euler = np.column_stack(
+        [
+            np.interp([reference_time], gt_time, unwrapped_gt_euler[:, axis])
+            for axis in range(3)
+        ]
+    )[0]
+    reference_rotation = Rotation.from_euler(
+        "xyz", reference_euler, degrees=True
+    ).as_matrix()
+    interpolated_positions = np.column_stack(
+        [
+            np.interp(timestamps, gt_time, gt_positions[:, axis])
+            for axis in range(3)
+        ]
+    )
+    interpolated_euler = np.column_stack(
+        [
+            np.interp(timestamps, gt_time, unwrapped_gt_euler[:, axis])
+            for axis in range(3)
+        ]
+    )
+    gt_rotations = Rotation.from_euler(
+        "xyz", interpolated_euler, degrees=True
+    ).as_matrix()
+    gt_positions_c0 = tcp_displacements_to_camera_axes(
+        (
+            reference_rotation.T
+            @ (interpolated_positions - reference_position).T
+        ).T
+    )
+    gt_rotations_c0 = tcp_rotations_to_camera_axes(
+        reference_rotation.T @ gt_rotations
+    )
+
+    position_error = np.full(len(rows), np.nan)
+    orientation_error = np.full(len(rows), np.nan)
+    estimate_rotations = np.full((len(rows), 3, 3), np.nan)
+    if np.any(valid):
+        estimate_rotations[valid] = Rotation.from_euler(
+            "xyz", estimate_euler[valid], degrees=True
+        ).as_matrix()
+        position_error[valid] = np.linalg.norm(
+            estimate_positions[valid] - gt_positions_c0[valid], axis=1
+        )
+        orientation_error[valid] = np.degrees(
+            Rotation.from_matrix(
+                np.transpose(gt_rotations_c0[valid], (0, 2, 1))
+                @ estimate_rotations[valid]
+            ).magnitude()
+        )
+
+    def pose_increments(positions, rotations, available):
+        translations = np.full(len(rows), np.nan)
+        rotations_deg = np.full(len(rows), np.nan)
+        for index in range(1, len(rows)):
+            if not (available[index - 1] and available[index]):
+                continue
+            translations[index] = np.linalg.norm(
+                positions[index] - positions[index - 1]
+            )
+            rotations_deg[index] = np.degrees(
+                Rotation.from_matrix(
+                    rotations[index - 1].T @ rotations[index]
+                ).magnitude()
+            )
+        return translations, rotations_deg
+
+    gt_translation, gt_rotation = pose_increments(
+        gt_positions_c0,
+        gt_rotations_c0,
+        np.ones(len(rows), dtype=bool),
+    )
+    estimated_translation, estimated_rotation = pose_increments(
+        estimate_positions,
+        estimate_rotations,
+        valid,
+    )
+
+    def cumulative_distance(increments):
+        return np.cumsum(np.nan_to_num(increments, nan=0.0))
+
+    def field(name):
+        return np.asarray([row[name] for row in rows], dtype=float)
+
+    primary_spread = field("inlier_3d_primary_std_mm")
+    secondary_spread = field("inlier_3d_secondary_std_mm")
+    minor_spread = field("inlier_3d_minor_std_mm")
+    median_depth = field("inlier_depth_median_mm")
+    reprojection_rmse = field("pnp_reprojection_rmse_px")
+    reprojection_p95 = field("pnp_reprojection_p95_px")
+    inliers = field("inliers")
+
+    figure, axes = plt.subplots(5, 1, figsize=(16, 17), sharex=True)
+    axes[0].plot(frames, primary_spread, label="Primary 3D inlier spread")
+    axes[0].plot(frames, secondary_spread, label="Secondary 3D inlier spread")
+    axes[0].plot(frames, minor_spread, label="Minor 3D inlier spread")
+    axes[0].set_ylabel("Std. dev. [mm]")
+    axes[0].set_title("Metric 3D distribution of points used by PnP")
+    axes[0].grid(True)
+    axes[0].legend(loc="upper left")
+    depth_axis = axes[0].twinx()
+    depth_axis.plot(frames, median_depth, color="black", alpha=0.6, label="Median depth")
+    depth_axis.set_ylabel("Camera depth [mm]")
+    depth_axis.legend(loc="upper right")
+
+    axes[1].plot(frames, reprojection_rmse, label="Inlier reprojection RMSE")
+    axes[1].plot(frames, reprojection_p95, label="Inlier reprojection p95")
+    axes[1].set_ylabel("Reprojection [px]")
+    axes[1].set_title("Image consistency of the accepted metric 3D pose")
+    axes[1].grid(True)
+    axes[1].legend(loc="upper left")
+    inlier_axis = axes[1].twinx()
+    inlier_axis.plot(frames, inliers, color="tab:green", alpha=0.6, label="PnP inliers")
+    inlier_axis.set_ylabel("3D–2D inliers")
+    inlier_axis.legend(loc="upper right")
+
+    axes[2].plot(frames, gt_translation, color="black", label="GT translation")
+    axes[2].plot(frames, estimated_translation, color="tab:blue", label="Estimated translation")
+    axes[2].set_ylabel("Translation [mm/frame]")
+    axes[2].set_title("Frame-to-frame physical camera motion")
+    axes[2].grid(True)
+    axes[2].legend(loc="upper left")
+    rotation_axis = axes[2].twinx()
+    rotation_axis.plot(frames, gt_rotation, color="gray", linestyle="--", label="GT rotation")
+    rotation_axis.plot(frames, estimated_rotation, color="tab:orange", label="Estimated rotation")
+    rotation_axis.set_ylabel("Rotation [deg/frame]")
+    rotation_axis.legend(loc="upper right")
+
+    axes[3].plot(frames, cumulative_distance(gt_translation), color="black", label="GT cumulative path")
+    axes[3].plot(frames, cumulative_distance(estimated_translation), color="tab:blue", label="Estimated cumulative path")
+    axes[3].set_ylabel("Path length [mm]")
+    axes[3].set_title("Accumulated translation; untracked gaps add no estimate")
+    axes[3].grid(True)
+    axes[3].legend()
+
+    axes[4].plot(frames, position_error, color="tab:red", label="3D position error")
+    axes[4].set_ylabel("Position error [mm]")
+    axes[4].set_xlabel("Frame")
+    axes[4].set_title("Pose error against GT on accepted tracking frames")
+    axes[4].grid(True)
+    axes[4].legend(loc="upper left")
+    orientation_axis = axes[4].twinx()
+    orientation_axis.plot(frames, orientation_error, color="tab:purple", label="Orientation error")
+    orientation_axis.set_ylabel("Orientation error [deg]")
+    orientation_axis.legend(loc="upper right")
+
+    figure.suptitle(
+        f"{recording_name}: 3D pose and geometry diagnostics | "
+        f"tracked: {100.0 * np.mean(valid):.1f}%"
+    )
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
+
+
 def save_mapping_diagnostics(
     rows,
     output_path,

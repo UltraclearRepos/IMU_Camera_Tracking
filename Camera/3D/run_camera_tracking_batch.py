@@ -34,6 +34,31 @@ def resolve_results_dir(config, override):
     )
 
 
+FRAME_RANGE_KEYS = (
+    "mapping_start_frame",
+    "mapping_end_frame",
+    "tracking_start_frame",
+)
+
+
+def resolve_frame_range(config, recording_parameters):
+    """Use a recording-specific frame range when present, else batch defaults."""
+    frame_range = {
+        key: recording_parameters.get(key, config[key])
+        for key in FRAME_RANGE_KEYS
+    }
+    for key, value in frame_range.items():
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"{key} must be a non-negative integer")
+    if frame_range["mapping_start_frame"] > frame_range["mapping_end_frame"]:
+        raise ValueError("mapping_start_frame must not exceed mapping_end_frame")
+    if frame_range["tracking_start_frame"] <= frame_range["mapping_end_frame"]:
+        raise ValueError(
+            "tracking_start_frame must be after mapping_end_frame"
+        )
+    return frame_range
+
+
 def run_recording(
     recording_name,
     recording_parameters,
@@ -44,15 +69,14 @@ def run_recording(
     recording_output_dir = (
         results_dir / config["feature_type"] / recording_name
     )
+    frame_range = resolve_frame_range(config, recording_parameters)
     return run_tracking(
         recording_name,
         recording_output_dir,
         data_dir,
         recording_parameters["feature_roi_bottom_fraction"],
         reconstruction_method=config["reconstruction_method"],
-        mapping_start_frame=config["mapping_start_frame"],
-        mapping_end_frame=config["mapping_end_frame"],
-        tracking_start_frame=config["tracking_start_frame"],
+        **frame_range,
         feature_type=config["feature_type"],
         mapping_frame_step=config["mapping_frame_step"],
         mapping_sequential_match_overlap=config[
@@ -218,12 +242,13 @@ def main():
         recordings.items(),
         start=1,
     ):
+        frame_range = resolve_frame_range(config, recording_parameters)
         print(
             f"\n[{index}/{len(recordings)}] Running {recording_name} | "
             f"features={config['feature_type']} | mapping="
-            f"{config['mapping_start_frame']}.."
-            f"{config['mapping_end_frame']} | tracking="
-            f"{config['tracking_start_frame']}"
+            f"{frame_range['mapping_start_frame']}.."
+            f"{frame_range['mapping_end_frame']} | tracking="
+            f"{frame_range['tracking_start_frame']}"
         )
         metrics.append(
             run_recording(

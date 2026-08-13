@@ -33,8 +33,8 @@ from tracking_visualization import (
 # 1. Dodac landmarki tylko tam gdzie pusto / ewentualnie tam gdzie juz jest pokrycie dodac tylko niewiarygodnie dobre, czyli wtedy np moze byc tak ze dodamy np tylko 20, nie trzeba za kazdym razem dopychac do limitu,
 #    limit powinien byc tylko gorna granica
 
-RECORDING_NAME = "arc2cm-far-white-withlight_Speed-3_2026-07-29_17.00.49"
-DATA_FOLDER = "LineArc-1-2cm"
+RECORDING_NAME = "15degfovv_2026-08-13_14.10.38"
+DATA_FOLDER = "CameraImuMatrix"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000

@@ -9,6 +9,10 @@ import pycolmap
 from scipy.spatial.transform import Rotation
 
 from aruco_reference import create_aruco_detector, detect_aruco_pose
+from pipeline_diagnostics import (
+    save_mapping_pipeline_csv,
+    save_mapping_pipeline_diagnostics,
+)
 
 
 MIN_ARUCO_ALIGNMENT_FRAMES = 3
@@ -176,6 +180,61 @@ def create_colmap_camera(camera_matrix, distortion, width, height):
     return camera
 
 
+def create_gravity_prior_rig(database, camera_id):
+    """Create the one-camera rig required by COLMAP frame pose priors."""
+    camera_sensor = pycolmap.sensor_t(
+        pycolmap.SensorType.CAMERA,
+        camera_id,
+    )
+    rig = pycolmap.Rig()
+    rig.add_ref_sensor(camera_sensor)
+    return camera_sensor, database.write_rig(rig)
+
+
+def write_mapping_image(
+    database,
+    camera,
+    image_name,
+    *,
+    camera_sensor=None,
+    rig_id=None,
+    image_id=None,
+    gravity=None,
+):
+    """Write one mapping image and, optionally, its gravity pose prior."""
+    if camera_sensor is None:
+        database.write_image(
+            pycolmap.Image(
+                image_id=image_id,
+                name=image_name,
+                camera_id=camera.camera_id,
+            ),
+            use_image_id=True,
+        )
+        return image_id
+
+    camera_data = pycolmap.data_t(camera_sensor, image_id)
+    colmap_frame = pycolmap.Frame(rig_id=rig_id)
+    colmap_frame.add_data_id(camera_data)
+    colmap_frame.finalize_data_ids()
+    frame_id = database.write_frame(colmap_frame)
+    database.write_image(
+        pycolmap.Image(
+            image_id=image_id,
+            name=image_name,
+            camera_id=camera.camera_id,
+            frame_id=frame_id,
+        ),
+        use_image_id=True,
+    )
+    if gravity is not None:
+        pose_prior = pycolmap.PosePrior()
+        pose_prior.corr_data_id = camera_data
+        pose_prior.gravity = gravity
+        database.write_pose_prior(pose_prior)
+    return image_id
+
+
 def camera_center(R_world_to_camera, t_world_to_camera):
     return -R_world_to_camera.T @ t_world_to_camera
 
@@ -311,6 +370,7 @@ class SkinMapBuilder:
         global_map_grid_rows,
         global_map_grid_columns,
         global_map_reprojection_error_weight,
+        imu_gravity_provider=None,
     ):
         self.camera_matrix = camera_matrix
         self.distortion = distortion
@@ -329,6 +389,14 @@ class SkinMapBuilder:
         self.global_map_reprojection_error_weight = (
             global_map_reprojection_error_weight
         )
+        self.imu_gravity_provider = imu_gravity_provider
+        if (
+            self.imu_gravity_provider is not None
+            and self.reconstruction_method != "global"
+        ):
+            raise ValueError(
+                "IMU gravity priors are supported only by global mapping"
+            )
 
         self.aruco_detector = create_aruco_detector()
 
@@ -358,6 +426,11 @@ class SkinMapBuilder:
         )
         camera_id = database.write_camera(camera)
         camera.camera_id = camera_id
+        if self.imu_gravity_provider is not None:
+            camera_sensor, rig_id = create_gravity_prior_rig(
+                database,
+                camera_id,
+            )
         setup_seconds = time.perf_counter() - setup_started
 
         image_names = []
@@ -365,6 +438,7 @@ class SkinMapBuilder:
         features_by_name = {}
         aruco_poses = {}
         frame_times_by_name = {}
+        mapping_frame_rows = []
 
         geometry_options = pycolmap.TwoViewGeometryOptions()
         geometry_options.ransac.random_seed = 0
@@ -416,6 +490,15 @@ class SkinMapBuilder:
             frame_times_by_name[image_name] = (
                 capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
             )
+            if self.imu_gravity_provider is not None:
+                gravity, imu_diagnostics = (
+                    self.imu_gravity_provider.gravity_at_video_time(
+                        frame_times_by_name[image_name]
+                    )
+                )
+            else:
+                gravity = None
+                imu_diagnostics = None
 
             aruco_started = time.perf_counter()
             aruco_pose = self.detect_aruco_pose(frame)
@@ -424,11 +507,31 @@ class SkinMapBuilder:
                 aruco_poses[image_name] = aruco_pose
 
             database_write_started = time.perf_counter()
-            image = pycolmap.Image(
-                name=image_name,
-                camera_id=camera.camera_id,
-            )
-            image_id = database.write_image(image)
+            mapping_image_id = len(image_names) + 1
+            if self.imu_gravity_provider is not None:
+                # Frame pose priors need a stable camera-data identifier.
+                image_id = write_mapping_image(
+                    database,
+                    camera,
+                    image_name,
+                    camera_sensor=camera_sensor,
+                    rig_id=rig_id,
+                    image_id=mapping_image_id,
+                    gravity=gravity,
+                )
+                imu_status = (
+                    f" | IMU gravity: {imu_diagnostics['reason']}"
+                    f" (|a|={imu_diagnostics.get('acceleration_magnitude_m_s2', np.nan):.3f} m/s^2, "
+                    f"|w|={np.degrees(imu_diagnostics.get('gyroscope_magnitude_rad_s', np.nan)):.2f} deg/s)"
+                )
+            else:
+                image_id = write_mapping_image(
+                    database,
+                    camera,
+                    image_name,
+                    image_id=mapping_image_id,
+                )
+                imu_status = ""
             image_ids[image_name] = image_id
             database.write_keypoints(image_id, features["keypoints"])
             image_database_write_seconds += (
@@ -438,6 +541,9 @@ class SkinMapBuilder:
             sequential_names = image_names[
                 -self.sequential_match_overlap :
             ]
+            raw_match_count = 0
+            verified_inlier_count = 0
+            verified_pairs_for_image = 0
             for previous_name in sequential_names:
                 attempted_pair_count += 1
 
@@ -446,6 +552,7 @@ class SkinMapBuilder:
                     features_by_name[previous_name],
                     features,
                 )
+                raw_match_count += len(matches)
                 lightglue_seconds += time.perf_counter() - matching_started
                 if len(matches) < MIN_PAIR_MATCHES:
                     continue
@@ -463,6 +570,9 @@ class SkinMapBuilder:
                 if len(geometry.inlier_matches) < MIN_PAIR_INLIERS:
                     continue
 
+                verified_inlier_count += len(geometry.inlier_matches)
+                verified_pairs_for_image += 1
+
                 previous_id = image_ids[previous_name]
                 writing_started = time.perf_counter()
                 database.write_two_view_geometry(
@@ -475,16 +585,46 @@ class SkinMapBuilder:
                 )
                 pair_count += 1
 
+            aruco_quality = None if aruco_pose is None else aruco_pose[2]
+            mapping_frame_rows.append(
+                {
+                    "frame": frame_index,
+                    "time_s": frame_times_by_name[image_name],
+                    "image_name": image_name,
+                    "feature_count": len(features["keypoints"]),
+                    "pairs_attempted": len(sequential_names),
+                    "raw_matches": raw_match_count,
+                    "pairs_verified": verified_pairs_for_image,
+                    "verified_inliers": verified_inlier_count,
+                    "aruco_detected": int(aruco_pose is not None),
+                    "aruco_reprojection_rms_px": (
+                        np.nan
+                        if aruco_quality is None
+                        else aruco_quality["reprojection_rms_px"]
+                    ),
+                    "aruco_reprojection_max_px": (
+                        np.nan
+                        if aruco_quality is None
+                        else aruco_quality["reprojection_max_px"]
+                    ),
+                }
+            )
+
             image_names.append(image_name)
             print(
                 f"Mapping frame processing: frame {frame_index}/"
                 f"{self.mapping_end_frame} | "
                 f"features: {len(features['keypoints'])} | "
-                f"verified pairs: {pair_count}"
+                f"verified pairs: {pair_count}{imu_status}"
             )
 
         capture.release()
         database.close()
+        imu_gravity_summary = (
+            None
+            if self.imu_gravity_provider is None
+            else self.imu_gravity_provider.summary()
+        )
         statistics = {
             "attempted_pairs": attempted_pair_count,
             "verified_pairs": pair_count,
@@ -504,6 +644,7 @@ class SkinMapBuilder:
             "mapping_frame_processing_wall_seconds": (
                 time.perf_counter() - frame_processing_started
             ),
+            "imu_gravity": imu_gravity_summary,
         }
         return (
             image_names,
@@ -511,6 +652,7 @@ class SkinMapBuilder:
             aruco_poses,
             frame_times_by_name,
             statistics,
+            mapping_frame_rows,
         )
 
     def reconstruct(self, database_path, images_dir, sparse_dir):
@@ -521,6 +663,9 @@ class SkinMapBuilder:
             )
             options.mapper.random_seed = 0
             options.mapper.rotation_averaging.random_seed = 0
+            options.mapper.rotation_averaging.use_gravity = (
+                self.imu_gravity_provider is not None
+            )
             options.mapper.global_positioning.random_seed = 0
             options.mapper.bundle_adjustment.refine_focal_length = False
             options.mapper.bundle_adjustment.refine_principal_point = False
@@ -630,6 +775,16 @@ class SkinMapBuilder:
             "alignment_rmse_mm": alignment_rmse,
             "alignment_frames": len(registered_aruco_images),
             "reference_image": reference_image.name,
+            "center_residuals_by_name": {
+                image.name: float(residual)
+                for image, residual in zip(
+                    registered_aruco_images,
+                    np.linalg.norm(
+                        aligned_centers - aruco_centers,
+                        axis=1,
+                    ),
+                )
+            },
             "coordinate_frame": "aruco",
         }
 
@@ -935,11 +1090,20 @@ class SkinMapBuilder:
             aruco_poses,
             frame_times_by_name,
             frame_processing_statistics,
+            mapping_frame_rows,
         ) = self.collect_and_match_mapping_frames(
             video_path,
             images_dir,
             database_path,
         )
+        imu_gravity_summary = frame_processing_statistics["imu_gravity"]
+        if (
+            imu_gravity_summary is not None
+            and imu_gravity_summary["counts"]["accepted"] == 0
+        ):
+            raise RuntimeError(
+                "No mapping frame passed the IMU gravity quality gates"
+            )
 
         reconstruction_started = time.perf_counter()
         reconstruction = self.reconstruct(
@@ -963,6 +1127,32 @@ class SkinMapBuilder:
             aruco_poses,
         )
         alignment_seconds = time.perf_counter() - alignment_started
+
+        registered_image_names = {
+            image.name for image in reconstruction.images.values()
+        }
+        for row in mapping_frame_rows:
+            row["registered"] = int(
+                row["image_name"] in registered_image_names
+            )
+            row["aruco_alignment_residual_mm"] = alignment[
+                "center_residuals_by_name"
+            ].get(row["image_name"], np.nan)
+        mapping_diagnostics_csv_path = (
+            output_dir / "mapping_pipeline_diagnostics.csv"
+        )
+        mapping_diagnostics_plot_path = (
+            output_dir / "mapping_pipeline_diagnostics.png"
+        )
+        save_mapping_pipeline_csv(
+            mapping_frame_rows,
+            mapping_diagnostics_csv_path,
+        )
+        save_mapping_pipeline_diagnostics(
+            mapping_frame_rows,
+            mapping_diagnostics_plot_path,
+            video_path.stem,
+        )
 
         map_finalization_started = time.perf_counter()
         global_map = self.create_global_map(
@@ -1089,6 +1279,13 @@ class SkinMapBuilder:
             "reference_image": alignment["reference_image"],
             "last_mapping_image": global_map["last_mapping_image"],
             "track_length_statistics": track_length_statistics,
+            "mapping_pipeline_diagnostics_csv": (
+                mapping_diagnostics_csv_path.name
+            ),
+            "mapping_pipeline_diagnostics_plot": (
+                mapping_diagnostics_plot_path.name
+            ),
+            "imu_gravity": imu_gravity_summary,
             "timing": timing,
         }
         with (output_dir / "map_summary.json").open(

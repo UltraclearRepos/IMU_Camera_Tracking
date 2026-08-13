@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 import torch
 from feature_matching import DEVICE, LightGlueFeatureMatching
+from imu_gravity import ImuGravityProvider
 from mapping_evaluation import evaluate_final_mapping_poses
 from scipy.spatial.transform import Rotation
 from skin_map_builder import SkinMapBuilder
@@ -25,6 +26,7 @@ from top_view_visualization import (
 from tracking_visualization import (
     create_comparison_plots,
     diagnostic_frame,
+    save_3d_tracking_diagnostics,
     save_timing_diagnostics,
 )
 
@@ -44,7 +46,7 @@ MAPPING_START_FRAME = 90  # First frame used to build the frozen 3D map.
 MAPPING_END_FRAME = 419  # Last frame used to build the frozen 3D map.
 TRACKING_START_FRAME = 420  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
-MAPPING_FRAME_STEP = 5  # Use every Nth frame during map construction.
+MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
 MAPPING_SEQUENTIAL_MATCH_OVERLAP = 10  # Immediately previous map images matched per image.
 MAPPING_MAX_FEATURES = 256  # Spatially distributed features passed to LightGlue.
 MAPPING_FEATURE_GRID_ROWS = 4  # Image grid rows used to distribute map features.
@@ -54,6 +56,10 @@ GLOBAL_MAP_GRID_ROWS = 8  # Surface grid rows used for uniform landmark selectio
 GLOBAL_MAP_GRID_COLUMNS = 8  # Surface grid columns used for uniform landmark selection.
 GLOBAL_MAP_REPROJECTION_ERROR_WEIGHT = 0.70  # Geometry error weight versus track length.
 MASK_ARUCO_FEATURES = True  # Prevent the removable marker becoming a landmark.
+USE_IMU_GRAVITY_PRIOR = False
+IMU_GRAVITY_HISTORY_SECONDS = 0.05
+IMU_ACCELERATION_MAGNITUDE_TOLERANCE_M_S2 = 1.5
+IMU_MAXIMUM_GYROSCOPE_RAD_S = np.radians(50.0)
 
 
 SAVE_DIAGNOSTIC_VIDEO = True
@@ -65,8 +71,8 @@ TOP_VIEW_VIDEO_SIZE_PX = 800
 TOP_VIEW_PADDING_MM = 20.0
 SHOW_PREVIEW = False
 
-
-RESULTS_DIR = SCRIPT_DIR / "results" / DATA_FOLDER / RECONSTRUCTION_METHOD
+USE_IMU_SUBFOLDER = "IMU" if USE_IMU_GRAVITY_PRIOR else "noIMU"
+RESULTS_DIR = SCRIPT_DIR / "results" / DATA_FOLDER / FEATURE_TYPE / RECONSTRUCTION_METHOD / USE_IMU_SUBFOLDER
 CAMERA_MATRIX_PATH = (
     CAMERA_DIR
     / "calibrations"
@@ -84,6 +90,47 @@ DISTORTION_PATH = (
 def camera_position(R_map_to_camera, t_map_to_camera):
     R_camera_to_map = R_map_to_camera.T
     return -R_camera_to_map @ t_map_to_camera.reshape(3)
+
+
+def pose_geometry_diagnostics(result, camera_matrix, distortion):
+    """Measure the metric 3D support behind an accepted PnP pose."""
+    values = {
+        "pnp_reprojection_rmse_px": np.nan,
+        "pnp_reprojection_p95_px": np.nan,
+        "inlier_3d_primary_std_mm": np.nan,
+        "inlier_3d_secondary_std_mm": np.nan,
+        "inlier_3d_minor_std_mm": np.nan,
+        "inlier_depth_median_mm": np.nan,
+        "inlier_depth_std_mm": np.nan,
+    }
+    if result is None or not len(result["inlier_map_points"]):
+        return values
+
+    map_points = np.asarray(result["inlier_map_points"], dtype=np.float64)
+    image_points = np.asarray(result["inlier_image_points"], dtype=np.float64)
+    rvec = cv2.Rodrigues(result["R"])[0]
+    projected, _ = cv2.projectPoints(
+        map_points, rvec, result["t"], camera_matrix, distortion
+    )
+    reprojection_errors = np.linalg.norm(
+        projected.reshape(-1, 2) - image_points, axis=1
+    )
+    values["pnp_reprojection_rmse_px"] = float(
+        np.sqrt(np.mean(reprojection_errors**2))
+    )
+    values["pnp_reprojection_p95_px"] = float(
+        np.percentile(reprojection_errors, 95)
+    )
+
+    centered = map_points - np.mean(map_points, axis=0)
+    spreads = np.linalg.svd(centered, compute_uv=False) / np.sqrt(len(map_points))
+    values["inlier_3d_primary_std_mm"] = float(spreads[0])
+    values["inlier_3d_secondary_std_mm"] = float(spreads[1])
+    values["inlier_3d_minor_std_mm"] = float(spreads[2])
+    camera_points = (result["R"] @ map_points.T).T + result["t"]
+    values["inlier_depth_median_mm"] = float(np.median(camera_points[:, 2]))
+    values["inlier_depth_std_mm"] = float(np.std(camera_points[:, 2]))
+    return values
 
 
 def save_results_csv(rows, path):
@@ -124,6 +171,10 @@ def run_tracking(
     ground_truth_path = (
         data_dir / "dobot" / f"{recording_name}.csv"
     )
+    imu_path = data_dir / "imu" / f"{recording_name}.csv"
+    imu_calibration_path = (
+        PROJECT_DIR / "imu" / "calibration" / "imu_calibration.json"
+    )
     video_timestamp_path = (
         data_dir
         / "video_timestamps"
@@ -135,6 +186,28 @@ def run_tracking(
     video_start_timestamp = load_video_start_timestamp(
         video_timestamp_path
     )
+    imu_gravity_provider = None
+    if USE_IMU_GRAVITY_PRIOR:
+        if reconstruction_method != "global":
+            print(
+                "IMU gravity prior is disabled: it is supported only by "
+                "global mapping."
+            )
+        else:
+            imu_gravity_provider = ImuGravityProvider(
+                imu_path,
+                imu_calibration_path,
+                video_start_timestamp,
+                history_seconds=IMU_GRAVITY_HISTORY_SECONDS,
+                acceleration_magnitude_tolerance_m_s2=(
+                    IMU_ACCELERATION_MAGNITUDE_TOLERANCE_M_S2
+                ),
+                maximum_gyroscope_rad_s=IMU_MAXIMUM_GYROSCOPE_RAD_S,
+            )
+            print(
+                f"Using calibrated IMU2 gravity prior: {imu_path} | "
+                f"calibration: {imu_calibration_path}"
+            )
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
     distortion = np.load(DISTORTION_PATH)
@@ -159,6 +232,7 @@ def run_tracking(
         GLOBAL_MAP_GRID_ROWS,
         GLOBAL_MAP_GRID_COLUMNS,
         GLOBAL_MAP_REPROJECTION_ERROR_WEIGHT,
+        imu_gravity_provider=imu_gravity_provider,
     )
     map_build_started = time.perf_counter()
     global_map = map_builder.build(
@@ -263,6 +337,9 @@ def run_tracking(
             euler = Rotation.from_matrix(relative_rotation).as_euler(
                 "xyz", degrees=True
             )
+        geometry = pose_geometry_diagnostics(
+            result, tracker.camera_matrix, tracker.distortion
+        )
 
         positions.append(position)
         time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
@@ -319,6 +396,7 @@ def run_tracking(
                 "required_matches": diagnostics["required_matches"],
                 "required_inliers": diagnostics["required_inliers"],
                 "pnp_inlier_ratio": diagnostics["pnp_inlier_ratio"],
+                **geometry,
                 "new_features": diagnostics["new_features"],
                 "nearby_associations": diagnostics["nearby_associations"],
                 "new_landmarks": diagnostics["new_landmarks"],
@@ -421,10 +499,19 @@ def run_tracking(
     position_plot_path = output_dir / "position.png"
     orientation_plot_path = output_dir / "orientation.png"
     timing_plot_path = output_dir / "timing_diagnostics.png"
+    tracking_quality_plot_path = (
+        output_dir / "tracking_quality_diagnostics.png"
+    )
     save_results_csv(rows, csv_path)
     save_timing_diagnostics(
         rows,
         timing_plot_path,
+        recording_name,
+    )
+    save_3d_tracking_diagnostics(
+        rows,
+        ground_truth_path,
+        tracking_quality_plot_path,
         recording_name,
     )
     position_rmse, orientation_rmse = create_comparison_plots(
@@ -474,6 +561,7 @@ def run_tracking(
     print(f"Saved: {position_plot_path}")
     print(f"Saved: {orientation_plot_path}")
     print(f"Saved: {timing_plot_path}")
+    print(f"Saved: {tracking_quality_plot_path}")
     print(f"Saved: {metrics_path}")
     print(f"Saved: {output_dir / 'mapping_camera_vs_gt.csv'}")
     print(f"Saved: {output_dir / 'mapping_position_vs_gt.png'}")
