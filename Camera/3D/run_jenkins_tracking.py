@@ -12,6 +12,7 @@ from camera_tracking import (
     MAPPING_SEQUENTIAL_MATCH_OVERLAP,
     MAPPING_START_FRAME,
     TRACKING_START_FRAME,
+    USE_IMU_GRAVITY_PRIOR,
     run_tracking,
 )
 
@@ -73,6 +74,7 @@ def main():
         mapping_sequential_match_overlap=(
             MAPPING_SEQUENTIAL_MATCH_OVERLAP
         ),
+        use_imu=USE_IMU_GRAVITY_PRIOR,
     )
     metrics["total_pipeline_seconds"] = time.perf_counter() - started
     metrics["pycolmap_version"] = str(pycolmap.__version__)

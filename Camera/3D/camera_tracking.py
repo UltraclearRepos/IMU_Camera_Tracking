@@ -159,6 +159,7 @@ def run_tracking(
     feature_type,
     mapping_frame_step,
     mapping_sequential_match_overlap,
+    use_imu,
 ):
     feature_type = feature_type.lower()
     if not torch.cuda.is_available() and DEVICE == "cuda":
@@ -187,7 +188,7 @@ def run_tracking(
         video_timestamp_path
     )
     imu_gravity_provider = None
-    if USE_IMU_GRAVITY_PRIOR:
+    if use_imu:
         if reconstruction_method != "global":
             print(
                 "IMU gravity prior is disabled: it is supported only by "
@@ -604,6 +605,7 @@ def main():
         mapping_sequential_match_overlap=(
             MAPPING_SEQUENTIAL_MATCH_OVERLAP
         ),
+        use_imu=USE_IMU_GRAVITY_PRIOR,
     )
 
 

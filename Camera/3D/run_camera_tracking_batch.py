@@ -31,6 +31,8 @@ def resolve_results_dir(config, override):
         / "results_batch"
         / config["data_folder"]
         / config["experiment_name"]
+        / config["feature_type"]
+        / ("IMU" if config["use_imu"] else "noIMU")
     )
 
 
@@ -85,6 +87,7 @@ def run_recording(
         mapping_sequential_match_overlap=config[
             "mapping_sequential_match_overlap"
         ],
+        use_imu=config["use_imu"],
     )
 
 
@@ -251,7 +254,8 @@ def main():
             f"features={config['feature_type']} | mapping="
             f"{frame_range['mapping_start_frame']}.."
             f"{frame_range['mapping_end_frame']} | tracking="
-            f"{frame_range['tracking_start_frame']}"
+            f"{frame_range['tracking_start_frame']} | "
+            f"IMU={config['use_imu']}"
         )
         metrics.append(
             run_recording(
