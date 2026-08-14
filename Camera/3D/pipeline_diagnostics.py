@@ -5,93 +5,157 @@ import numpy as np
 
 
 def save_mapping_pipeline_diagnostics(rows, output_path, recording_name):
-    """Plot quality gates from mapping inputs through metric alignment."""
+    """Plot feature, SfM, BA, and metric-alignment stages of mapping."""
     frames = np.asarray([row["frame"] for row in rows])
-    feature_count = np.asarray([row["feature_count"] for row in rows])
-    raw_matches = np.asarray([row["raw_matches"] for row in rows])
-    verified_inliers = np.asarray(
-        [row["verified_inliers"] for row in rows]
-    )
-    pairs_attempted = np.asarray(
-        [row["pairs_attempted"] for row in rows]
-    )
-    pairs_verified = np.asarray(
-        [row["pairs_verified"] for row in rows]
-    )
-    registered = np.asarray([row["registered"] for row in rows], dtype=bool)
-    aruco_detected = np.asarray(
-        [row["aruco_detected"] for row in rows], dtype=bool
-    )
-    aruco_rms = np.asarray(
-        [row["aruco_reprojection_rms_px"] for row in rows]
-    )
-    aruco_max = np.asarray(
-        [row["aruco_reprojection_max_px"] for row in rows]
-    )
-    alignment_residual = np.asarray(
-        [row["aruco_alignment_residual_mm"] for row in rows]
-    )
 
-    figure, axes = plt.subplots(4, 1, figsize=(15, 13), sharex=True)
+    def field(name):
+        return np.asarray([row[name] for row in rows], dtype=float)
 
-    axes[0].plot(frames, feature_count, label="Selected features")
-    axes[0].plot(frames, raw_matches, label="Raw matches to prior frames")
-    axes[0].plot(frames, verified_inliers, label="Verified pair inliers")
-    axes[0].set_ylabel("Features / matches")
+    feature_count = field("feature_count")
+    raw_matches = field("raw_matches")
+    verified_inliers = field("verified_inliers")
+    pairs_attempted = field("pairs_attempted")
+    pairs_verified = field("pairs_verified")
+    registered = field("registered").astype(bool)
+    triangulated = field("triangulated_observations")
+    triangulated_ratio = field("triangulated_feature_ratio")
+    track_length = field("median_point_track_length")
+    point_reprojection = field("median_point_reprojection_error_px")
+    camera_translation_step = field("camera_translation_step_mm")
+    camera_rotation_step = field("camera_rotation_step_deg")
+    aruco_detected = field("aruco_detected").astype(bool)
+    aruco_alignment_used = field("aruco_alignment_used").astype(bool)
+    aruco_rms = field("aruco_reprojection_rms_px")
+    alignment_residual = field("aruco_alignment_residual_mm")
+
+    matches_per_pair = raw_matches / np.maximum(pairs_attempted, 1)
+    inliers_per_verified_pair = verified_inliers / np.maximum(
+        pairs_verified, 1
+    )
+    pair_acceptance = pairs_verified / np.maximum(pairs_attempted, 1)
+
+    figure, axes = plt.subplots(6, 1, figsize=(16, 19), sharex=True)
+
+    axes[0].plot(frames, feature_count, color="tab:blue")
+    axes[0].set_ylabel("Selected features")
+    axes[0].set_title("1. Spatial feature selection passed to pair matching")
     axes[0].grid(True)
-    axes[0].legend()
 
-    axes[1].plot(frames, pairs_attempted, label="Pairs attempted")
-    axes[1].plot(frames, pairs_verified, label="Pairs accepted")
-    axes[1].scatter(
-        frames[registered],
-        pairs_verified[registered],
-        color="tab:green",
-        s=20,
-        label="Registered by SfM",
-        zorder=3,
+    axes[1].plot(
+        frames,
+        matches_per_pair,
+        label="Raw matches / attempted pair",
     )
-    axes[1].scatter(
-        frames[~registered],
-        pairs_verified[~registered],
-        color="tab:red",
-        s=20,
-        label="Not registered",
-        zorder=3,
+    axes[1].plot(
+        frames,
+        inliers_per_verified_pair,
+        label="Geometric inliers / accepted pair",
     )
-    axes[1].set_ylabel("Image pairs")
+    axes[1].set_ylabel("Correspondences")
+    axes[1].set_title("2. Descriptor matching and two-view geometry verification")
     axes[1].grid(True)
-    axes[1].legend()
+    axes[1].legend(loc="upper left")
+    acceptance_axis = axes[1].twinx()
+    acceptance_axis.plot(
+        frames,
+        100.0 * pair_acceptance,
+        color="tab:green",
+        alpha=0.7,
+        label="Accepted pair ratio",
+    )
+    acceptance_axis.set_ylabel("Accepted pairs [%]")
+    acceptance_axis.set_ylim(0.0, 105.0)
+    acceptance_axis.legend(loc="upper right")
 
     axes[2].plot(
+        frames,
+        triangulated,
+        label="Triangulated observations",
+    )
+    axes[2].scatter(
+        frames[~registered],
+        np.zeros(np.sum(~registered)),
+        color="tab:red",
+        s=24,
+        label="Image not registered",
+        zorder=3,
+    )
+    axes[2].set_ylabel("3D observations")
+    axes[2].set_title("3. SfM image registration and landmark triangulation")
+    axes[2].grid(True)
+    axes[2].legend(loc="upper left")
+    triangulation_axis = axes[2].twinx()
+    triangulation_axis.plot(
+        frames,
+        100.0 * triangulated_ratio,
+        color="tab:orange",
+        label="Features assigned to a 3D point",
+    )
+    triangulation_axis.set_ylabel("Triangulated features [%]")
+    triangulation_axis.set_ylim(0.0, 105.0)
+    triangulation_axis.legend(loc="upper right")
+
+    axes[3].plot(
+        frames,
+        track_length,
+        label="Median landmark track length",
+    )
+    axes[3].set_ylabel("Images / landmark")
+    axes[3].set_title("4. Landmark support and final BA reprojection quality")
+    axes[3].grid(True)
+    axes[3].legend(loc="upper left")
+    reprojection_axis = axes[3].twinx()
+    reprojection_axis.plot(
+        frames,
+        point_reprojection,
+        color="tab:red",
+        label="Median landmark reprojection error",
+    )
+    reprojection_axis.set_ylabel("Reprojection error [px]")
+    reprojection_axis.legend(loc="upper right")
+
+    axes[4].plot(
+        frames,
+        camera_translation_step,
+        label="Consecutive BA camera-center distance",
+    )
+    axes[4].set_ylabel("Translation [mm]")
+    axes[4].set_title("5. Recovered camera motion after BA and metric alignment")
+    axes[4].grid(True)
+    axes[4].legend(loc="upper left")
+    rotation_axis = axes[4].twinx()
+    rotation_axis.plot(
+        frames,
+        camera_rotation_step,
+        color="tab:orange",
+        label="Consecutive BA camera rotation",
+    )
+    rotation_axis.set_ylabel("Rotation [deg]")
+    rotation_axis.legend(loc="upper right")
+
+    axes[5].plot(
         frames[aruco_detected],
         aruco_rms[aruco_detected],
         marker="o",
         markersize=3,
         label="ArUco reprojection RMS",
     )
-    axes[2].plot(
-        frames[aruco_detected],
-        aruco_max[aruco_detected],
-        marker="o",
-        markersize=3,
-        label="ArUco max corner error",
-    )
-    axes[2].scatter(
-        frames[aruco_detected & registered],
-        np.zeros(np.sum(aruco_detected & registered)),
+    axes[5].scatter(
+        frames[aruco_alignment_used],
+        aruco_rms[aruco_alignment_used],
         color="tab:green",
-        marker="|",
-        s=80,
-        label="Used by ArUco alignment",
+        s=22,
+        label="Used for metric alignment",
         zorder=3,
     )
-    axes[2].set_ylabel("Reprojection error [px]")
-    axes[2].grid(True)
-    axes[2].legend()
-
+    axes[5].set_ylabel("ArUco error [px]")
+    axes[5].set_xlabel("Video frame")
+    axes[5].set_title("6. ArUco pose quality and SfM-to-metric alignment")
+    axes[5].grid(True)
+    axes[5].legend(loc="upper left")
     alignment_used = np.isfinite(alignment_residual)
-    axes[3].plot(
+    alignment_axis = axes[5].twinx()
+    alignment_axis.plot(
         frames[alignment_used],
         alignment_residual[alignment_used],
         marker="o",
@@ -101,20 +165,18 @@ def save_mapping_pipeline_diagnostics(rows, output_path, recording_name):
     )
     if np.any(alignment_used):
         rmse = np.sqrt(np.mean(alignment_residual[alignment_used] ** 2))
-        axes[3].axhline(
+        alignment_axis.axhline(
             rmse,
             color="black",
             linestyle="--",
             label=f"Alignment RMSE: {rmse:.2f} mm",
         )
-    axes[3].set_ylabel("Alignment residual [mm]")
-    axes[3].set_xlabel("Video frame")
-    axes[3].grid(True)
-    axes[3].legend()
+    alignment_axis.set_ylabel("Alignment residual [mm]")
+    alignment_axis.legend(loc="upper right")
 
     figure.suptitle(
         f"{recording_name}: mapping pipeline diagnostics\n"
-        "features → verified pairs → SfM registration → ArUco metric alignment"
+        "features -> pairs -> geometry -> triangulation -> BA -> ArUco alignment"
     )
     figure.tight_layout()
     figure.savefig(output_path, dpi=160)

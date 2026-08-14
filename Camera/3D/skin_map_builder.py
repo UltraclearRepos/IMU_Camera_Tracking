@@ -721,13 +721,31 @@ class SkinMapBuilder:
                 f"{MIN_ARUCO_ALIGNMENT_FRAMES} registered mapping frames"
             )
 
-        reference_image = registered_aruco_images[0]
+        reprojection_rms = np.asarray(
+            [
+                aruco_poses[image.name][2]["reprojection_rms_px"]
+                for image in registered_aruco_images
+            ],
+            dtype=float,
+        )
+        keep_count = max(
+            MIN_ARUCO_ALIGNMENT_FRAMES,
+            int(np.ceil(0.5 * len(registered_aruco_images))),
+        )
+        best_indices = np.argsort(reprojection_rms)[:keep_count]
+        alignment_images = [
+            registered_aruco_images[index] for index in best_indices
+        ]
+        rms_threshold = float(np.max(reprojection_rms[best_indices]))
+        alignment_images.sort(key=lambda image: image.name)
+
+        reference_image = alignment_images[0]
 
         rotation_candidates = []
         sfm_centers = []
         aruco_centers = []
 
-        for image in registered_aruco_images:
+        for image in alignment_images:
             R_aruco_to_camera, t_aruco_to_camera, _ = aruco_poses[
                 image.name
             ]
@@ -773,12 +791,14 @@ class SkinMapBuilder:
             "rotation": rotation,
             "translation": translation,
             "alignment_rmse_mm": alignment_rmse,
-            "alignment_frames": len(registered_aruco_images),
+            "alignment_candidate_frames": len(registered_aruco_images),
+            "alignment_frames": len(alignment_images),
+            "alignment_reprojection_rms_threshold_px": rms_threshold,
             "reference_image": reference_image.name,
             "center_residuals_by_name": {
                 image.name: float(residual)
                 for image, residual in zip(
-                    registered_aruco_images,
+                    alignment_images,
                     np.linalg.norm(
                         aligned_centers - aruco_centers,
                         axis=1,
@@ -1071,9 +1091,109 @@ class SkinMapBuilder:
                 saved_arrays[name] = global_map[name]
         np.savez_compressed(output_path, **saved_arrays)
 
-    def build(self, video_path, output_dir):
+    def populate_mapping_reconstruction_diagnostics(
+        self,
+        mapping_frame_rows,
+        reconstruction,
+        alignment,
+    ):
+        """Add post-reconstruction SfM and ArUco metrics to mapping rows."""
+        registered_image_names = {
+            image.name for image in reconstruction.images.values()
+        }
+        registered_images_by_name = {
+            image.name: image for image in reconstruction.images.values()
+        }
+        camera_step_by_name = {}
+        previous_position = None
+        previous_rotation = None
+        for image in sorted(
+            reconstruction.images.values(), key=lambda item: item.name
+        ):
+            R_map_to_camera, t_map_to_camera = self.transform_pose(
+                image, alignment
+            )
+            position = camera_center(R_map_to_camera, t_map_to_camera)
+            camera_rotation = R_map_to_camera.T
+            if previous_position is None:
+                translation_step = np.nan
+                rotation_step = np.nan
+            else:
+                translation_step = float(
+                    np.linalg.norm(position - previous_position)
+                )
+                rotation_step = float(
+                    np.degrees(
+                        Rotation.from_matrix(
+                            previous_rotation.T @ camera_rotation
+                        ).magnitude()
+                    )
+                )
+            camera_step_by_name[image.name] = (
+                translation_step,
+                rotation_step,
+            )
+            previous_position = position
+            previous_rotation = camera_rotation
+
+        for row in mapping_frame_rows:
+            row["registered"] = int(
+                row["image_name"] in registered_image_names
+            )
+            row["aruco_alignment_used"] = int(
+                row["image_name"] in alignment["center_residuals_by_name"]
+            )
+            image = registered_images_by_name.get(row["image_name"])
+            if image is None:
+                row["triangulated_observations"] = 0
+                row["triangulated_feature_ratio"] = 0.0
+                row["median_point_track_length"] = np.nan
+                row["median_point_reprojection_error_px"] = np.nan
+                row["camera_translation_step_mm"] = np.nan
+                row["camera_rotation_step_deg"] = np.nan
+            else:
+                point_ids = [
+                    point2D.point3D_id
+                    for point2D in image.points2D
+                    if point2D.has_point3D()
+                ]
+                points = [
+                    reconstruction.points3D[point_id]
+                    for point_id in point_ids
+                ]
+                row["triangulated_observations"] = len(points)
+                row["triangulated_feature_ratio"] = (
+                    len(points) / row["feature_count"]
+                    if row["feature_count"]
+                    else 0.0
+                )
+                row["median_point_track_length"] = (
+                    float(np.median([point.track.length() for point in points]))
+                    if points
+                    else np.nan
+                )
+                row["median_point_reprojection_error_px"] = (
+                    float(np.median([point.error for point in points]))
+                    if points
+                    else np.nan
+                )
+                (
+                    row["camera_translation_step_mm"],
+                    row["camera_rotation_step_deg"],
+                ) = camera_step_by_name[row["image_name"]]
+            row["aruco_alignment_residual_mm"] = alignment[
+                "center_residuals_by_name"
+            ].get(row["image_name"], np.nan)
+
+    def build(self, video_path, output_dir, diagnostics_output_dir=None):
         build_started = time.perf_counter()
         output_dir = Path(output_dir)
+        diagnostics_output_dir = Path(
+            diagnostics_output_dir
+            if diagnostics_output_dir is not None
+            else output_dir
+        )
+        diagnostics_output_dir.mkdir(parents=True, exist_ok=True)
         work_dir = output_dir / "colmap_work"
         images_dir = work_dir / "images"
         sparse_dir = work_dir / "sparse"
@@ -1128,21 +1248,16 @@ class SkinMapBuilder:
         )
         alignment_seconds = time.perf_counter() - alignment_started
 
-        registered_image_names = {
-            image.name for image in reconstruction.images.values()
-        }
-        for row in mapping_frame_rows:
-            row["registered"] = int(
-                row["image_name"] in registered_image_names
-            )
-            row["aruco_alignment_residual_mm"] = alignment[
-                "center_residuals_by_name"
-            ].get(row["image_name"], np.nan)
+        self.populate_mapping_reconstruction_diagnostics(
+            mapping_frame_rows,
+            reconstruction,
+            alignment,
+        )
         mapping_diagnostics_csv_path = (
-            output_dir / "mapping_pipeline_diagnostics.csv"
+            diagnostics_output_dir / "mapping_pipeline_diagnostics.csv"
         )
         mapping_diagnostics_plot_path = (
-            output_dir / "mapping_pipeline_diagnostics.png"
+            diagnostics_output_dir / "mapping_pipeline_diagnostics.png"
         )
         save_mapping_pipeline_csv(
             mapping_frame_rows,
@@ -1274,7 +1389,11 @@ class SkinMapBuilder:
             "landmarks_per_occupied_cell": global_map[
                 "landmarks_per_occupied_cell"
             ],
+            "alignment_candidate_frames": alignment["alignment_candidate_frames"],
             "alignment_frames": alignment["alignment_frames"],
+            "alignment_reprojection_rms_threshold_px": alignment[
+                "alignment_reprojection_rms_threshold_px"
+            ],
             "alignment_rmse_mm": alignment["alignment_rmse_mm"],
             "reference_image": alignment["reference_image"],
             "last_mapping_image": global_map["last_mapping_image"],

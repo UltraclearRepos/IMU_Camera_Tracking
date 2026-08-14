@@ -40,7 +40,7 @@ CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
 FEATURE_ROI_BOTTOM_FRACTION = 0.7
-FEATURE_TYPE = "disk"  # "disk" or "sift".
+FEATURE_TYPE = "sift"  # "disk" or "sift".
 
 MAPPING_START_FRAME = 90  # First frame used to build the frozen 3D map.
 MAPPING_END_FRAME = 419  # Last frame used to build the frozen 3D map.
@@ -238,6 +238,7 @@ def run_tracking(
     global_map = map_builder.build(
         video_path,
         output_dir / "map",
+        diagnostics_output_dir=output_dir,
     )
     map_build_wall_time_s = time.perf_counter() - map_build_started
     (

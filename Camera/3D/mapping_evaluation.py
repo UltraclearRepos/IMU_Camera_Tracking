@@ -1,5 +1,6 @@
 import csv
 
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -97,6 +98,99 @@ def save_mapping_csv(
                     "gt_yaw_deg": ground_truth_euler[index, 2],
                 }
             )
+
+
+def save_mapping_3d_diagnostics(
+    frames,
+    estimate_positions,
+    ground_truth_positions,
+    estimate_rotations,
+    ground_truth_rotations,
+    position_errors,
+    orientation_errors,
+    output_path,
+    recording_name,
+):
+    """Diagnose the metric camera trajectory recovered by SfM/BA."""
+    estimated_translation = np.full(len(frames), np.nan)
+    ground_truth_translation = np.full(len(frames), np.nan)
+    estimated_rotation = np.full(len(frames), np.nan)
+    ground_truth_rotation = np.full(len(frames), np.nan)
+    for index in range(1, len(frames)):
+        estimated_translation[index] = np.linalg.norm(
+            estimate_positions[index] - estimate_positions[index - 1]
+        )
+        ground_truth_translation[index] = np.linalg.norm(
+            ground_truth_positions[index] - ground_truth_positions[index - 1]
+        )
+        estimated_rotation[index] = np.degrees(
+            Rotation.from_matrix(
+                estimate_rotations[index - 1].T @ estimate_rotations[index]
+            ).magnitude()
+        )
+        ground_truth_rotation[index] = np.degrees(
+            Rotation.from_matrix(
+                ground_truth_rotations[index - 1].T
+                @ ground_truth_rotations[index]
+            ).magnitude()
+        )
+
+    figure, axes = plt.subplots(4, 1, figsize=(16, 14), sharex=True)
+    axes[0].plot(frames, ground_truth_translation, color="black", label="GT translation")
+    axes[0].plot(frames, estimated_translation, color="tab:blue", label="SfM translation")
+    axes[0].set_ylabel("Translation [mm/frame]")
+    axes[0].set_title("Frame-to-frame motion recovered by SfM after global BA")
+    axes[0].grid(True)
+    axes[0].legend(loc="upper left")
+    rotation_axis = axes[0].twinx()
+    rotation_axis.plot(frames, ground_truth_rotation, color="gray", linestyle="--", label="GT rotation")
+    rotation_axis.plot(frames, estimated_rotation, color="tab:orange", label="SfM rotation")
+    rotation_axis.set_ylabel("Rotation [deg/frame]")
+    rotation_axis.legend(loc="upper right")
+
+    axes[1].plot(
+        frames,
+        np.cumsum(np.nan_to_num(ground_truth_translation, nan=0.0)),
+        color="black",
+        label="GT cumulative path",
+    )
+    axes[1].plot(
+        frames,
+        np.cumsum(np.nan_to_num(estimated_translation, nan=0.0)),
+        color="tab:blue",
+        label="SfM cumulative path",
+    )
+    axes[1].set_ylabel("Path length [mm]")
+    axes[1].set_title("Metric translation accumulated across registered map cameras")
+    axes[1].grid(True)
+    axes[1].legend()
+
+    axes[2].plot(frames, ground_truth_positions[:, 0], color="black", label="GT X")
+    axes[2].plot(frames, ground_truth_positions[:, 1], color="gray", label="GT Y")
+    axes[2].plot(frames, ground_truth_positions[:, 2], color="dimgray", label="GT Z")
+    axes[2].plot(frames, estimate_positions[:, 0], color="tab:blue", linestyle="--", label="SfM X")
+    axes[2].plot(frames, estimate_positions[:, 1], color="tab:orange", linestyle="--", label="SfM Y")
+    axes[2].plot(frames, estimate_positions[:, 2], color="tab:green", linestyle="--", label="SfM Z")
+    axes[2].set_ylabel("Position in C0 [mm]")
+    axes[2].set_title("Recovered metric camera-center trajectory")
+    axes[2].grid(True)
+    axes[2].legend(ncol=2)
+
+    axes[3].plot(frames, position_errors, color="tab:red", label="3D position error")
+    axes[3].set_ylabel("Position error [mm]")
+    axes[3].set_xlabel("Video frame")
+    axes[3].set_title("Final BA pose error against GT")
+    axes[3].grid(True)
+    axes[3].legend(loc="upper left")
+    orientation_axis = axes[3].twinx()
+    orientation_axis.plot(frames, orientation_errors, color="tab:purple", label="Orientation error")
+    orientation_axis.set_ylabel("Orientation error [deg]")
+    orientation_axis.legend(loc="upper right")
+
+    figure.suptitle(f"{recording_name}: mapping 3D geometry diagnostics")
+    figure.tight_layout()
+    figure.savefig(output_path, dpi=160)
+    plt.close(figure)
 
 
 def evaluate_final_mapping_poses(

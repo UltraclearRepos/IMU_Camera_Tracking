@@ -42,11 +42,14 @@ FRAME_RANGE_KEYS = (
 
 
 def resolve_frame_range(config, recording_parameters):
-    """Use a recording-specific frame range when present, else batch defaults."""
-    frame_range = {
-        key: recording_parameters.get(key, config[key])
-        for key in FRAME_RANGE_KEYS
-    }
+    """Read the explicitly configured frame range for one recording."""
+    missing = [key for key in FRAME_RANGE_KEYS if key not in recording_parameters]
+    if missing:
+        raise ValueError(
+            "Recording configuration is missing frame range fields: "
+            f"{', '.join(missing)}"
+        )
+    frame_range = {key: recording_parameters[key] for key in FRAME_RANGE_KEYS}
     for key, value in frame_range.items():
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ValueError(f"{key} must be a non-negative integer")
