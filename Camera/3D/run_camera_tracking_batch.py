@@ -3,6 +3,7 @@ import csv
 import json
 import math
 import shutil
+import traceback
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -93,8 +94,13 @@ def run_recording(
 
 def save_summary_csv(metrics, results_dir):
     output_path = results_dir / "rmse_summary.csv"
+    fieldnames = list(
+        dict.fromkeys(
+            key for metric in metrics for key in metric
+        )
+    )
     with output_path.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=metrics[0].keys())
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(metrics)
     return output_path
@@ -248,36 +254,67 @@ def main():
         recordings.items(),
         start=1,
     ):
-        frame_range = resolve_frame_range(config, recording_parameters)
-        print(
-            f"\n[{index}/{len(recordings)}] Running {recording_name} | "
-            f"features={config['feature_type']} | mapping="
-            f"{frame_range['mapping_start_frame']}.."
-            f"{frame_range['mapping_end_frame']} | tracking="
-            f"{frame_range['tracking_start_frame']} | "
-            f"IMU={config['use_imu']}"
-        )
-        metrics.append(
-            run_recording(
+        try:
+            frame_range = resolve_frame_range(config, recording_parameters)
+            print(
+                f"\n[{index}/{len(recordings)}] Running {recording_name} | "
+                f"features={config['feature_type']} | mapping="
+                f"{frame_range['mapping_start_frame']}.."
+                f"{frame_range['mapping_end_frame']} | tracking="
+                f"{frame_range['tracking_start_frame']} | "
+                f"IMU={config['use_imu']}"
+            )
+            recording_metrics = run_recording(
                 recording_name,
                 recording_parameters,
                 config,
                 data_dir,
                 results_dir,
             )
-        )
+            recording_metrics["status"] = "success"
+            metrics.append(recording_metrics)
+        except Exception as error:
+            print(
+                f"\n[{index}/{len(recordings)}] FAILED {recording_name}: "
+                f"{type(error).__name__}: {error}"
+            )
+            traceback.print_exc()
+            metrics.append(
+                {
+                    "recording": recording_name,
+                    "feature_type": config["feature_type"],
+                    "status": "failed",
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                }
+            )
 
     csv_path = save_summary_csv(metrics, results_dir)
-    plot_path = save_rmse_summary_plot(
-        metrics,
-        config["experiment_name"],
-        results_dir,
-    )
+    successful_metrics = [
+        metric for metric in metrics if metric["status"] == "success"
+    ]
+    plot_path = None
+    if successful_metrics:
+        plot_path = save_rmse_summary_plot(
+            successful_metrics,
+            config["experiment_name"],
+            results_dir,
+        )
 
     print(f"\nSaved: {saved_config_path}")
     print(f"Saved: {csv_path}")
-    print(f"Saved: {plot_path}")
-    print_execution_times(metrics)
+    if plot_path is not None:
+        print(f"Saved: {plot_path}")
+    if successful_metrics:
+        print_execution_times(successful_metrics)
+    failed_recordings = [
+        metric["recording"] for metric in metrics if metric["status"] == "failed"
+    ]
+    if failed_recordings:
+        print(
+            "\nFailed recordings (batch continued): "
+            + ", ".join(failed_recordings)
+        )
 
 
 if __name__ == "__main__":
