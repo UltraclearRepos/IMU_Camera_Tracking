@@ -174,7 +174,7 @@ def run_tracking(
     )
     imu_path = data_dir / "imu" / f"{recording_name}.csv"
     imu_calibration_path = (
-        PROJECT_DIR / "imu" / "calibration" / "imu_calibration.json"
+        PROJECT_DIR / "IMU" / "calibration" / "imu_calibration.json"
     )
     video_timestamp_path = (
         data_dir
