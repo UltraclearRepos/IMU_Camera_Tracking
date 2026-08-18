@@ -60,16 +60,16 @@ class SkinMapTracker:
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
         self.feature_matching = feature_matching
 
-        if global_map.get("coordinate_frame") != "aruco":
+        if global_map.coordinate_frame != "aruco":
             raise ValueError(
                 "The frozen map must use the ArUco coordinate frame"
             )
 
-        self.map_points = global_map["positions"].copy()
-        self.map_descriptors = global_map["descriptors"]
-        self.map_scores = global_map["scores"]
-        self.map_scales = global_map.get("scales")
-        self.map_orientations = global_map.get("oris")
+        self.map_points = global_map.positions.copy()
+        self.map_descriptors = global_map.descriptors
+        self.map_scores = global_map.scores
+        self.map_scales = global_map.scales
+        self.map_orientations = global_map.orientations
         if self.feature_matching.requires_scale_orientation and (
             self.map_scales is None or self.map_orientations is None
         ):

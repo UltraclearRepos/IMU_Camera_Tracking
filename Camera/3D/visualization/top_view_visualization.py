@@ -218,12 +218,12 @@ def save_map_build_top_view(
     size_px,
     padding_mm,
 ):
-    candidate_points = global_map["candidate_positions"]
-    available_frames = global_map["candidate_available_frames"]
-    selected_indices = global_map["selected_candidate_indices"]
-    mapping_frames = global_map["mapping_frames"]
-    camera_positions = global_map["mapping_camera_positions"]
-    camera_headings = global_map["mapping_camera_headings"]
+    candidate_points = global_map.candidate_positions
+    available_frames = global_map.candidate_available_frames
+    selected_indices = global_map.selected_candidate_indices
+    mapping_frames = global_map.mapping_frames
+    camera_positions = global_map.mapping_camera_positions
+    camera_headings = global_map.mapping_camera_headings
     bounds = fixed_bounds(candidate_points, camera_positions, padding_mm)
     z_min = np.min(candidate_points[:, 2])
     z_max = np.max(candidate_points[:, 2])
@@ -495,7 +495,7 @@ def save_tracking_top_view(
     size_px,
     padding_mm,
 ):
-    map_points = global_map["positions"]
+    map_points = global_map.positions
     camera_positions = np.array(
         [state["camera_position"] for state in states]
     )

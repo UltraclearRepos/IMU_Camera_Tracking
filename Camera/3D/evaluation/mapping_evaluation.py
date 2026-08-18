@@ -200,13 +200,13 @@ def evaluate_final_mapping_poses(
     output_dir,
     recording_name,
 ):
-    frames = global_map["mapping_frames"]
-    times_s = global_map["mapping_times_s"]
+    frames = global_map.mapping_frames
+    times_s = global_map.mapping_times_s
     timestamps = video_start_timestamp + times_s
-    camera_positions = global_map["mapping_camera_positions"]
-    camera_rotations = global_map["mapping_camera_rotations"]
+    camera_positions = global_map.mapping_camera_positions
+    camera_rotations = global_map.mapping_camera_rotations
 
-    reference_frame = global_map["mapping_reference_frame"]
+    reference_frame = global_map.mapping_reference_frame
     reference_index = int(np.flatnonzero(frames == reference_frame)[0])
     reference_position = camera_positions[reference_index]
     reference_rotation = camera_rotations[reference_index]
@@ -241,9 +241,9 @@ def evaluate_final_mapping_poses(
         gt_times,
         gt_euler,
     )
-    reference_timestamp = video_start_timestamp + global_map[
-        "mapping_times_s"
-    ][reference_index]
+    reference_timestamp = (
+        video_start_timestamp + global_map.mapping_times_s[reference_index]
+    )
     reference_gt_position = interpolate_columns(
         np.array([reference_timestamp]),
         gt_times,
@@ -302,8 +302,8 @@ def evaluate_final_mapping_poses(
 
     registered_percent = (
         100.0
-        * len(global_map["mapping_frames"])
-        / global_map["mapping_extracted_image_count"]
+        * len(global_map.mapping_frames)
+        / global_map.mapping_extracted_image_count
     )
     plot_times = times_s - times_s[0]
     title_suffix = (
