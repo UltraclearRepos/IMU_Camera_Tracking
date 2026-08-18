@@ -1,7 +1,13 @@
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+MODULE_DIR = SCRIPT_DIR.parent
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
 
 import pycolmap
 

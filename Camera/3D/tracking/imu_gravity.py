@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from coordinate_frames import imu_vectors_to_camera_axes
+from geometry.coordinate_frames import imu_vectors_to_camera_axes
 
 
 IMU_ACCELERATION_COLUMNS = (

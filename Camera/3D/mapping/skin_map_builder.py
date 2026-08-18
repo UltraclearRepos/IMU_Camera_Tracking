@@ -8,11 +8,11 @@ import numpy as np
 import pycolmap
 from scipy.spatial.transform import Rotation
 
-from aruco_reference import create_aruco_detector, detect_aruco_pose
-from pipeline_diagnostics import (
+from evaluation.pipeline_diagnostics import (
     save_mapping_pipeline_csv,
     save_mapping_pipeline_diagnostics,
 )
+from mapping.aruco_reference import create_aruco_detector, detect_aruco_pose
 
 
 MIN_ARUCO_ALIGNMENT_FRAMES = 3

@@ -12,18 +12,18 @@ os.environ["TORCH_HOME"] = str(PROJECT_DIR / ".venv" / "torch_cache")
 import cv2
 import numpy as np
 import torch
-from feature_matching import DEVICE, LightGlueFeatureMatching
-from imu_gravity import ImuGravityProvider
-from mapping_evaluation import evaluate_final_mapping_poses
+from evaluation.mapping_evaluation import evaluate_final_mapping_poses
+from mapping.feature_matching import DEVICE, LightGlueFeatureMatching
+from mapping.skin_map_builder import SkinMapBuilder
 from scipy.spatial.transform import Rotation
-from skin_map_builder import SkinMapBuilder
-from skin_map_tracker import SkinMapTracker
-from top_view_visualization import (
+from tracking.imu_gravity import ImuGravityProvider
+from tracking.skin_map_tracker import SkinMapTracker
+from visualization.top_view_visualization import (
     create_tracking_top_view_state,
     save_map_build_top_view,
     save_tracking_top_view,
 )
-from tracking_visualization import (
+from visualization.tracking_visualization import (
     create_comparison_plots,
     diagnostic_frame,
     save_3d_tracking_diagnostics,

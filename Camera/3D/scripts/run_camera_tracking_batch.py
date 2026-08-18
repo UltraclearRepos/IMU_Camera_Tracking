@@ -3,16 +3,21 @@ import csv
 import json
 import math
 import shutil
+import sys
 import traceback
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+MODULE_DIR = SCRIPT_DIR.parent
+PROJECT_DIR = MODULE_DIR.parent.parent
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
 
 import matplotlib.pyplot as plt
 from camera_tracking import run_tracking
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parent.parent
-DEFAULT_CONFIG_PATH = SCRIPT_DIR / "batch_config.json"
+DEFAULT_CONFIG_PATH = MODULE_DIR / "batch_config.json"
 
 
 def load_experiment_config(path):
@@ -28,7 +33,7 @@ def resolve_results_dir(config, override):
     if override is not None:
         return override
     return (
-        SCRIPT_DIR
+        MODULE_DIR
         / "results_batch"
         / config["data_folder"]
         / config["experiment_name"]

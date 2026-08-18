@@ -6,10 +6,11 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parent.parent
+MODULE_DIR = SCRIPT_DIR.parent
+PROJECT_DIR = MODULE_DIR.parent.parent
 DATA_DIR = PROJECT_DIR / "Data"
-BASE_CONFIG_DIR = SCRIPT_DIR / "batch_configs"
-OUTPUT_DIR = SCRIPT_DIR / "batch_configs_from_timestamps"
+BASE_CONFIG_DIR = MODULE_DIR / "batch_configs"
+OUTPUT_DIR = MODULE_DIR / "batch_configs_from_timestamps"
 VIDEO_FPS = 30.0
 
 # For every recording enter:

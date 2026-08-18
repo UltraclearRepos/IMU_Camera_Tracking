@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 import torch
 
-from aruco_reference import create_aruco_detector, detect_aruco_pose
-from feature_matching import DEVICE
+from mapping.aruco_reference import create_aruco_detector, detect_aruco_pose
+from mapping.feature_matching import DEVICE
 
 
 MIN_MATCHES = 20

@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from coordinate_frames import (
+from geometry.coordinate_frames import (
     tcp_displacements_to_camera_axes,
     tcp_rotations_to_camera_axes,
 )
