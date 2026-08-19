@@ -549,8 +549,8 @@ def run_tracking(
             mapping_sequential_match_overlap
         ),
         "map_landmarks": len(tracker.landmarks),
-        "map_candidate_landmarks": global_map["candidate_landmarks"],
-        "map_occupied_grid_cells": global_map["occupied_grid_cells"],
+        "map_candidate_landmarks": len(global_map.candidate_positions),
+        "map_occupied_grid_cells": global_map.occupied_grid_cell_count,
         "mapping_position_rmse_mm": float(mapping_position_rmse),
         "mapping_orientation_rmse_deg": float(mapping_orientation_rmse),
         "mapping_registered_percent": float(mapping_registered_percent),
