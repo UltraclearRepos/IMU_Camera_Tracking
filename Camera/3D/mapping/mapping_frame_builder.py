@@ -153,9 +153,8 @@ class MappingFrameBuilder:
                     aruco_pose=aruco_pose,
                 )
                 selection_started = time.perf_counter()
-                pair_selection = pair_selector.select_and_register(
-                    current_image
-                )
+                pair_selector.register_keyframe(current_image)
+                pair_selection = pair_selector.select_pairs(current_image)
                 pair_selection_seconds += (
                     time.perf_counter() - selection_started
                 )

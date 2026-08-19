@@ -31,7 +31,7 @@ class AdaptiveKeyframePairSelector:
         self._previous_track_ids = np.empty(0, dtype=np.int64)
         self._active_keyframes = {}
         self._keyframes_by_track = {}
-        self._recent_keyframes = deque(maxlen=recent_pair_count or None)
+        self._recent_keyframes = deque(maxlen=recent_pair_count + 1)
 
     def assign_track_ids(self, frame, features):
         gray = self._grayscale(frame)
@@ -67,44 +67,61 @@ class AdaptiveKeyframePairSelector:
             new_track_count=new_count,
         )
 
-    def select_and_register(self, current_image):
+    def register_keyframe(self, image):
+        image_id = image.database_image_id
+        self._active_keyframes[image_id] = image
+        for track_id in image.track_ids:
+            self._keyframes_by_track.setdefault(int(track_id), set()).add(image_id)
+        self._recent_keyframes.append(image)
+
+    def select_pairs(self, current_image):
         common_track_counts = self._common_track_counts(
             current_image.track_ids
         )
-        valid_candidates = []
+        recent_images = list(self._recent_keyframes)[:-1]
+        recent_image_ids = {
+            image.database_image_id for image in recent_images
+        }
+
+        motion_candidates = []
+        active_candidate_count = 0
         expired_keyframe_ids = []
+        overlap_by_image_id = {}
         for image_id, previous_image in self._active_keyframes.items():
+            if image_id == current_image.database_image_id:
+                continue
             shared_track_count = common_track_counts.get(image_id, 0)
             overlap = self._overlap(previous_image, shared_track_count)
+            overlap_by_image_id[image_id] = overlap
             if overlap < self.MINIMUM_KEYFRAME_OVERLAP:
-                expired_keyframe_ids.append(image_id)
+                if image_id not in recent_image_ids:
+                    expired_keyframe_ids.append(image_id)
                 continue
-            valid_candidates.append(
+            active_candidate_count += 1
+            if image_id in recent_image_ids:
+                continue
+            motion_candidates.append(
                 self._candidate(
                     previous_image,
                     current_image,
+                    overlap=overlap,
                     reason="overlap_candidate",
                 )
             )
 
-        recent_pairs = self._recent_pairs(current_image)
-        recent_image_ids = {
-            pair.image.database_image_id for pair in recent_pairs
-        }
-        motion_candidates = [
-            candidate
-            for candidate in valid_candidates
-            if candidate.image.database_image_id not in recent_image_ids
-        ]
+        recent_pairs = self._recent_pairs(
+            current_image,
+            recent_images,
+            overlap_by_image_id,
+        )
         motion_pairs = self._select_motion_pairs(motion_candidates)
 
         for image_id in expired_keyframe_ids:
             self._remove_active_keyframe(image_id)
-        self._register_active_keyframe(current_image)
 
         return KeyframePairSelection(
             pairs=tuple(recent_pairs + motion_pairs),
-            active_candidate_count=len(valid_candidates),
+            active_candidate_count=active_candidate_count,
         )
 
     def _track_previous_points(self, current_gray):
@@ -212,16 +229,22 @@ class AdaptiveKeyframePairSelector:
             counts.update(self._keyframes_by_track.get(int(track_id), ()))
         return counts
 
-    def _recent_pairs(self, current_image):
+    def _recent_pairs(
+        self,
+        current_image,
+        recent_images,
+        overlap_by_image_id,
+    ):
         if self.recent_pair_count == 0:
             return []
         return [
             self._candidate(
                 previous_image,
                 current_image,
+                overlap=overlap_by_image_id[previous_image.database_image_id],
                 reason="recent",
             )
-            for previous_image in self._recent_keyframes
+            for previous_image in recent_images
         ]
 
     def _select_motion_pairs(self, candidates):
@@ -278,7 +301,7 @@ class AdaptiveKeyframePairSelector:
         return targets
 
     @staticmethod
-    def _candidate(previous_image, current_image, reason):
+    def _candidate(previous_image, current_image, overlap, reason):
         shared_ids, previous_indices, current_indices = np.intersect1d(
             previous_image.track_ids,
             current_image.track_ids,
@@ -286,10 +309,6 @@ class AdaptiveKeyframePairSelector:
             return_indices=True,
         )
         shared_track_count = len(shared_ids)
-        overlap = AdaptiveKeyframePairSelector._overlap(
-            previous_image,
-            shared_track_count,
-        )
         if shared_track_count:
             displacements = np.linalg.norm(
                 current_image.features["keypoints"][current_indices]
@@ -314,16 +333,6 @@ class AdaptiveKeyframePairSelector:
         if not len(previous_image.track_ids):
             return 0.0
         return shared_track_count / len(previous_image.track_ids)
-
-    def _register_active_keyframe(self, image):
-        image_id = image.database_image_id
-        self._active_keyframes[image_id] = image
-        for track_id in image.track_ids:
-            self._keyframes_by_track.setdefault(int(track_id), set()).add(
-                image_id
-            )
-        if self.recent_pair_count:
-            self._recent_keyframes.append(image)
 
     def _remove_active_keyframe(self, image_id):
         image = self._active_keyframes.pop(image_id)
