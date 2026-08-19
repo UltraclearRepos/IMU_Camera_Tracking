@@ -47,7 +47,7 @@ MAPPING_END_FRAME = 419  # Last frame used to build the frozen 3D map.
 TRACKING_START_FRAME = 420  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
 MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
-MAPPING_SEQUENTIAL_MATCH_OVERLAP = 10  # Immediately previous map images matched per image.
+MAPPING_RECENT_PAIR_COUNT = 2  # Immediately previous map images always matched per image.
 MAPPING_MAX_FEATURES = 256  # Spatially distributed features passed to LightGlue.
 MAPPING_FEATURE_GRID_ROWS = 4  # Image grid rows used to distribute map features.
 MAPPING_FEATURE_GRID_COLUMNS = 4  # Image grid columns used to distribute map features.
@@ -158,7 +158,7 @@ def run_tracking(
     tracking_start_frame,
     feature_type,
     mapping_frame_step,
-    mapping_sequential_match_overlap,
+    mapping_recent_pair_count,
     use_imu,
 ):
     feature_type = feature_type.lower()
@@ -225,7 +225,7 @@ def run_tracking(
         mapping_end_frame,
         reconstruction_method,
         mapping_frame_step,
-        mapping_sequential_match_overlap,
+        mapping_recent_pair_count,
         MAPPING_MAX_FEATURES,
         MAPPING_FEATURE_GRID_ROWS,
         MAPPING_FEATURE_GRID_COLUMNS,
@@ -545,9 +545,7 @@ def run_tracking(
         "reconstruction_method": reconstruction_method,
         "feature_type": feature_type,
         "mapping_frame_step": mapping_frame_step,
-        "mapping_sequential_match_overlap": (
-            mapping_sequential_match_overlap
-        ),
+        "mapping_recent_pair_count": mapping_recent_pair_count,
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": len(global_map.candidate_positions),
         "map_occupied_grid_cells": global_map.occupied_grid_cell_count,
@@ -602,9 +600,7 @@ def main():
         tracking_start_frame=TRACKING_START_FRAME,
         feature_type=FEATURE_TYPE,
         mapping_frame_step=MAPPING_FRAME_STEP,
-        mapping_sequential_match_overlap=(
-            MAPPING_SEQUENTIAL_MATCH_OVERLAP
-        ),
+        mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
         use_imu=USE_IMU_GRAVITY_PRIOR,
     )
 

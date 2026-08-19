@@ -4,6 +4,9 @@ import cv2
 import numpy as np
 import pycolmap
 
+from mapping.adaptive_keyframe_pair_selector import (
+    AdaptiveKeyframePairSelector,
+)
 from mapping.aruco_reference import create_aruco_detector, detect_aruco_pose
 from mapping.mapping_data import (
     FrameCollectionTiming,
@@ -28,7 +31,7 @@ class MappingFrameBuilder:
         start_frame,
         end_frame,
         frame_step,
-        sequential_match_overlap,
+        recent_pair_count,
         maximum_features,
         feature_grid_rows,
         feature_grid_columns,
@@ -40,7 +43,7 @@ class MappingFrameBuilder:
         self.start_frame = start_frame
         self.end_frame = end_frame
         self.frame_step = frame_step
-        self.sequential_match_overlap = sequential_match_overlap
+        self.recent_pair_count = recent_pair_count
         self.maximum_features = maximum_features
         self.feature_grid_rows = feature_grid_rows
         self.feature_grid_columns = feature_grid_columns
@@ -64,6 +67,9 @@ class MappingFrameBuilder:
 
             images = []
             frame_diagnostics = []
+            pair_selector = AdaptiveKeyframePairSelector(
+                self.recent_pair_count
+            )
             geometry_options = pycolmap.TwoViewGeometryOptions()
             geometry_options.ransac.random_seed = 0
 
@@ -72,8 +78,10 @@ class MappingFrameBuilder:
             frame_read_seconds = 0.0
             image_save_seconds = 0.0
             feature_extraction_seconds = 0.0
+            local_tracking_seconds = 0.0
             aruco_detection_seconds = 0.0
             image_database_write_seconds = 0.0
+            pair_selection_seconds = 0.0
             feature_matching_seconds = 0.0
             geometry_verification_seconds = 0.0
             pair_database_write_seconds = 0.0
@@ -98,6 +106,14 @@ class MappingFrameBuilder:
                 features = self._extract_features(frame)
                 feature_extraction_seconds += (
                     time.perf_counter() - extraction_started
+                )
+                tracking_started = time.perf_counter()
+                track_assignment = pair_selector.assign_track_ids(
+                    frame,
+                    features,
+                )
+                local_tracking_seconds += (
+                    time.perf_counter() - tracking_started
                 )
 
                 timestamp_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
@@ -133,13 +149,20 @@ class MappingFrameBuilder:
                     database_image_id=database_image_id,
                     timestamp_s=timestamp_s,
                     features=features,
+                    track_ids=track_assignment.track_ids,
                     aruco_pose=aruco_pose,
                 )
-                previous_images = images[-self.sequential_match_overlap :]
+                selection_started = time.perf_counter()
+                pair_selection = pair_selector.select_and_register(
+                    current_image
+                )
+                pair_selection_seconds += (
+                    time.perf_counter() - selection_started
+                )
                 pairing = self._match_previous_images(
                     database,
                     camera,
-                    previous_images,
+                    pair_selection,
                     current_image,
                     geometry_options,
                 )
@@ -153,12 +176,18 @@ class MappingFrameBuilder:
 
                 images.append(current_image)
                 frame_diagnostics.append(
-                    self._create_frame_diagnostics(current_image, pairing)
+                    self._create_frame_diagnostics(
+                        current_image,
+                        track_assignment,
+                        pair_selection,
+                        pairing,
+                    )
                 )
                 print(
                     f"Mapping frame processing: frame {frame_index}/"
                     f"{self.end_frame} | "
                     f"features: {len(features['keypoints'])} | "
+                    f"selected pairs: {len(pair_selection.pairs)} | "
                     f"verified pairs: {verified_pair_count}{imu_status}"
                 )
 
@@ -167,8 +196,10 @@ class MappingFrameBuilder:
                 frame_read_seconds=frame_read_seconds,
                 image_save_seconds=image_save_seconds,
                 feature_extraction_seconds=feature_extraction_seconds,
+                local_tracking_seconds=local_tracking_seconds,
                 aruco_detection_seconds=aruco_detection_seconds,
                 image_database_write_seconds=image_database_write_seconds,
+                pair_selection_seconds=pair_selection_seconds,
                 feature_matching_seconds=feature_matching_seconds,
                 geometry_verification_seconds=geometry_verification_seconds,
                 pair_database_write_seconds=pair_database_write_seconds,
@@ -266,7 +297,7 @@ class MappingFrameBuilder:
         self,
         database,
         camera,
-        previous_images,
+        pair_selection,
         current_image,
         geometry_options,
     ):
@@ -277,7 +308,8 @@ class MappingFrameBuilder:
         geometry_seconds = 0.0
         database_write_seconds = 0.0
 
-        for previous_image in previous_images:
+        for selected_pair in pair_selection.pairs:
+            previous_image = selected_pair.image
             matching_started = time.perf_counter()
             matches = self.feature_matcher.match(
                 previous_image.features,
@@ -312,7 +344,7 @@ class MappingFrameBuilder:
             database_write_seconds += time.perf_counter() - writing_started
 
         return FramePairingResult(
-            attempted_pair_count=len(previous_images),
+            attempted_pair_count=len(pair_selection.pairs),
             raw_match_count=raw_match_count,
             verified_pair_count=verified_pair_count,
             verified_inlier_count=verified_inlier_count,
@@ -321,15 +353,44 @@ class MappingFrameBuilder:
             database_write_seconds=database_write_seconds,
         )
 
-    def _create_frame_diagnostics(self, image, pairing):
+    def _create_frame_diagnostics(
+        self,
+        image,
+        track_assignment,
+        pair_selection,
+        pairing,
+    ):
         aruco_quality = (
             None if image.aruco_pose is None else image.aruco_pose[2]
         )
+        selected_motions = [
+            pair.median_displacement_px
+            for pair in pair_selection.pairs
+            if np.isfinite(pair.median_displacement_px)
+        ]
+        selected_overlaps = [
+            pair.overlap for pair in pair_selection.pairs
+        ]
         return MappingFrameDiagnostics(
             frame_index=image.frame_index,
             timestamp_s=image.timestamp_s,
             image_name=image.name,
             feature_count=len(image.features["keypoints"]),
+            continued_track_count=(
+                track_assignment.continued_track_count
+            ),
+            new_track_count=track_assignment.new_track_count,
+            active_pair_candidates=(
+                pair_selection.active_candidate_count
+            ),
+            recent_pair_count=pair_selection.recent_pair_count,
+            motion_pair_count=pair_selection.motion_pair_count,
+            maximum_selected_motion_px=(
+                max(selected_motions) if selected_motions else np.nan
+            ),
+            minimum_selected_overlap=(
+                min(selected_overlaps) if selected_overlaps else np.nan
+            ),
             attempted_pairs=pairing.attempted_pair_count,
             raw_matches=pairing.raw_match_count,
             verified_pairs=pairing.verified_pair_count,

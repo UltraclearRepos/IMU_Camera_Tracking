@@ -2,6 +2,9 @@ import shutil
 import time
 from pathlib import Path
 
+from mapping.adaptive_keyframe_pair_selector import (
+    AdaptiveKeyframePairSelector,
+)
 from mapping.aruco_map_aligner import ArucoMapAligner
 from mapping.global_map_builder import GlobalMapBuilder
 from mapping.map_build_diagnostics import MapBuildDiagnostics
@@ -25,7 +28,7 @@ class SkinMapBuilder:
         mapping_end_frame,
         reconstruction_method,
         mapping_frame_step,
-        sequential_match_overlap,
+        recent_pair_count,
         mapping_maximum_features,
         mapping_feature_grid_rows,
         mapping_feature_grid_columns,
@@ -41,7 +44,22 @@ class SkinMapBuilder:
             end_frame=mapping_end_frame,
             reconstruction_method=reconstruction_method,
             frame_step=mapping_frame_step,
-            sequential_match_overlap=sequential_match_overlap,
+            recent_pair_count=recent_pair_count,
+            track_association_radius_px=(
+                AdaptiveKeyframePairSelector.TRACK_ASSOCIATION_RADIUS_PX
+            ),
+            maximum_forward_backward_error_px=(
+                AdaptiveKeyframePairSelector.MAXIMUM_FORWARD_BACKWARD_ERROR_PX
+            ),
+            minimum_keyframe_overlap=(
+                AdaptiveKeyframePairSelector.MINIMUM_KEYFRAME_OVERLAP
+            ),
+            first_motion_target_px=(
+                AdaptiveKeyframePairSelector.FIRST_MOTION_TARGET_PX
+            ),
+            motion_target_step_px=(
+                AdaptiveKeyframePairSelector.MOTION_TARGET_STEP_PX
+            ),
         )
         self.frame_builder = MappingFrameBuilder(
             camera_matrix=camera_matrix,
@@ -50,7 +68,7 @@ class SkinMapBuilder:
             start_frame=mapping_start_frame,
             end_frame=mapping_end_frame,
             frame_step=mapping_frame_step,
-            sequential_match_overlap=sequential_match_overlap,
+            recent_pair_count=recent_pair_count,
             maximum_features=mapping_maximum_features,
             feature_grid_rows=mapping_feature_grid_rows,
             feature_grid_columns=mapping_feature_grid_columns,

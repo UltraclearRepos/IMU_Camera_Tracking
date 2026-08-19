@@ -15,7 +15,39 @@ class MappingImage:
     database_image_id: int
     timestamp_s: float
     features: FeatureData
+    track_ids: np.ndarray
     aruco_pose: ArucoPose | None
+
+
+@dataclass(frozen=True)
+class LocalTrackAssignment:
+    track_ids: np.ndarray
+    continued_track_count: int
+    new_track_count: int
+
+
+@dataclass(frozen=True)
+class KeyframePairCandidate:
+    image: MappingImage
+    shared_track_count: int
+    overlap: float
+    median_displacement_px: float
+    reason: str
+    motion_target_px: float | None
+
+
+@dataclass(frozen=True)
+class KeyframePairSelection:
+    pairs: tuple[KeyframePairCandidate, ...]
+    active_candidate_count: int
+
+    @property
+    def recent_pair_count(self):
+        return sum(pair.reason == "recent" for pair in self.pairs)
+
+    @property
+    def motion_pair_count(self):
+        return sum(pair.reason == "motion_target" for pair in self.pairs)
 
 
 @dataclass
@@ -24,6 +56,13 @@ class MappingFrameDiagnostics:
     timestamp_s: float
     image_name: str
     feature_count: int
+    continued_track_count: int
+    new_track_count: int
+    active_pair_candidates: int
+    recent_pair_count: int
+    motion_pair_count: int
+    maximum_selected_motion_px: float
+    minimum_selected_overlap: float
     attempted_pairs: int
     raw_matches: int
     verified_pairs: int
@@ -48,8 +87,10 @@ class FrameCollectionTiming:
     frame_read_seconds: float
     image_save_seconds: float
     feature_extraction_seconds: float
+    local_tracking_seconds: float
     aruco_detection_seconds: float
     image_database_write_seconds: float
+    pair_selection_seconds: float
     feature_matching_seconds: float
     geometry_verification_seconds: float
     pair_database_write_seconds: float
@@ -173,4 +214,9 @@ class MapBuildConfiguration:
     end_frame: int
     reconstruction_method: str
     frame_step: int
-    sequential_match_overlap: int
+    recent_pair_count: int
+    track_association_radius_px: float
+    maximum_forward_backward_error_px: float
+    minimum_keyframe_overlap: float
+    first_motion_target_px: float
+    motion_target_step_px: float

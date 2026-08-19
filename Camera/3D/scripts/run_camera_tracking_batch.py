@@ -90,9 +90,7 @@ def run_recording(
         **frame_range,
         feature_type=config["feature_type"],
         mapping_frame_step=config["mapping_frame_step"],
-        mapping_sequential_match_overlap=config[
-            "mapping_sequential_match_overlap"
-        ],
+        mapping_recent_pair_count=config["mapping_recent_pair_count"],
         use_imu=config["use_imu"],
     )
 

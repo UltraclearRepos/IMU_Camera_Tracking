@@ -431,11 +431,17 @@ class MapBuildDiagnostics:
                 "feature_extraction_s": (
                     collection_timing.feature_extraction_seconds
                 ),
+                "local_tracking_s": (
+                    collection_timing.local_tracking_seconds
+                ),
                 "aruco_detection_s": (
                     collection_timing.aruco_detection_seconds
                 ),
                 "image_database_write_s": (
                     collection_timing.image_database_write_seconds
+                ),
+                "pair_selection_s": (
+                    collection_timing.pair_selection_seconds
                 ),
                 "feature_matching_s": (
                     collection_timing.feature_matching_seconds
@@ -481,9 +487,24 @@ class MapBuildDiagnostics:
             "mapping_end_frame": configuration.end_frame,
             "reconstruction_method": configuration.reconstruction_method,
             "mapping_frame_step": configuration.frame_step,
-            "sequential_match_overlap": (
-                configuration.sequential_match_overlap
-            ),
+            "adaptive_pair_selection": {
+                "recent_pair_count": configuration.recent_pair_count,
+                "track_association_radius_px": (
+                    configuration.track_association_radius_px
+                ),
+                "maximum_forward_backward_error_px": (
+                    configuration.maximum_forward_backward_error_px
+                ),
+                "minimum_keyframe_overlap": (
+                    configuration.minimum_keyframe_overlap
+                ),
+                "first_motion_target_px": (
+                    configuration.first_motion_target_px
+                ),
+                "motion_target_step_px": (
+                    configuration.motion_target_step_px
+                ),
+            },
             "coordinate_frame": frozen_map.coordinate_frame,
             "extracted_images": frame_collection.image_count,
             "attempted_image_pairs": frame_collection.attempted_pair_count,

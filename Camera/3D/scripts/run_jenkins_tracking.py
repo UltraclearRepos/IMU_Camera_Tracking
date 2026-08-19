@@ -15,7 +15,7 @@ from camera_tracking import (
     FEATURE_TYPE,
     MAPPING_END_FRAME,
     MAPPING_FRAME_STEP,
-    MAPPING_SEQUENTIAL_MATCH_OVERLAP,
+    MAPPING_RECENT_PAIR_COUNT,
     MAPPING_START_FRAME,
     TRACKING_START_FRAME,
     USE_IMU_GRAVITY_PRIOR,
@@ -77,9 +77,7 @@ def main():
         tracking_start_frame=TRACKING_START_FRAME,
         feature_type=FEATURE_TYPE,
         mapping_frame_step=MAPPING_FRAME_STEP,
-        mapping_sequential_match_overlap=(
-            MAPPING_SEQUENTIAL_MATCH_OVERLAP
-        ),
+        mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
         use_imu=USE_IMU_GRAVITY_PRIOR,
     )
     metrics["total_pipeline_seconds"] = time.perf_counter() - started
