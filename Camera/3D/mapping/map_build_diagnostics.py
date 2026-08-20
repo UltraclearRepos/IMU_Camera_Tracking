@@ -92,6 +92,9 @@ class MapBuildDiagnostics:
         diagnostics_plot_path = (
             diagnostics_directory / "mapping_pipeline_diagnostics.png"
         )
+        pairing_plot_path = (
+            diagnostics_directory / "mapping_pairing_diagnostics.png"
+        )
         self._save_frame_csv(
             frame_collection,
             diagnostics_csv_path,
@@ -99,6 +102,11 @@ class MapBuildDiagnostics:
         self._save_frame_plot(
             frame_collection,
             diagnostics_plot_path,
+            video_path.stem,
+        )
+        self._save_pairing_plot(
+            frame_collection,
+            pairing_plot_path,
             video_path.stem,
         )
 
@@ -117,6 +125,7 @@ class MapBuildDiagnostics:
             timing,
             diagnostics_csv_path,
             diagnostics_plot_path,
+            pairing_plot_path,
         )
 
         self._write_json(output_directory / "map_summary.json", summary)
@@ -350,6 +359,122 @@ class MapBuildDiagnostics:
             dtype=float,
         )
 
+    def _save_pairing_plot(
+        self,
+        frame_collection,
+        output_path,
+        recording_name,
+    ):
+        """Save diagnostics specific to local tracking and pair selection."""
+        metrics = frame_collection.frame_diagnostics
+        frames = self._field(metrics, "frame_index")
+        continued_tracks = self._field(metrics, "continued_track_count")
+        new_tracks = self._field(metrics, "new_track_count")
+        active_candidates = self._field(metrics, "active_pair_candidates")
+        recent_pairs = self._field(metrics, "recent_pair_count")
+        motion_pairs = self._field(metrics, "motion_pair_count")
+        attempted_pairs = self._field(metrics, "attempted_pairs")
+        verified_pairs = self._field(metrics, "verified_pairs")
+        maximum_motion = self._field(
+            metrics,
+            "maximum_selected_motion_px",
+        )
+        minimum_overlap = self._field(metrics, "minimum_selected_overlap")
+        raw_matches = self._field(metrics, "raw_matches")
+        verified_inliers = self._field(metrics, "verified_inliers")
+
+        total_tracks = continued_tracks + new_tracks
+        matches_per_pair = raw_matches / np.maximum(attempted_pairs, 1)
+        inliers_per_pair = verified_inliers / np.maximum(verified_pairs, 1)
+
+        figure, axes = plt.subplots(4, 1, figsize=(16, 14), sharex=True)
+
+        axes[0].plot(frames, continued_tracks, label="Continued LK tracks")
+        axes[0].plot(frames, new_tracks, label="New SIFT tracks")
+        axes[0].plot(
+            frames,
+            total_tracks,
+            color="black",
+            alpha=0.65,
+            label="Active local tracks",
+        )
+        axes[0].set_title("1. Local tracks used to choose keyframe pairs")
+        axes[0].set_ylabel("Tracks")
+        axes[0].grid(True)
+        axes[0].legend(loc="upper left")
+
+        axes[1].plot(
+            frames,
+            active_candidates,
+            color="tab:gray",
+            label="Older candidates with sufficient overlap",
+        )
+        axes[1].plot(frames, recent_pairs, label="Selected recent pairs")
+        axes[1].plot(frames, motion_pairs, label="Selected motion pairs")
+        axes[1].plot(
+            frames,
+            attempted_pairs,
+            color="black",
+            alpha=0.65,
+            label="Pairs sent to matching",
+        )
+        axes[1].set_title("2. Pair selection")
+        axes[1].set_ylabel("Image pairs")
+        axes[1].grid(True)
+        axes[1].legend(loc="upper left")
+        verified_axis = axes[1].twinx()
+        verified_axis.plot(
+            frames,
+            verified_pairs,
+            color="tab:green",
+            alpha=0.7,
+            label="Verified pairs",
+        )
+        verified_axis.set_ylabel("Verified pairs")
+        verified_axis.legend(loc="upper right")
+
+        axes[2].plot(
+            frames,
+            maximum_motion,
+            color="tab:purple",
+            label="Maximum selected displacement",
+        )
+        axes[2].set_title("3. Selected-pair geometry")
+        axes[2].set_ylabel("Displacement [px]")
+        axes[2].grid(True)
+        axes[2].legend(loc="upper left")
+        overlap_axis = axes[2].twinx()
+        overlap_axis.plot(
+            frames,
+            100.0 * minimum_overlap,
+            color="tab:orange",
+            label="Minimum selected overlap",
+        )
+        overlap_axis.set_ylabel("Overlap [%]")
+        overlap_axis.set_ylim(0.0, 105.0)
+        overlap_axis.legend(loc="upper right")
+
+        axes[3].plot(
+            frames,
+            matches_per_pair,
+            label="Raw matches / selected pair",
+        )
+        axes[3].plot(
+            frames,
+            inliers_per_pair,
+            label="Inliers / verified pair",
+        )
+        axes[3].set_title("4. Matching result for selected pairs")
+        axes[3].set_ylabel("Correspondences")
+        axes[3].set_xlabel("Video frame")
+        axes[3].grid(True)
+        axes[3].legend(loc="upper left")
+
+        figure.suptitle(f"{recording_name}: keyframe-pairing diagnostics")
+        figure.tight_layout()
+        figure.savefig(output_path, dpi=160)
+        plt.close(figure)
+
     def _track_statistics(self, reconstruction, finalization):
         return {
             "all_reconstructed_points": self._summarize_track_lengths(
@@ -480,6 +605,7 @@ class MapBuildDiagnostics:
         timing,
         diagnostics_csv_path,
         diagnostics_plot_path,
+        pairing_plot_path,
     ):
         return {
             "feature_type": configuration.feature_type,
@@ -489,6 +615,7 @@ class MapBuildDiagnostics:
             "mapping_frame_step": configuration.frame_step,
             "adaptive_pair_selection": {
                 "recent_pair_count": configuration.recent_pair_count,
+                "motion_targets_px": list(configuration.motion_targets_px),
                 "minimum_new_track_distance_px": (
                     configuration.minimum_new_track_distance_px
                 ),
@@ -500,9 +627,6 @@ class MapBuildDiagnostics:
                 ),
                 "minimum_keyframe_overlap": (
                     configuration.minimum_keyframe_overlap
-                ),
-                "motion_anchor_target_px": (
-                    configuration.motion_anchor_target_px
                 ),
                 "maximum_motion_anchor_px": (
                     configuration.maximum_motion_anchor_px
@@ -529,6 +653,7 @@ class MapBuildDiagnostics:
             "track_length_statistics": track_statistics,
             "mapping_pipeline_diagnostics_csv": diagnostics_csv_path.name,
             "mapping_pipeline_diagnostics_plot": diagnostics_plot_path.name,
+            "mapping_pairing_diagnostics_plot": pairing_plot_path.name,
             "imu_gravity": frame_collection.imu_gravity_summary,
             "timing": timing,
         }

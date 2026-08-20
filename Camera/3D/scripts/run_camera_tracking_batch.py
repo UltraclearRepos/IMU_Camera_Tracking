@@ -91,6 +91,7 @@ def run_recording(
         feature_type=config["feature_type"],
         mapping_frame_step=config["mapping_frame_step"],
         mapping_recent_pair_count=config["mapping_recent_pair_count"],
+        mapping_motion_targets_px=config["mapping_motion_targets_px"],
         use_imu=config["use_imu"],
     )
 

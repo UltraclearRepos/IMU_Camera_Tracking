@@ -29,6 +29,7 @@ class SkinMapBuilder:
         reconstruction_method,
         mapping_frame_step,
         recent_pair_count,
+        motion_targets_px,
         mapping_maximum_features,
         mapping_feature_grid_rows,
         mapping_feature_grid_columns,
@@ -45,6 +46,7 @@ class SkinMapBuilder:
             reconstruction_method=reconstruction_method,
             frame_step=mapping_frame_step,
             recent_pair_count=recent_pair_count,
+            motion_targets_px=tuple(motion_targets_px),
             minimum_new_track_distance_px=(
                 AdaptiveKeyframePairSelector.MINIMUM_NEW_TRACK_DISTANCE_PX
             ),
@@ -56,9 +58,6 @@ class SkinMapBuilder:
             ),
             minimum_keyframe_overlap=(
                 AdaptiveKeyframePairSelector.MINIMUM_KEYFRAME_OVERLAP
-            ),
-            motion_anchor_target_px=(
-                AdaptiveKeyframePairSelector.MOTION_ANCHOR_TARGET_PX
             ),
             maximum_motion_anchor_px=(
                 AdaptiveKeyframePairSelector.MAXIMUM_MOTION_ANCHOR_PX
@@ -72,6 +71,7 @@ class SkinMapBuilder:
             end_frame=mapping_end_frame,
             frame_step=mapping_frame_step,
             recent_pair_count=recent_pair_count,
+            motion_targets_px=motion_targets_px,
             maximum_features=mapping_maximum_features,
             feature_grid_rows=mapping_feature_grid_rows,
             feature_grid_columns=mapping_feature_grid_columns,

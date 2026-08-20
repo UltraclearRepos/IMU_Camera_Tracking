@@ -47,7 +47,10 @@ MAPPING_END_FRAME = 409  # Last frame used to build the frozen 3D map.
 TRACKING_START_FRAME = 411  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
 MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
-MAPPING_RECENT_PAIR_COUNT = 2  # Immediately previous map images always matched per image.
+# Adaptive example: recent=2, motion=(10.0, 20.0, 40.0).
+# Legacy example: recent=10, motion=() matches only the ten previous frames.
+MAPPING_RECENT_PAIR_COUNT = 2
+MAPPING_MOTION_TARGETS_PX = (20.0,)
 MAPPING_MAX_FEATURES = 256  # Spatially distributed features passed to LightGlue.
 MAPPING_FEATURE_GRID_ROWS = 4  # Image grid rows used to distribute map features.
 MAPPING_FEATURE_GRID_COLUMNS = 4  # Image grid columns used to distribute map features.
@@ -159,6 +162,7 @@ def run_tracking(
     feature_type,
     mapping_frame_step,
     mapping_recent_pair_count,
+    mapping_motion_targets_px,
     use_imu,
 ):
     feature_type = feature_type.lower()
@@ -226,6 +230,7 @@ def run_tracking(
         reconstruction_method,
         mapping_frame_step,
         mapping_recent_pair_count,
+        mapping_motion_targets_px,
         MAPPING_MAX_FEATURES,
         MAPPING_FEATURE_GRID_ROWS,
         MAPPING_FEATURE_GRID_COLUMNS,
@@ -546,6 +551,7 @@ def run_tracking(
         "feature_type": feature_type,
         "mapping_frame_step": mapping_frame_step,
         "mapping_recent_pair_count": mapping_recent_pair_count,
+        "mapping_motion_targets_px": list(mapping_motion_targets_px),
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": len(global_map.candidate_positions),
         "map_occupied_grid_cells": global_map.occupied_grid_cell_count,
@@ -601,6 +607,7 @@ def main():
         feature_type=FEATURE_TYPE,
         mapping_frame_step=MAPPING_FRAME_STEP,
         mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
+        mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
         use_imu=USE_IMU_GRAVITY_PRIOR,
     )
 

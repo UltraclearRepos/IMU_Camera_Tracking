@@ -15,6 +15,7 @@ from camera_tracking import (
     FEATURE_TYPE,
     MAPPING_END_FRAME,
     MAPPING_FRAME_STEP,
+    MAPPING_MOTION_TARGETS_PX,
     MAPPING_RECENT_PAIR_COUNT,
     MAPPING_START_FRAME,
     TRACKING_START_FRAME,
@@ -78,6 +79,7 @@ def main():
         feature_type=FEATURE_TYPE,
         mapping_frame_step=MAPPING_FRAME_STEP,
         mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
+        mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
         use_imu=USE_IMU_GRAVITY_PRIOR,
     )
     metrics["total_pipeline_seconds"] = time.perf_counter() - started

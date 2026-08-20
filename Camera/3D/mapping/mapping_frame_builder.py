@@ -32,6 +32,7 @@ class MappingFrameBuilder:
         end_frame,
         frame_step,
         recent_pair_count,
+        motion_targets_px,
         maximum_features,
         feature_grid_rows,
         feature_grid_columns,
@@ -44,6 +45,7 @@ class MappingFrameBuilder:
         self.end_frame = end_frame
         self.frame_step = frame_step
         self.recent_pair_count = recent_pair_count
+        self.motion_targets_px = tuple(motion_targets_px)
         self.maximum_features = maximum_features
         self.feature_grid_rows = feature_grid_rows
         self.feature_grid_columns = feature_grid_columns
@@ -68,7 +70,8 @@ class MappingFrameBuilder:
             images = []
             frame_diagnostics = []
             pair_selector = AdaptiveKeyframePairSelector(
-                self.recent_pair_count
+                self.recent_pair_count,
+                self.motion_targets_px,
             )
             geometry_options = pycolmap.TwoViewGeometryOptions()
             geometry_options.ransac.random_seed = 0

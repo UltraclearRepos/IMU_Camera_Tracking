@@ -218,9 +218,9 @@ class MapBuildConfiguration:
     reconstruction_method: str
     frame_step: int
     recent_pair_count: int
+    motion_targets_px: tuple[float, ...]
     minimum_new_track_distance_px: float
     maximum_active_track_count: int
     maximum_forward_backward_error_px: float
     minimum_keyframe_overlap: float
-    motion_anchor_target_px: float
     maximum_motion_anchor_px: float

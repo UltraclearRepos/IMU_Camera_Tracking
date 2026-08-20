@@ -18,13 +18,31 @@ class AdaptiveKeyframePairSelector:
     MAXIMUM_ACTIVE_TRACK_COUNT = 256
     MAXIMUM_FORWARD_BACKWARD_ERROR_PX = 1.0
     MINIMUM_KEYFRAME_OVERLAP = 0.5
-    MOTION_ANCHOR_TARGET_PX = 20.0
     MAXIMUM_MOTION_ANCHOR_PX = 40.0
-    def __init__(self, recent_pair_count):
+
+    def __init__(self, recent_pair_count, motion_targets_px=()):
         if recent_pair_count < 0:
             raise ValueError("recent_pair_count must be non-negative")
 
+        motion_targets_px = tuple(float(target) for target in motion_targets_px)
+        if any(
+            not np.isfinite(target) or target <= 0.0
+            for target in motion_targets_px
+        ):
+            raise ValueError("motion targets must be positive finite values")
+        if len(set(motion_targets_px)) != len(motion_targets_px):
+            raise ValueError("motion targets must be unique")
+        if any(
+            target > self.MAXIMUM_MOTION_ANCHOR_PX
+            for target in motion_targets_px
+        ):
+            raise ValueError(
+                "motion targets must not exceed "
+                f"{self.MAXIMUM_MOTION_ANCHOR_PX:g} px"
+            )
+
         self.recent_pair_count = recent_pair_count
+        self.motion_targets_px = motion_targets_px
         self._next_track_id = 0
         self._previous_gray = None
         self._active_track_positions = np.empty((0, 2), dtype=np.float32)
@@ -113,13 +131,13 @@ class AdaptiveKeyframePairSelector:
             recent_images,
             overlap_by_image_id,
         )
-        motion_anchor = self._select_motion_anchor(motion_candidates)
+        motion_anchors = self._select_motion_anchors(motion_candidates)
 
         for image_id in expired_keyframe_ids:
             self._remove_active_keyframe(image_id)
 
         return KeyframePairSelection(
-            pairs=tuple(recent_pairs + motion_anchor),
+            pairs=tuple(recent_pairs + motion_anchors),
             active_candidate_count=active_candidate_count,
         )
 
@@ -253,49 +271,48 @@ class AdaptiveKeyframePairSelector:
             for previous_image in recent_images
         ]
 
-    def _select_motion_anchor(self, candidates):
-        candidates = [
-            candidate
-            for candidate in candidates
-            if np.isfinite(candidate.median_displacement_px)
-        ]
-        if not candidates:
-            return []
-
-        if max(
-            candidate.median_displacement_px for candidate in candidates
-        ) < self.MOTION_ANCHOR_TARGET_PX:
+    def _select_motion_anchors(self, candidates):
+        if not self.motion_targets_px:
             return []
 
         candidates = [
             candidate
             for candidate in candidates
             if (
-                candidate.median_displacement_px
+                np.isfinite(candidate.median_displacement_px)
+                and candidate.median_displacement_px
                 <= self.MAXIMUM_MOTION_ANCHOR_PX
             )
         ]
         if not candidates:
             return []
 
-        anchor = min(
-            candidates,
-            key=lambda candidate: (
-                abs(
-                    candidate.median_displacement_px
-                    - self.MOTION_ANCHOR_TARGET_PX
-                ),
-                -candidate.overlap,
-                candidate.image.database_image_id,
-            ),
+        maximum_available_motion = max(
+            candidate.median_displacement_px for candidate in candidates
         )
-        return [
-            replace(
-                anchor,
-                reason="motion_target",
-                motion_target_px=self.MOTION_ANCHOR_TARGET_PX,
+
+        selected_by_image_id = {}
+        for target_px in self.motion_targets_px:
+            if maximum_available_motion < target_px:
+                continue
+            anchor = min(
+                candidates,
+                key=lambda candidate: (
+                    abs(candidate.median_displacement_px - target_px),
+                    -candidate.overlap,
+                    candidate.image.database_image_id,
+                ),
             )
-        ]
+            selected_by_image_id.setdefault(
+                anchor.image.database_image_id,
+                replace(
+                    anchor,
+                    reason="motion_target",
+                    motion_target_px=target_px,
+                ),
+            )
+
+        return list(selected_by_image_id.values())
 
     @staticmethod
     def _candidate(previous_image, current_image, overlap, reason):
