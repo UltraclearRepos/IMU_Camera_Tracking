@@ -8,6 +8,17 @@ FeatureData = dict[str, np.ndarray]
 ArucoPose = tuple[np.ndarray, np.ndarray, dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class LocalTrackSnapshot:
+    track_ids: np.ndarray
+    positions: np.ndarray
+    continued_track_count: int
+    new_track_count: int
+
+    def __len__(self):
+        return len(self.track_ids)
+
+
 @dataclass
 class MappingImage:
     frame_index: int
@@ -15,15 +26,8 @@ class MappingImage:
     database_image_id: int
     timestamp_s: float
     features: FeatureData
-    track_ids: np.ndarray
+    local_tracks: LocalTrackSnapshot
     aruco_pose: ArucoPose | None
-
-
-@dataclass(frozen=True)
-class LocalTrackAssignment:
-    track_ids: np.ndarray
-    continued_track_count: int
-    new_track_count: int
 
 
 @dataclass(frozen=True)
@@ -48,7 +52,6 @@ class KeyframePairSelection:
     @property
     def motion_pair_count(self):
         return sum(pair.reason == "motion_target" for pair in self.pairs)
-
 
 @dataclass
 class MappingFrameDiagnostics:
@@ -215,8 +218,9 @@ class MapBuildConfiguration:
     reconstruction_method: str
     frame_step: int
     recent_pair_count: int
-    track_association_radius_px: float
+    minimum_new_track_distance_px: float
+    maximum_active_track_count: int
     maximum_forward_backward_error_px: float
     minimum_keyframe_overlap: float
-    first_motion_target_px: float
-    motion_target_step_px: float
+    motion_anchor_target_px: float
+    maximum_motion_anchor_px: float

@@ -108,9 +108,9 @@ class MappingFrameBuilder:
                     time.perf_counter() - extraction_started
                 )
                 tracking_started = time.perf_counter()
-                track_assignment = pair_selector.assign_track_ids(
+                local_tracks = pair_selector.update_tracks(
                     frame,
-                    features,
+                    features["keypoints"],
                 )
                 local_tracking_seconds += (
                     time.perf_counter() - tracking_started
@@ -149,7 +149,7 @@ class MappingFrameBuilder:
                     database_image_id=database_image_id,
                     timestamp_s=timestamp_s,
                     features=features,
-                    track_ids=track_assignment.track_ids,
+                    local_tracks=local_tracks,
                     aruco_pose=aruco_pose,
                 )
                 selection_started = time.perf_counter()
@@ -177,7 +177,6 @@ class MappingFrameBuilder:
                 frame_diagnostics.append(
                     self._create_frame_diagnostics(
                         current_image,
-                        track_assignment,
                         pair_selection,
                         pairing,
                     )
@@ -355,7 +354,6 @@ class MappingFrameBuilder:
     def _create_frame_diagnostics(
         self,
         image,
-        track_assignment,
         pair_selection,
         pairing,
     ):
@@ -368,7 +366,8 @@ class MappingFrameBuilder:
             if np.isfinite(pair.median_displacement_px)
         ]
         selected_overlaps = [
-            pair.overlap for pair in pair_selection.pairs
+            pair.overlap
+            for pair in pair_selection.pairs
         ]
         return MappingFrameDiagnostics(
             frame_index=image.frame_index,
@@ -376,9 +375,9 @@ class MappingFrameBuilder:
             image_name=image.name,
             feature_count=len(image.features["keypoints"]),
             continued_track_count=(
-                track_assignment.continued_track_count
+                image.local_tracks.continued_track_count
             ),
-            new_track_count=track_assignment.new_track_count,
+            new_track_count=image.local_tracks.new_track_count,
             active_pair_candidates=(
                 pair_selection.active_candidate_count
             ),

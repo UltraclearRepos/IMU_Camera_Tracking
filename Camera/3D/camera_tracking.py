@@ -42,9 +42,9 @@ MAX_FRAMES = 100000
 FEATURE_ROI_BOTTOM_FRACTION = 0.7
 FEATURE_TYPE = "sift"  # "disk" or "sift".
 
-MAPPING_START_FRAME = 90  # First frame used to build the frozen 3D map.
-MAPPING_END_FRAME = 419  # Last frame used to build the frozen 3D map.
-TRACKING_START_FRAME = 420  # First frame processed by frozen-map tracking.
+MAPPING_START_FRAME = 55  # First frame used to build the frozen 3D map.
+MAPPING_END_FRAME = 409  # Last frame used to build the frozen 3D map.
+TRACKING_START_FRAME = 411  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
 MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
 MAPPING_RECENT_PAIR_COUNT = 2  # Immediately previous map images always matched per image.

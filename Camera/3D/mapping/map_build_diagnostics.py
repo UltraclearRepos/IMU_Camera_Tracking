@@ -489,8 +489,11 @@ class MapBuildDiagnostics:
             "mapping_frame_step": configuration.frame_step,
             "adaptive_pair_selection": {
                 "recent_pair_count": configuration.recent_pair_count,
-                "track_association_radius_px": (
-                    configuration.track_association_radius_px
+                "minimum_new_track_distance_px": (
+                    configuration.minimum_new_track_distance_px
+                ),
+                "maximum_active_track_count": (
+                    configuration.maximum_active_track_count
                 ),
                 "maximum_forward_backward_error_px": (
                     configuration.maximum_forward_backward_error_px
@@ -498,11 +501,11 @@ class MapBuildDiagnostics:
                 "minimum_keyframe_overlap": (
                     configuration.minimum_keyframe_overlap
                 ),
-                "first_motion_target_px": (
-                    configuration.first_motion_target_px
+                "motion_anchor_target_px": (
+                    configuration.motion_anchor_target_px
                 ),
-                "motion_target_step_px": (
-                    configuration.motion_target_step_px
+                "maximum_motion_anchor_px": (
+                    configuration.maximum_motion_anchor_px
                 ),
             },
             "coordinate_frame": frozen_map.coordinate_frame,

@@ -7,19 +7,19 @@ import numpy as np
 from mapping.mapping_data import (
     KeyframePairCandidate,
     KeyframePairSelection,
-    LocalTrackAssignment,
+    LocalTrackSnapshot,
 )
 
 
 class AdaptiveKeyframePairSelector:
-    """Track local features and select geometrically useful image pairs."""
+    """Maintain local LK tracks and use them to select useful image pairs."""
 
-    TRACK_ASSOCIATION_RADIUS_PX = 3.0
+    MINIMUM_NEW_TRACK_DISTANCE_PX = 5.0
+    MAXIMUM_ACTIVE_TRACK_COUNT = 256
     MAXIMUM_FORWARD_BACKWARD_ERROR_PX = 1.0
     MINIMUM_KEYFRAME_OVERLAP = 0.5
-    FIRST_MOTION_TARGET_PX = 10.0
-    MOTION_TARGET_STEP_PX = 20.0
-
+    MOTION_ANCHOR_TARGET_PX = 20.0
+    MAXIMUM_MOTION_ANCHOR_PX = 40.0
     def __init__(self, recent_pair_count):
         if recent_pair_count < 0:
             raise ValueError("recent_pair_count must be non-negative")
@@ -27,56 +27,55 @@ class AdaptiveKeyframePairSelector:
         self.recent_pair_count = recent_pair_count
         self._next_track_id = 0
         self._previous_gray = None
-        self._previous_keypoints = np.empty((0, 2), dtype=np.float32)
-        self._previous_track_ids = np.empty(0, dtype=np.int64)
+        self._active_track_positions = np.empty((0, 2), dtype=np.float32)
+        self._active_track_ids = np.empty(0, dtype=np.int64)
         self._active_keyframes = {}
         self._keyframes_by_track = {}
         self._recent_keyframes = deque(maxlen=recent_pair_count + 1)
 
-    def assign_track_ids(self, frame, features):
-        gray = self._grayscale(frame)
-        current_keypoints = features["keypoints"]
-        current_track_ids = np.full(
-            len(current_keypoints),
-            -1,
-            dtype=np.int64,
+    def update_tracks(self, frame, sift_keypoints):
+        current_gray = self._grayscale(frame)
+        continued_positions, continued_ids = self._track_active_points(
+            current_gray
         )
-
-        tracked_positions, tracked_ids = self._track_previous_points(gray)
-        continued_count = self._associate_tracked_points(
-            tracked_positions,
-            tracked_ids,
-            current_keypoints,
-            current_track_ids,
+        new_positions = self._select_new_track_positions(
+            sift_keypoints,
+            continued_positions,
+            self.MAXIMUM_ACTIVE_TRACK_COUNT - len(continued_positions),
         )
-        new_mask = current_track_ids < 0
-        new_count = int(np.count_nonzero(new_mask))
-        current_track_ids[new_mask] = np.arange(
+        new_ids = np.arange(
             self._next_track_id,
-            self._next_track_id + new_count,
+            self._next_track_id + len(new_positions),
             dtype=np.int64,
         )
-        self._next_track_id += new_count
+        self._next_track_id += len(new_ids)
 
-        self._previous_gray = gray
-        self._previous_keypoints = current_keypoints.copy()
-        self._previous_track_ids = current_track_ids.copy()
-        return LocalTrackAssignment(
-            track_ids=current_track_ids,
-            continued_track_count=continued_count,
-            new_track_count=new_count,
+        self._active_track_positions = np.concatenate(
+            (continued_positions, new_positions),
+            axis=0,
+        )
+        self._active_track_ids = np.concatenate((continued_ids, new_ids))
+        self._previous_gray = current_gray.copy()
+
+        return LocalTrackSnapshot(
+            track_ids=self._active_track_ids.copy(),
+            positions=self._active_track_positions.copy(),
+            continued_track_count=len(continued_ids),
+            new_track_count=len(new_ids),
         )
 
     def register_keyframe(self, image):
         image_id = image.database_image_id
         self._active_keyframes[image_id] = image
-        for track_id in image.track_ids:
-            self._keyframes_by_track.setdefault(int(track_id), set()).add(image_id)
+        for track_id in image.local_tracks.track_ids:
+            self._keyframes_by_track.setdefault(int(track_id), set()).add(
+                image_id
+            )
         self._recent_keyframes.append(image)
 
     def select_pairs(self, current_image):
         common_track_counts = self._common_track_counts(
-            current_image.track_ids
+            current_image.local_tracks.track_ids
         )
         recent_images = list(self._recent_keyframes)[:-1]
         recent_image_ids = {
@@ -114,24 +113,21 @@ class AdaptiveKeyframePairSelector:
             recent_images,
             overlap_by_image_id,
         )
-        motion_pairs = self._select_motion_pairs(motion_candidates)
+        motion_anchor = self._select_motion_anchor(motion_candidates)
 
         for image_id in expired_keyframe_ids:
             self._remove_active_keyframe(image_id)
 
         return KeyframePairSelection(
-            pairs=tuple(recent_pairs + motion_pairs),
+            pairs=tuple(recent_pairs + motion_anchor),
             active_candidate_count=active_candidate_count,
         )
 
-    def _track_previous_points(self, current_gray):
-        if self._previous_gray is None or not len(self._previous_keypoints):
-            return (
-                np.empty((0, 2), dtype=np.float32),
-                np.empty(0, dtype=np.int64),
-            )
+    def _track_active_points(self, current_gray):
+        if self._previous_gray is None or not len(self._active_track_positions):
+            return self._empty_tracks()
 
-        previous_points = self._previous_keypoints.reshape(-1, 1, 2)
+        previous_points = self._active_track_positions.reshape(-1, 1, 2)
         forward_points, forward_status, _ = cv2.calcOpticalFlowPyrLK(
             self._previous_gray,
             current_gray,
@@ -146,15 +142,28 @@ class AdaptiveKeyframePairSelector:
             ),
         )
         if forward_points is None or forward_status is None:
-            return (
-                np.empty((0, 2), dtype=np.float32),
-                np.empty(0, dtype=np.int64),
-            )
+            return self._empty_tracks()
 
+        forward_points = forward_points.reshape(-1, 2)
+        image_height, image_width = current_gray.shape[:2]
+        forward_valid = (
+            forward_status.reshape(-1).astype(bool)
+            & np.all(np.isfinite(forward_points), axis=1)
+            & (forward_points[:, 0] >= 0.0)
+            & (forward_points[:, 0] < image_width)
+            & (forward_points[:, 1] >= 0.0)
+            & (forward_points[:, 1] < image_height)
+        )
+        if not np.any(forward_valid):
+            return self._empty_tracks()
+
+        forward_points = forward_points[forward_valid]
+        previous_positions = self._active_track_positions[forward_valid]
+        track_ids = self._active_track_ids[forward_valid]
         backward_points, backward_status, _ = cv2.calcOpticalFlowPyrLK(
             current_gray,
             self._previous_gray,
-            forward_points,
+            forward_points.reshape(-1, 1, 2),
             None,
             winSize=(21, 21),
             maxLevel=3,
@@ -165,63 +174,60 @@ class AdaptiveKeyframePairSelector:
             ),
         )
         if backward_points is None or backward_status is None:
-            return (
-                np.empty((0, 2), dtype=np.float32),
-                np.empty(0, dtype=np.int64),
-            )
+            return self._empty_tracks()
 
-        forward_points = forward_points.reshape(-1, 2)
         backward_points = backward_points.reshape(-1, 2)
         forward_backward_error = np.linalg.norm(
-            backward_points - self._previous_keypoints,
+            backward_points - previous_positions,
             axis=1,
         )
-        valid = (
-            forward_status.reshape(-1).astype(bool)
-            & backward_status.reshape(-1).astype(bool)
-            & np.all(np.isfinite(forward_points), axis=1)
+        reliable = (
+            backward_status.reshape(-1).astype(bool)
             & np.all(np.isfinite(backward_points), axis=1)
             & (
                 forward_backward_error
                 <= self.MAXIMUM_FORWARD_BACKWARD_ERROR_PX
             )
         )
-        return forward_points[valid], self._previous_track_ids[valid]
+        return forward_points[reliable], track_ids[reliable]
 
-    def _associate_tracked_points(
+    def _select_new_track_positions(
         self,
-        tracked_positions,
-        tracked_ids,
-        current_keypoints,
-        current_track_ids,
+        sift_keypoints,
+        continued_positions,
+        maximum_new_track_count,
     ):
-        if not len(tracked_positions) or not len(current_keypoints):
-            return 0
+        if maximum_new_track_count <= 0:
+            return np.empty((0, 2), dtype=np.float32)
 
-        distances = np.linalg.norm(
-            tracked_positions[:, None, :] - current_keypoints[None, :, :],
-            axis=2,
-        )
-        tracked_indices, current_indices = np.nonzero(
-            distances <= self.TRACK_ASSOCIATION_RADIUS_PX
-        )
-        candidate_order = np.argsort(
-            distances[tracked_indices, current_indices]
-        )
-        used_tracked = np.zeros(len(tracked_positions), dtype=bool)
-        used_current = np.zeros(len(current_keypoints), dtype=bool)
+        sift_keypoints = np.asarray(
+            sift_keypoints,
+            dtype=np.float32,
+        ).reshape(-1, 2)
 
-        continued_count = 0
-        for candidate_index in candidate_order:
-            tracked_index = tracked_indices[candidate_index]
-            current_index = current_indices[candidate_index]
-            if used_tracked[tracked_index] or used_current[current_index]:
+        occupied_positions = [
+            position.copy() for position in continued_positions
+        ]
+        new_positions = []
+
+        for keypoint in sift_keypoints:
+            if not np.all(np.isfinite(keypoint)):
                 continue
-            current_track_ids[current_index] = tracked_ids[tracked_index]
-            used_tracked[tracked_index] = True
-            used_current[current_index] = True
-            continued_count += 1
-        return continued_count
+            if occupied_positions:
+                distances = np.linalg.norm(
+                    np.asarray(occupied_positions) - keypoint,
+                    axis=1,
+                )
+                if np.min(distances) <= self.MINIMUM_NEW_TRACK_DISTANCE_PX:
+                    continue
+            new_positions.append(keypoint.copy())
+            occupied_positions.append(keypoint.copy())
+            if len(new_positions) == maximum_new_track_count:
+                break
+
+        if not new_positions:
+            return np.empty((0, 2), dtype=np.float32)
+        return np.asarray(new_positions, dtype=np.float32)
 
     def _common_track_counts(self, current_track_ids):
         counts = Counter()
@@ -247,7 +253,7 @@ class AdaptiveKeyframePairSelector:
             for previous_image in recent_images
         ]
 
-    def _select_motion_pairs(self, candidates):
+    def _select_motion_anchor(self, candidates):
         candidates = [
             candidate
             for candidate in candidates
@@ -256,63 +262,54 @@ class AdaptiveKeyframePairSelector:
         if not candidates:
             return []
 
-        maximum_motion = max(
+        if max(
             candidate.median_displacement_px for candidate in candidates
-        )
-        targets = self._motion_targets(maximum_motion)
-        possible_assignments = sorted(
-            (
-                abs(candidate.median_displacement_px - target),
-                target,
-                candidate.image.database_image_id,
-                candidate,
-            )
-            for target in targets
+        ) < self.MOTION_ANCHOR_TARGET_PX:
+            return []
+
+        candidates = [
+            candidate
             for candidate in candidates
-        )
-        selected_by_target = {}
-        selected_image_ids = set()
-        for _, target, _, candidate in possible_assignments:
-            image_id = candidate.image.database_image_id
-            if target in selected_by_target or image_id in selected_image_ids:
-                continue
-            selected_by_target[target] = replace(
-                candidate,
-                reason="motion_target",
-                motion_target_px=target,
+            if (
+                candidate.median_displacement_px
+                <= self.MAXIMUM_MOTION_ANCHOR_PX
             )
-            selected_image_ids.add(image_id)
-
-        return [
-            selected_by_target[target]
-            for target in targets
-            if target in selected_by_target
         ]
+        if not candidates:
+            return []
 
-    def _motion_targets(self, maximum_motion):
-        targets = []
-        if maximum_motion >= self.FIRST_MOTION_TARGET_PX:
-            targets.append(self.FIRST_MOTION_TARGET_PX)
-
-        target = self.MOTION_TARGET_STEP_PX
-        while target <= maximum_motion:
-            targets.append(target)
-            target += self.MOTION_TARGET_STEP_PX
-        return targets
+        anchor = min(
+            candidates,
+            key=lambda candidate: (
+                abs(
+                    candidate.median_displacement_px
+                    - self.MOTION_ANCHOR_TARGET_PX
+                ),
+                -candidate.overlap,
+                candidate.image.database_image_id,
+            ),
+        )
+        return [
+            replace(
+                anchor,
+                reason="motion_target",
+                motion_target_px=self.MOTION_ANCHOR_TARGET_PX,
+            )
+        ]
 
     @staticmethod
     def _candidate(previous_image, current_image, overlap, reason):
         shared_ids, previous_indices, current_indices = np.intersect1d(
-            previous_image.track_ids,
-            current_image.track_ids,
+            previous_image.local_tracks.track_ids,
+            current_image.local_tracks.track_ids,
             assume_unique=True,
             return_indices=True,
         )
         shared_track_count = len(shared_ids)
         if shared_track_count:
             displacements = np.linalg.norm(
-                current_image.features["keypoints"][current_indices]
-                - previous_image.features["keypoints"][previous_indices],
+                current_image.local_tracks.positions[current_indices]
+                - previous_image.local_tracks.positions[previous_indices],
                 axis=1,
             )
             median_displacement_px = float(np.median(displacements))
@@ -330,17 +327,24 @@ class AdaptiveKeyframePairSelector:
 
     @staticmethod
     def _overlap(previous_image, shared_track_count):
-        if not len(previous_image.track_ids):
+        if not len(previous_image.local_tracks):
             return 0.0
-        return shared_track_count / len(previous_image.track_ids)
+        return shared_track_count / len(previous_image.local_tracks)
 
     def _remove_active_keyframe(self, image_id):
         image = self._active_keyframes.pop(image_id)
-        for track_id in image.track_ids:
+        for track_id in image.local_tracks.track_ids:
             track_keyframes = self._keyframes_by_track[int(track_id)]
             track_keyframes.discard(image_id)
             if not track_keyframes:
                 del self._keyframes_by_track[int(track_id)]
+
+    @staticmethod
+    def _empty_tracks():
+        return (
+            np.empty((0, 2), dtype=np.float32),
+            np.empty(0, dtype=np.int64),
+        )
 
     @staticmethod
     def _grayscale(frame):

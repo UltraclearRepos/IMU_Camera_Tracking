@@ -45,8 +45,11 @@ class SkinMapBuilder:
             reconstruction_method=reconstruction_method,
             frame_step=mapping_frame_step,
             recent_pair_count=recent_pair_count,
-            track_association_radius_px=(
-                AdaptiveKeyframePairSelector.TRACK_ASSOCIATION_RADIUS_PX
+            minimum_new_track_distance_px=(
+                AdaptiveKeyframePairSelector.MINIMUM_NEW_TRACK_DISTANCE_PX
+            ),
+            maximum_active_track_count=(
+                AdaptiveKeyframePairSelector.MAXIMUM_ACTIVE_TRACK_COUNT
             ),
             maximum_forward_backward_error_px=(
                 AdaptiveKeyframePairSelector.MAXIMUM_FORWARD_BACKWARD_ERROR_PX
@@ -54,11 +57,11 @@ class SkinMapBuilder:
             minimum_keyframe_overlap=(
                 AdaptiveKeyframePairSelector.MINIMUM_KEYFRAME_OVERLAP
             ),
-            first_motion_target_px=(
-                AdaptiveKeyframePairSelector.FIRST_MOTION_TARGET_PX
+            motion_anchor_target_px=(
+                AdaptiveKeyframePairSelector.MOTION_ANCHOR_TARGET_PX
             ),
-            motion_target_step_px=(
-                AdaptiveKeyframePairSelector.MOTION_TARGET_STEP_PX
+            maximum_motion_anchor_px=(
+                AdaptiveKeyframePairSelector.MAXIMUM_MOTION_ANCHOR_PX
             ),
         )
         self.frame_builder = MappingFrameBuilder(
