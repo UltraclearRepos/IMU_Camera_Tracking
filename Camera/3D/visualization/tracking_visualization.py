@@ -465,6 +465,90 @@ def save_top_view_video(
     writer.release()
 
 
+def save_mapping_feature_video(
+    video_path,
+    global_map,
+    output_path,
+    fps,
+    feature_roi_bottom_fraction,
+):
+    """Render all detected skin features on their mapping frames.
+
+    These are the same 2D features selected by the map builder before SfM,
+    so the overlay does not depend on a reconstructed 3D pose.
+    """
+    capture = cv2.VideoCapture(str(video_path))
+    if not capture.isOpened():
+        raise FileNotFoundError(video_path)
+
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    writer = cv2.VideoWriter(
+        str(output_path),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (width, height),
+    )
+    if not writer.isOpened():
+        capture.release()
+        raise RuntimeError(f"Could not open video writer: {output_path}")
+
+    roi_top = round(height * (1.0 - feature_roi_bottom_fraction))
+    next_video_frame = 0
+    for frame_index, keypoints in zip(
+        global_map.mapping_frames,
+        global_map.mapping_feature_keypoints,
+    ):
+        target_frame = int(frame_index)
+        frame = None
+        while next_video_frame <= target_frame:
+            success, decoded_frame = capture.read()
+            if not success:
+                break
+            if next_video_frame == target_frame:
+                frame = decoded_frame
+            next_video_frame += 1
+        if frame is None:
+            continue
+
+        keypoints = np.rint(keypoints).astype(np.int32)
+
+        output = frame.copy()
+        output[:roi_top] = 0
+        cv2.line(
+            output,
+            (0, roi_top),
+            (width - 1, roi_top),
+            (255, 180, 0),
+            2,
+        )
+        for x, y in keypoints:
+            cv2.circle(output, (x, y), 2, (0, 255, 0), -1, cv2.LINE_AA)
+        cv2.putText(
+            output,
+            f"MAPPING | frame {int(frame_index)} | detected features: "
+            f"{len(keypoints)}",
+            (12, 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+        cv2.putText(
+            output,
+            "Green: features selected for mapping",
+            (12, height - 15),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 255, 0),
+            2,
+        )
+        writer.write(output)
+
+    capture.release()
+    writer.release()
+
+
 def diagnostic_frame(
     frame,
     tracker,

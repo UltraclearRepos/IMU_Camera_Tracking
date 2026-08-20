@@ -55,6 +55,10 @@ class GlobalMapBuilder:
             frame_collection,
             alignment,
         )
+        features_by_frame = {
+            image.frame_index: image.features["keypoints"].copy()
+            for image in frame_collection.images
+        }
 
         frozen_map = FrozenMap(
             positions=selection.positions,
@@ -67,6 +71,10 @@ class GlobalMapBuilder:
             ),
             mapping_frames=trajectory.frames,
             mapping_times_s=trajectory.timestamps_s,
+            mapping_feature_keypoints=tuple(
+                features_by_frame[int(frame)]
+                for frame in trajectory.frames
+            ),
             mapping_camera_positions=trajectory.camera_positions,
             mapping_camera_rotations=trajectory.camera_rotations,
             mapping_camera_headings=trajectory.camera_headings,

@@ -40,22 +40,14 @@ def interpolate_columns(sample_times, source_times, values):
     )
 
 
-def relative_euler(rotation_matrices, reference_rotation):
-    relative_rotations = reference_rotation.T @ rotation_matrices
-    return Rotation.from_matrix(relative_rotations).as_euler(
-        "xyz",
-        degrees=True,
-    )
-
-
 def save_mapping_csv(
     frames,
     times_s,
     timestamps,
     estimate_positions,
     ground_truth_positions,
-    estimate_euler,
-    ground_truth_euler,
+    estimate_rotation_vectors,
+    ground_truth_rotation_vectors,
     output_path,
 ):
     fieldnames = [
@@ -68,12 +60,12 @@ def save_mapping_csv(
         "gt_x_mm",
         "gt_y_mm",
         "gt_z_mm",
-        "roll_deg",
-        "pitch_deg",
-        "yaw_deg",
-        "gt_roll_deg",
-        "gt_pitch_deg",
-        "gt_yaw_deg",
+        "rotation_x_deg",
+        "rotation_y_deg",
+        "rotation_z_deg",
+        "gt_rotation_x_deg",
+        "gt_rotation_y_deg",
+        "gt_rotation_z_deg",
     ]
     with output_path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -90,12 +82,12 @@ def save_mapping_csv(
                     "gt_x_mm": ground_truth_positions[index, 0],
                     "gt_y_mm": ground_truth_positions[index, 1],
                     "gt_z_mm": ground_truth_positions[index, 2],
-                    "roll_deg": estimate_euler[index, 0],
-                    "pitch_deg": estimate_euler[index, 1],
-                    "yaw_deg": estimate_euler[index, 2],
-                    "gt_roll_deg": ground_truth_euler[index, 0],
-                    "gt_pitch_deg": ground_truth_euler[index, 1],
-                    "gt_yaw_deg": ground_truth_euler[index, 2],
+                    "rotation_x_deg": estimate_rotation_vectors[index, 0],
+                    "rotation_y_deg": estimate_rotation_vectors[index, 1],
+                    "rotation_z_deg": estimate_rotation_vectors[index, 2],
+                    "gt_rotation_x_deg": ground_truth_rotation_vectors[index, 0],
+                    "gt_rotation_y_deg": ground_truth_rotation_vectors[index, 1],
+                    "gt_rotation_z_deg": ground_truth_rotation_vectors[index, 2],
                 }
             )
 
@@ -215,10 +207,7 @@ def evaluate_final_mapping_poses(
         reference_rotation.T
         @ (camera_positions - reference_position).T
     ).T
-    estimate_euler = relative_euler(
-        camera_rotations,
-        reference_rotation,
-    )
+    estimate_relative_rotations = reference_rotation.T @ camera_rotations
 
     gt_times, gt_positions, gt_euler = load_ground_truth(ground_truth_path)
     gt_euler = np.degrees(np.unwrap(np.radians(gt_euler), axis=0))
@@ -229,7 +218,7 @@ def evaluate_final_mapping_poses(
     times_s = times_s[inside_gt]
     timestamps = timestamps[inside_gt]
     estimate_positions = estimate_positions[inside_gt]
-    estimate_euler = estimate_euler[inside_gt]
+    estimate_relative_rotations = estimate_relative_rotations[inside_gt]
 
     interpolated_gt_positions = interpolate_columns(
         timestamps,
@@ -274,31 +263,25 @@ def evaluate_final_mapping_poses(
     relative_gt_rotations = (
         reference_gt_rotation.T @ ground_truth_rotations
     )
-    ground_truth_euler = Rotation.from_matrix(
-        tcp_rotations_to_camera_axes(relative_gt_rotations)
-    ).as_euler("xyz", degrees=True)
+    gt_rotations = tcp_rotations_to_camera_axes(relative_gt_rotations)
 
     position_component_errors = estimate_positions - ground_truth_positions
     position_errors = np.linalg.norm(position_component_errors, axis=1)
-
-    orientation_component_errors = (
-        estimate_euler - ground_truth_euler + 180.0
-    ) % 360.0 - 180.0
-    estimate_rotations = Rotation.from_euler(
-        "xyz",
-        estimate_euler,
-        degrees=True,
-    ).as_matrix()
-    gt_rotations = Rotation.from_euler(
-        "xyz",
-        ground_truth_euler,
-        degrees=True,
-    ).as_matrix()
+    estimate_rotations = estimate_relative_rotations
     orientation_errors = np.degrees(
         Rotation.from_matrix(
             np.transpose(gt_rotations, (0, 2, 1)) @ estimate_rotations
         ).magnitude()
     )
+    estimate_rotation_vectors = Rotation.from_matrix(
+        estimate_rotations
+    ).as_rotvec(degrees=True)
+    ground_truth_rotation_vectors = Rotation.from_matrix(
+        gt_rotations
+    ).as_rotvec(degrees=True)
+    orientation_component_errors = Rotation.from_matrix(
+        np.transpose(gt_rotations, (0, 2, 1)) @ estimate_rotations
+    ).as_rotvec(degrees=True)
 
     registered_percent = (
         100.0
@@ -326,15 +309,19 @@ def evaluate_final_mapping_poses(
     )
     orientation_rmse = save_comparison_figure(
         plot_times,
-        ground_truth_euler,
-        estimate_euler,
+        ground_truth_rotation_vectors,
+        estimate_rotation_vectors,
         orientation_component_errors,
         orientation_errors,
-        ["Roll", "Pitch", "Yaw"],
+        [
+            "Rotation about camera X",
+            "Rotation about camera Y",
+            "Rotation about camera Z",
+        ],
         "deg",
         "Angular distance on registered mapping frames",
         output_dir / "mapping_orientation_vs_gt.png",
-        f"{recording_name}: mapping orientation vs GT\n{title_suffix}",
+        f"{recording_name}: mapping rotation vector vs GT\n{title_suffix}",
         estimate_label="Final BA pose",
         x_label="Mapping time [s]",
     )
@@ -344,8 +331,8 @@ def evaluate_final_mapping_poses(
         timestamps,
         estimate_positions,
         ground_truth_positions,
-        estimate_euler,
-        ground_truth_euler,
+        estimate_rotation_vectors,
+        ground_truth_rotation_vectors,
         output_dir / "mapping_camera_vs_gt.csv",
     )
     return position_rmse, orientation_rmse, registered_percent

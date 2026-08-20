@@ -183,6 +183,7 @@ class FrozenMap:
     selected_candidate_indices: np.ndarray
     mapping_frames: np.ndarray
     mapping_times_s: np.ndarray
+    mapping_feature_keypoints: tuple[np.ndarray, ...]
     mapping_camera_positions: np.ndarray
     mapping_camera_rotations: np.ndarray
     mapping_camera_headings: np.ndarray

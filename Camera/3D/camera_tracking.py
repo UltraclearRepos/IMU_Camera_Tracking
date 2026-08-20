@@ -26,6 +26,7 @@ from visualization.top_view_visualization import (
 from visualization.tracking_visualization import (
     create_comparison_plots,
     diagnostic_frame,
+    save_mapping_feature_video,
     save_3d_tracking_diagnostics,
     save_timing_diagnostics,
 )
@@ -34,23 +35,23 @@ from visualization.tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "arc2cm-far-white-withlight_Speed-3_2026-07-29_17.00.49"
-DATA_FOLDER = "LineArc-1-2cm"
+RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-18_17.47.36"
+DATA_FOLDER = "Cylinder"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
 FEATURE_ROI_BOTTOM_FRACTION = 0.7
 FEATURE_TYPE = "sift"  # "disk" or "sift".
 
-MAPPING_START_FRAME = 55  # First frame used to build the frozen 3D map.
-MAPPING_END_FRAME = 409  # Last frame used to build the frozen 3D map.
-TRACKING_START_FRAME = 411  # First frame processed by frozen-map tracking.
+MAPPING_START_FRAME = 1  # First frame used to build the frozen 3D map.
+MAPPING_END_FRAME = 988  # Last frame used to build the frozen 3D map.
+TRACKING_START_FRAME = 989  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
 MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
 # Adaptive example: recent=2, motion=(10.0, 20.0, 40.0).
-# Legacy example: recent=10, motion=() matches only the ten previous frames.
-MAPPING_RECENT_PAIR_COUNT = 2
-MAPPING_MOTION_TARGETS_PX = (20.0,)
+# Legacy example: recent=10, motion=() matches only the 10 previous frames.
+MAPPING_RECENT_PAIR_COUNT = 10
+MAPPING_MOTION_TARGETS_PX = ()
 MAPPING_MAX_FEATURES = 256  # Spatially distributed features passed to LightGlue.
 MAPPING_FEATURE_GRID_ROWS = 4  # Image grid rows used to distribute map features.
 MAPPING_FEATURE_GRID_COLUMNS = 4  # Image grid columns used to distribute map features.
@@ -67,6 +68,8 @@ IMU_MAXIMUM_GYROSCOPE_RAD_S = np.radians(50.0)
 
 SAVE_DIAGNOSTIC_VIDEO = True
 DIAGNOSTIC_VIDEO_FPS = 1.0
+SAVE_MAPPING_FEATURE_VIDEO = True
+MAPPING_FEATURE_VIDEO_FPS = 10.0
 SAVE_MAP_BUILD_TOP_VIEW = True
 SAVE_TRACKING_TOP_VIEW = True
 TOP_VIEW_VIDEO_FPS = 1.0
@@ -258,6 +261,14 @@ def run_tracking(
         output_dir,
         recording_name,
     )
+    if SAVE_MAPPING_FEATURE_VIDEO:
+        save_mapping_feature_video(
+            video_path,
+            global_map,
+            output_dir / "mapping_features.mp4",
+            MAPPING_FEATURE_VIDEO_FPS,
+            feature_roi_bottom_fraction,
+        )
     if SAVE_MAP_BUILD_TOP_VIEW:
         map_build_top_view_path = output_dir / "map_build_top_view.mp4"
         save_map_build_top_view(
