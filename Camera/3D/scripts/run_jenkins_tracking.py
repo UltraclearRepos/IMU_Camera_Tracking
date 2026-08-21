@@ -12,6 +12,10 @@ if str(MODULE_DIR) not in sys.path:
 import pycolmap
 
 from camera_tracking import (
+    COLMAP_LOOP_DETECTION,
+    COLMAP_LOOP_DETECTION_PERIOD,
+    COLMAP_MAX_NUM_FEATURES,
+    COLMAP_SEQUENTIAL_OVERLAP,
     FEATURE_TYPE,
     KEYFRAME_INTERVAL,
     MAPPING_END_FRAME,
@@ -76,6 +80,10 @@ def main():
         tracking_start_frame=TRACKING_START_FRAME,
         feature_type=FEATURE_TYPE,
         keyframe_interval=KEYFRAME_INTERVAL,
+        colmap_max_num_features=COLMAP_MAX_NUM_FEATURES,
+        colmap_sequential_overlap=COLMAP_SEQUENTIAL_OVERLAP,
+        colmap_loop_detection=COLMAP_LOOP_DETECTION,
+        colmap_loop_detection_period=COLMAP_LOOP_DETECTION_PERIOD,
         use_imu=USE_IMU_GRAVITY_PRIOR,
     )
     metrics["total_pipeline_seconds"] = time.perf_counter() - started

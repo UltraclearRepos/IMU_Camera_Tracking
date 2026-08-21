@@ -4,62 +4,17 @@ from typing import Any
 import numpy as np
 
 
-FeatureData = dict[str, np.ndarray]
-ArucoPose = tuple[np.ndarray, np.ndarray, dict[str, Any]]
-
-
 @dataclass
 class MappingImage:
     frame_index: int
     name: str
     database_image_id: int
     timestamp_s: float
-    features: FeatureData
-    aruco_pose: ArucoPose | None
-
-
-@dataclass
-class MappingFrameDiagnostics:
-    frame_index: int
-    timestamp_s: float
-    image_name: str
-    feature_count: int
-    matched_pairs: int
-    raw_matches: int
-    verified_pairs: int
-    verified_inliers: int
-    aruco_detected: bool
-    aruco_reprojection_rms_px: float
-    aruco_reprojection_max_px: float
-    registered: bool = False
-    triangulated_observations: int = 0
-    triangulated_feature_ratio: float = 0.0
-    median_point_track_length: float = np.nan
-    median_point_reprojection_error_px: float = np.nan
-    camera_translation_step_mm: float = np.nan
-    camera_rotation_step_deg: float = np.nan
-
-
-@dataclass(frozen=True)
-class FrameCollectionTiming:
-    setup_seconds: float
-    frame_read_seconds: float
-    image_save_seconds: float
-    mask_generation_seconds: float
-    feature_extraction_seconds: float
-    aruco_detection_seconds: float
-    image_database_write_seconds: float
-    sequential_matching_seconds: float
-    wall_seconds: float
 
 
 @dataclass
 class MappingFrameCollection:
     images: list[MappingImage]
-    frame_diagnostics: list[MappingFrameDiagnostics]
-    matched_pair_count: int
-    verified_pair_count: int
-    timing: FrameCollectionTiming
     imu_gravity_summary: dict[str, Any] | None
 
     @property
@@ -144,6 +99,7 @@ class MapFinalizationResult:
 
 @dataclass(frozen=True)
 class MapBuildDurations:
+    frame_collection_seconds: float
     reconstruction_seconds: float
     alignment_seconds: float
     map_finalization_seconds: float
@@ -160,5 +116,7 @@ class MapBuildConfiguration:
     keyframe_interval: int
     maximum_features: int
     sequential_overlap: int
+    matcher_type: str
     loop_detection: bool
-    vocabulary_tree_path: str
+    loop_detection_period: int
+    vocabulary_tree_path: str | None

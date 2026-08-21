@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
+from mapping.colmap_feature_store import ColmapFeatureStore
 from mapping.mapping_data import (
     ArucoAlignment,
     FrozenMap,
@@ -37,6 +38,8 @@ class GlobalMapBuilder:
         reconstruction,
         frame_collection: MappingFrameCollection,
         alignment: ArucoAlignment,
+        database_path,
+        masks_directory,
     ):
         # ArUco supplies the metric scale only.  The final map axes and
         # origin come from the last camera registered by the reconstruction.
@@ -48,10 +51,14 @@ class GlobalMapBuilder:
             last_registered_image,
         )
         selection = self._select_landmarks(candidates)
+        mapping_features = ColmapFeatureStore(
+            database_path,
+            masks_directory,
+        ).load_registered(reconstruction)
         appearance = self._build_landmark_appearance(
             selection.colmap_points,
             reconstruction,
-            frame_collection,
+            mapping_features,
         )
         trajectory = self._build_mapping_trajectory(
             reconstruction,
@@ -60,16 +67,16 @@ class GlobalMapBuilder:
             last_registered_image,
         )
         features_by_frame = {
-            image.frame_index: image.features["keypoints"].copy()
-            for image in frame_collection.images
+            self._frame_number(name): features["keypoints"].copy()
+            for name, features in mapping_features.items()
         }
         feature_bounds_by_frame = {
-            image.frame_index: image.features["selection_bounds"].copy()
-            for image in frame_collection.images
+            self._frame_number(name): features["selection_bounds"].copy()
+            for name, features in mapping_features.items()
         }
         feature_contours_by_frame = {
-            image.frame_index: image.features["selection_contour"].copy()
-            for image in frame_collection.images
+            self._frame_number(name): features["selection_contour"].copy()
+            for name, features in mapping_features.items()
         }
 
         frozen_map = FrozenMap(
@@ -276,11 +283,8 @@ class GlobalMapBuilder:
         self,
         selected_points,
         reconstruction,
-        frame_collection,
+        mapping_features,
     ):
-        mapping_images = {
-            image.name: image for image in frame_collection.images
-        }
         descriptors = []
         scores = []
         scales = []
@@ -292,7 +296,7 @@ class GlobalMapBuilder:
             observation_orientations = []
             for observation in point.track.elements:
                 registered_image = reconstruction.images[observation.image_id]
-                features = mapping_images[registered_image.name].features
+                features = mapping_features[registered_image.name]
                 feature_index = observation.point2D_idx
                 observation_descriptors.append(
                     features["descriptors"][feature_index]

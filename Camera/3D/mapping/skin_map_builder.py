@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 from mapping.aruco_map_aligner import ArucoMapAligner
+from mapping.colmap_matching import ColmapIncrementalMatcher
 from mapping.global_map_builder import GlobalMapBuilder
 from mapping.map_build_diagnostics import MapBuildDiagnostics
 from mapping.mapping_data import (
@@ -26,6 +27,9 @@ class SkinMapBuilder:
         keyframe_interval,
         maximum_features,
         sequential_overlap,
+        matcher_type,
+        loop_detection,
+        loop_detection_period,
         vocabulary_tree_path,
         maximum_global_landmarks,
         global_map_grid_rows,
@@ -33,7 +37,14 @@ class SkinMapBuilder:
         global_map_reprojection_error_weight,
         imu_gravity_provider=None,
     ):
-        vocabulary_tree_path = Path(vocabulary_tree_path)
+        vocabulary_tree_path = (
+            None
+            if vocabulary_tree_path is None
+            else Path(vocabulary_tree_path)
+        )
+        resolved_matcher_type = ColmapIncrementalMatcher.resolve_matcher_type(
+            matcher_type
+        )
         self.configuration = MapBuildConfiguration(
             mapping_feature_type="sift",
             start_frame=mapping_start_frame,
@@ -42,8 +53,14 @@ class SkinMapBuilder:
             keyframe_interval=keyframe_interval,
             maximum_features=maximum_features,
             sequential_overlap=sequential_overlap,
-            loop_detection=True,
-            vocabulary_tree_path=str(vocabulary_tree_path),
+            matcher_type=resolved_matcher_type.name,
+            loop_detection=bool(loop_detection),
+            loop_detection_period=loop_detection_period,
+            vocabulary_tree_path=(
+                None
+                if vocabulary_tree_path is None
+                else str(vocabulary_tree_path)
+            ),
         )
         self.frame_builder = MappingFrameBuilder(
             camera_matrix=camera_matrix,
@@ -54,6 +71,9 @@ class SkinMapBuilder:
             keyframe_interval=keyframe_interval,
             maximum_features=maximum_features,
             sequential_overlap=sequential_overlap,
+            matcher_type=resolved_matcher_type,
+            loop_detection=loop_detection,
+            loop_detection_period=loop_detection_period,
             vocabulary_tree_path=vocabulary_tree_path,
             imu_gravity_provider=imu_gravity_provider,
         )
@@ -63,7 +83,7 @@ class SkinMapBuilder:
             ),
             use_gravity_prior=imu_gravity_provider is not None,
         )
-        self.aruco_aligner = ArucoMapAligner()
+        self.aruco_aligner = ArucoMapAligner(camera_matrix, distortion)
         self.global_map_builder = GlobalMapBuilder(
             maximum_landmarks=maximum_global_landmarks,
             grid_rows=global_map_grid_rows,
@@ -88,12 +108,14 @@ class SkinMapBuilder:
         masks_directory = work_directory / "masks"
         sparse_directory = work_directory / "sparse"
         database_path = work_directory / "database.db"
+        collection_started = time.perf_counter()
         frame_collection = self.frame_builder.build(
             video_path,
             images_directory,
             masks_directory,
             database_path,
         )
+        frame_collection_seconds = time.perf_counter() - collection_started
         self._validate_imu_collection(frame_collection)
 
         reconstruction_started = time.perf_counter()
@@ -107,21 +129,17 @@ class SkinMapBuilder:
         alignment_started = time.perf_counter()
         alignment = self.aruco_aligner.align(
             reconstruction,
-            frame_collection,
+            images_directory,
         )
         alignment_seconds = time.perf_counter() - alignment_started
-
-        self.diagnostics.enrich_frame_metrics(
-            frame_collection,
-            reconstruction,
-            alignment,
-        )
 
         finalization_started = time.perf_counter()
         finalization = self.global_map_builder.build(
             reconstruction,
             frame_collection,
             alignment,
+            database_path,
+            masks_directory,
         )
         frozen_map = finalization.frozen_map
         map_finalization_seconds = time.perf_counter() - finalization_started
@@ -135,6 +153,7 @@ class SkinMapBuilder:
         map_saving_seconds = time.perf_counter() - saving_started
 
         durations = MapBuildDurations(
+            frame_collection_seconds=frame_collection_seconds,
             reconstruction_seconds=reconstruction_seconds,
             alignment_seconds=alignment_seconds,
             map_finalization_seconds=map_finalization_seconds,

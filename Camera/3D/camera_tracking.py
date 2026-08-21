@@ -51,6 +51,9 @@ RECONSTRUCTION_METHOD = "global"  # Mapping always runs GLOMAP once.
 KEYFRAME_INTERVAL = 5  # Use every Nth video frame as a mapping keyframe.
 COLMAP_MAX_NUM_FEATURES = 256
 COLMAP_SEQUENTIAL_OVERLAP = 10
+COLMAP_MATCHER = "SIFT_LIGHTGLUE"
+COLMAP_LOOP_DETECTION = True
+COLMAP_LOOP_DETECTION_PERIOD = 10
 COLMAP_VOCAB_TREE_PATH = Path(
     os.environ.get(
         "COLMAP_VOCAB_TREE_PATH",
@@ -167,6 +170,10 @@ def run_tracking(
     tracking_start_frame,
     feature_type,
     keyframe_interval,
+    colmap_max_num_features,
+    colmap_sequential_overlap,
+    colmap_loop_detection,
+    colmap_loop_detection_period,
     use_imu,
 ):
     feature_type = feature_type.lower()
@@ -234,8 +241,11 @@ def run_tracking(
         mapping_start_frame,
         mapping_end_frame,
         keyframe_interval,
-        COLMAP_MAX_NUM_FEATURES,
-        COLMAP_SEQUENTIAL_OVERLAP,
+        colmap_max_num_features,
+        colmap_sequential_overlap,
+        COLMAP_MATCHER,
+        colmap_loop_detection,
+        colmap_loop_detection_period,
         COLMAP_VOCAB_TREE_PATH,
         GLOBAL_MAP_MAX_LANDMARKS,
         GLOBAL_MAP_GRID_ROWS,
@@ -539,8 +549,13 @@ def run_tracking(
         "reconstruction_method": reconstruction_method,
         "feature_type": feature_type,
         "keyframe_interval": keyframe_interval,
-        "colmap_max_num_features": COLMAP_MAX_NUM_FEATURES,
-        "colmap_sequential_overlap": COLMAP_SEQUENTIAL_OVERLAP,
+        "colmap_max_num_features": colmap_max_num_features,
+        "colmap_sequential_overlap": colmap_sequential_overlap,
+        "colmap_matcher": map_builder.frame_builder.matcher_type.name,
+        "colmap_loop_detection": colmap_loop_detection,
+        "colmap_loop_detection_period_keyframes": (
+            colmap_loop_detection_period
+        ),
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": len(global_map.candidate_positions),
         "map_occupied_grid_cells": global_map.occupied_grid_cell_count,
@@ -595,6 +610,10 @@ def main():
         tracking_start_frame=TRACKING_START_FRAME,
         feature_type=FEATURE_TYPE,
         keyframe_interval=KEYFRAME_INTERVAL,
+        colmap_max_num_features=COLMAP_MAX_NUM_FEATURES,
+        colmap_sequential_overlap=COLMAP_SEQUENTIAL_OVERLAP,
+        colmap_loop_detection=COLMAP_LOOP_DETECTION,
+        colmap_loop_detection_period=COLMAP_LOOP_DETECTION_PERIOD,
         use_imu=USE_IMU_GRAVITY_PRIOR,
     )
 

@@ -1,6 +1,8 @@
+import cv2
 import numpy as np
 
-from mapping.mapping_data import ArucoAlignment, MappingFrameCollection
+from mapping.aruco_reference import create_aruco_detector, detect_aruco_pose
+from mapping.mapping_data import ArucoAlignment
 
 
 class ArucoMapAligner:
@@ -8,12 +10,16 @@ class ArucoMapAligner:
 
     MINIMUM_ALIGNMENT_FRAMES = 3
 
-    def align(self, reconstruction, frame_collection: MappingFrameCollection):
-        aruco_poses = {
-            image.name: image.aruco_pose
-            for image in frame_collection.images
-            if image.aruco_pose is not None
-        }
+    def __init__(self, camera_matrix, distortion):
+        self.camera_matrix = camera_matrix
+        self.distortion = distortion
+        self.detector = create_aruco_detector()
+
+    def align(self, reconstruction, images_directory):
+        aruco_poses = self._detect_registered_poses(
+            reconstruction,
+            images_directory,
+        )
         registered_images = sorted(
             (
                 image
@@ -50,6 +56,22 @@ class ArucoMapAligner:
             aligned_frame_count=len(alignment_images),
             reprojection_rms_threshold_px=rms_threshold,
         )
+
+    def _detect_registered_poses(self, reconstruction, images_directory):
+        poses = {}
+        for image in reconstruction.images.values():
+            frame = cv2.imread(str(images_directory / image.name))
+            if frame is None:
+                raise RuntimeError(f"Could not read mapping image {image.name}")
+            pose = detect_aruco_pose(
+                frame,
+                self.camera_matrix,
+                self.distortion,
+                self.detector,
+            )
+            if pose is not None:
+                poses[image.name] = pose
+        return poses
 
     @staticmethod
     def camera_center(world_to_camera_rotation, world_to_camera_translation):

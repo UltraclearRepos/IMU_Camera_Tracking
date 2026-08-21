@@ -22,7 +22,32 @@ DEFAULT_CONFIG_PATH = MODULE_DIR / "batch_config.json"
 
 def load_experiment_config(path):
     with Path(path).open(encoding="utf-8") as file:
-        return json.load(file)
+        config = json.load(file)
+    validate_colmap_config(config)
+    return config
+
+
+def validate_colmap_config(config):
+    positive_integer_fields = (
+        "keyframe_interval",
+        "colmap_max_num_features",
+        "colmap_sequential_overlap",
+        "colmap_loop_detection_period",
+    )
+    required_fields = positive_integer_fields + (
+        "colmap_loop_detection",
+    )
+    missing = [field for field in required_fields if field not in config]
+    if missing:
+        raise ValueError(
+            "COLMAP configuration is missing: " + ", ".join(missing)
+        )
+    for field in positive_integer_fields:
+        value = config[field]
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError(f"{field} must be a positive integer")
+    if not isinstance(config["colmap_loop_detection"], bool):
+        raise ValueError("colmap_loop_detection must be boolean")
 
 
 def resolve_data_dir(config):
@@ -90,6 +115,12 @@ def run_recording(
         **frame_range,
         feature_type=config["feature_type"],
         keyframe_interval=config["keyframe_interval"],
+        colmap_max_num_features=config["colmap_max_num_features"],
+        colmap_sequential_overlap=config["colmap_sequential_overlap"],
+        colmap_loop_detection=config["colmap_loop_detection"],
+        colmap_loop_detection_period=config[
+            "colmap_loop_detection_period"
+        ],
         use_imu=config["use_imu"],
     )
 
