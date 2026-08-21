@@ -2,9 +2,6 @@ import shutil
 import time
 from pathlib import Path
 
-from mapping.adaptive_keyframe_pair_selector import (
-    AdaptiveKeyframePairSelector,
-)
 from mapping.aruco_map_aligner import ArucoMapAligner
 from mapping.global_map_builder import GlobalMapBuilder
 from mapping.map_build_diagnostics import MapBuildDiagnostics
@@ -23,62 +20,44 @@ class SkinMapBuilder:
         self,
         camera_matrix,
         distortion,
-        feature_matcher,
+        skin_mask_provider,
         mapping_start_frame,
         mapping_end_frame,
-        reconstruction_method,
-        mapping_frame_step,
-        recent_pair_count,
-        motion_targets_px,
-        mapping_maximum_features,
-        mapping_feature_grid_rows,
-        mapping_feature_grid_columns,
+        keyframe_interval,
+        maximum_features,
+        sequential_overlap,
+        vocabulary_tree_path,
         maximum_global_landmarks,
         global_map_grid_rows,
         global_map_grid_columns,
         global_map_reprojection_error_weight,
         imu_gravity_provider=None,
     ):
+        vocabulary_tree_path = Path(vocabulary_tree_path)
         self.configuration = MapBuildConfiguration(
-            feature_type=feature_matcher.feature_type,
+            mapping_feature_type="sift",
             start_frame=mapping_start_frame,
             end_frame=mapping_end_frame,
-            reconstruction_method=reconstruction_method,
-            frame_step=mapping_frame_step,
-            recent_pair_count=recent_pair_count,
-            motion_targets_px=tuple(motion_targets_px),
-            minimum_new_track_distance_px=(
-                AdaptiveKeyframePairSelector.MINIMUM_NEW_TRACK_DISTANCE_PX
-            ),
-            maximum_active_track_count=(
-                AdaptiveKeyframePairSelector.MAXIMUM_ACTIVE_TRACK_COUNT
-            ),
-            maximum_forward_backward_error_px=(
-                AdaptiveKeyframePairSelector.MAXIMUM_FORWARD_BACKWARD_ERROR_PX
-            ),
-            minimum_keyframe_overlap=(
-                AdaptiveKeyframePairSelector.MINIMUM_KEYFRAME_OVERLAP
-            ),
-            maximum_motion_anchor_px=(
-                AdaptiveKeyframePairSelector.MAXIMUM_MOTION_ANCHOR_PX
-            ),
+            reconstruction_method="global",
+            keyframe_interval=keyframe_interval,
+            maximum_features=maximum_features,
+            sequential_overlap=sequential_overlap,
+            loop_detection=True,
+            vocabulary_tree_path=str(vocabulary_tree_path),
         )
         self.frame_builder = MappingFrameBuilder(
             camera_matrix=camera_matrix,
             distortion=distortion,
-            feature_matcher=feature_matcher,
+            skin_mask_provider=skin_mask_provider,
             start_frame=mapping_start_frame,
             end_frame=mapping_end_frame,
-            frame_step=mapping_frame_step,
-            recent_pair_count=recent_pair_count,
-            motion_targets_px=motion_targets_px,
-            maximum_features=mapping_maximum_features,
-            feature_grid_rows=mapping_feature_grid_rows,
-            feature_grid_columns=mapping_feature_grid_columns,
+            keyframe_interval=keyframe_interval,
+            maximum_features=maximum_features,
+            sequential_overlap=sequential_overlap,
+            vocabulary_tree_path=vocabulary_tree_path,
             imu_gravity_provider=imu_gravity_provider,
         )
         self.reconstructor = SfmReconstructor(
-            reconstruction_method=reconstruction_method,
             minimum_pair_inliers=(
                 MappingFrameBuilder.MINIMUM_PAIR_INLIERS
             ),
@@ -86,7 +65,6 @@ class SkinMapBuilder:
         )
         self.aruco_aligner = ArucoMapAligner()
         self.global_map_builder = GlobalMapBuilder(
-            feature_matcher=feature_matcher,
             maximum_landmarks=maximum_global_landmarks,
             grid_rows=global_map_grid_rows,
             grid_columns=global_map_grid_columns,
@@ -107,11 +85,13 @@ class SkinMapBuilder:
 
         work_directory = self._prepare_work_directory(output_directory)
         images_directory = work_directory / "images"
+        masks_directory = work_directory / "masks"
         sparse_directory = work_directory / "sparse"
         database_path = work_directory / "database.db"
         frame_collection = self.frame_builder.build(
             video_path,
             images_directory,
+            masks_directory,
             database_path,
         )
         self._validate_imu_collection(frame_collection)
@@ -188,8 +168,10 @@ class SkinMapBuilder:
             shutil.rmtree(work_directory)
 
         images_directory = work_directory / "images"
+        masks_directory = work_directory / "masks"
         sparse_directory = work_directory / "sparse"
         images_directory.mkdir(parents=True)
+        masks_directory.mkdir()
         sparse_directory.mkdir()
         return work_directory
 

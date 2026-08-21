@@ -22,13 +22,11 @@ class GlobalMapBuilder:
 
     def __init__(
         self,
-        feature_matcher,
         maximum_landmarks,
         grid_rows,
         grid_columns,
         reprojection_error_weight,
     ):
-        self.feature_matcher = feature_matcher
         self.maximum_landmarks = maximum_landmarks
         self.grid_rows = grid_rows
         self.grid_columns = grid_columns
@@ -287,10 +285,6 @@ class GlobalMapBuilder:
         scores = []
         scales = []
         orientations = []
-        include_scale_orientation = (
-            self.feature_matcher.requires_scale_orientation
-        )
-
         for point in selected_points:
             observation_descriptors = []
             observation_scores = []
@@ -304,40 +298,31 @@ class GlobalMapBuilder:
                     features["descriptors"][feature_index]
                 )
                 observation_scores.append(features["scores"][feature_index])
-                if include_scale_orientation:
-                    observation_scales.append(
-                        features["scales"][feature_index]
-                    )
-                    observation_orientations.append(
-                        features["oris"][feature_index]
-                    )
+                observation_scales.append(features["scales"][feature_index])
+                observation_orientations.append(
+                    features["oris"][feature_index]
+                )
 
             descriptor = np.mean(observation_descriptors, axis=0)
-            descriptor /= np.linalg.norm(descriptor)
+            descriptor /= max(
+                np.linalg.norm(descriptor),
+                np.finfo(np.float32).eps,
+            )
             descriptors.append(descriptor)
             scores.append(np.mean(observation_scores))
-            if include_scale_orientation:
-                scales.append(np.mean(observation_scales))
-                orientations.append(
-                    np.arctan2(
-                        np.mean(np.sin(observation_orientations)),
-                        np.mean(np.cos(observation_orientations)),
-                    )
+            scales.append(np.mean(observation_scales))
+            orientations.append(
+                np.arctan2(
+                    np.mean(np.sin(observation_orientations)),
+                    np.mean(np.cos(observation_orientations)),
                 )
+            )
 
         return LandmarkAppearance(
             descriptors=np.asarray(descriptors, dtype=np.float32),
             scores=np.asarray(scores, dtype=np.float32),
-            scales=(
-                np.asarray(scales, dtype=np.float32)
-                if include_scale_orientation
-                else None
-            ),
-            orientations=(
-                np.asarray(orientations, dtype=np.float32)
-                if include_scale_orientation
-                else None
-            ),
+            scales=np.asarray(scales, dtype=np.float32),
+            orientations=np.asarray(orientations, dtype=np.float32),
         )
 
     def _build_mapping_trajectory(

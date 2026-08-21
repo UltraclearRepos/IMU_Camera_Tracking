@@ -42,20 +42,21 @@ CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 100000
 FEATURE_ROI_BOTTOM_FRACTION = 0.7
-FEATURE_TYPE = "sift"  # "disk" or "sift".
+FEATURE_TYPE = "sift"  # Must match the COLMAP SIFT mapping descriptors.
 
 MAPPING_START_FRAME = 1  # First frame used to build the frozen 3D map.
 MAPPING_END_FRAME = 988  # Last frame used to build the frozen 3D map.
 TRACKING_START_FRAME = 989  # First frame processed by frozen-map tracking.
-RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
-MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
-# Adaptive example: recent=2, motion=(10.0, 20.0, 40.0).
-# Legacy example: recent=10, motion=() matches only the 10 previous frames.
-MAPPING_RECENT_PAIR_COUNT = 10
-MAPPING_MOTION_TARGETS_PX = ()
-MAPPING_MAX_FEATURES = 256  # Spatially distributed features passed to LightGlue.
-MAPPING_FEATURE_GRID_ROWS = 4  # Image grid rows used to distribute map features.
-MAPPING_FEATURE_GRID_COLUMNS = 4  # Image grid columns used to distribute map features.
+RECONSTRUCTION_METHOD = "global"  # Mapping always runs GLOMAP once.
+KEYFRAME_INTERVAL = 5  # Use every Nth video frame as a mapping keyframe.
+COLMAP_MAX_NUM_FEATURES = 256
+COLMAP_SEQUENTIAL_OVERLAP = 10
+COLMAP_VOCAB_TREE_PATH = Path(
+    os.environ.get(
+        "COLMAP_VOCAB_TREE_PATH",
+        SCRIPT_DIR / "vocab_tree_flickr100K_words32K.bin",
+    )
+)
 GLOBAL_MAP_MAX_LANDMARKS = 1024  # Maximum landmarks in the frozen global map.
 GLOBAL_MAP_GRID_ROWS = 8  # Surface grid rows used for uniform landmark selection.
 GLOBAL_MAP_GRID_COLUMNS = 8  # Surface grid columns used for uniform landmark selection.
@@ -165,12 +166,17 @@ def run_tracking(
     mapping_end_frame,
     tracking_start_frame,
     feature_type,
-    mapping_frame_step,
-    mapping_recent_pair_count,
-    mapping_motion_targets_px,
+    keyframe_interval,
     use_imu,
 ):
     feature_type = feature_type.lower()
+    if reconstruction_method != "global":
+        raise ValueError("The mapping pipeline now supports GLOMAP only")
+    if feature_type != "sift":
+        raise ValueError(
+            "The COLMAP mapping database contains SIFT descriptors, so the "
+            "frozen-map tracker must also use feature_type='sift'"
+        )
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
 
@@ -198,26 +204,20 @@ def run_tracking(
     )
     imu_gravity_provider = None
     if use_imu:
-        if reconstruction_method != "global":
-            print(
-                "IMU gravity prior is disabled: it is supported only by "
-                "global mapping."
-            )
-        else:
-            imu_gravity_provider = ImuGravityProvider(
-                imu_path,
-                imu_calibration_path,
-                video_start_timestamp,
-                history_seconds=IMU_GRAVITY_HISTORY_SECONDS,
-                acceleration_magnitude_tolerance_m_s2=(
-                    IMU_ACCELERATION_MAGNITUDE_TOLERANCE_M_S2
-                ),
-                maximum_gyroscope_rad_s=IMU_MAXIMUM_GYROSCOPE_RAD_S,
-            )
-            print(
-                f"Using calibrated IMU2 gravity prior: {imu_path} | "
-                f"calibration: {imu_calibration_path}"
-            )
+        imu_gravity_provider = ImuGravityProvider(
+            imu_path,
+            imu_calibration_path,
+            video_start_timestamp,
+            history_seconds=IMU_GRAVITY_HISTORY_SECONDS,
+            acceleration_magnitude_tolerance_m_s2=(
+                IMU_ACCELERATION_MAGNITUDE_TOLERANCE_M_S2
+            ),
+            maximum_gyroscope_rad_s=IMU_MAXIMUM_GYROSCOPE_RAD_S,
+        )
+        print(
+            f"Using calibrated IMU2 gravity prior: {imu_path} | "
+            f"calibration: {imu_calibration_path}"
+        )
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
     distortion = np.load(DISTORTION_PATH)
@@ -233,13 +233,10 @@ def run_tracking(
         feature_matching,
         mapping_start_frame,
         mapping_end_frame,
-        reconstruction_method,
-        mapping_frame_step,
-        mapping_recent_pair_count,
-        mapping_motion_targets_px,
-        MAPPING_MAX_FEATURES,
-        MAPPING_FEATURE_GRID_ROWS,
-        MAPPING_FEATURE_GRID_COLUMNS,
+        keyframe_interval,
+        COLMAP_MAX_NUM_FEATURES,
+        COLMAP_SEQUENTIAL_OVERLAP,
+        COLMAP_VOCAB_TREE_PATH,
         GLOBAL_MAP_MAX_LANDMARKS,
         GLOBAL_MAP_GRID_ROWS,
         GLOBAL_MAP_GRID_COLUMNS,
@@ -541,9 +538,9 @@ def run_tracking(
         "tracking_start_frame": tracking_start_frame,
         "reconstruction_method": reconstruction_method,
         "feature_type": feature_type,
-        "mapping_frame_step": mapping_frame_step,
-        "mapping_recent_pair_count": mapping_recent_pair_count,
-        "mapping_motion_targets_px": list(mapping_motion_targets_px),
+        "keyframe_interval": keyframe_interval,
+        "colmap_max_num_features": COLMAP_MAX_NUM_FEATURES,
+        "colmap_sequential_overlap": COLMAP_SEQUENTIAL_OVERLAP,
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": len(global_map.candidate_positions),
         "map_occupied_grid_cells": global_map.occupied_grid_cell_count,
@@ -597,9 +594,7 @@ def main():
         mapping_end_frame=MAPPING_END_FRAME,
         tracking_start_frame=TRACKING_START_FRAME,
         feature_type=FEATURE_TYPE,
-        mapping_frame_step=MAPPING_FRAME_STEP,
-        mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
-        mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
+        keyframe_interval=KEYFRAME_INTERVAL,
         use_imu=USE_IMU_GRAVITY_PRIOR,
     )
 

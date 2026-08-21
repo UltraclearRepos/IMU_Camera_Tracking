@@ -4,13 +4,9 @@ import cv2
 import numpy as np
 import pycolmap
 
-from mapping.adaptive_keyframe_pair_selector import (
-    AdaptiveKeyframePairSelector,
-)
 from mapping.aruco_reference import create_aruco_detector, detect_aruco_pose
 from mapping.mapping_data import (
     FrameCollectionTiming,
-    FramePairingResult,
     MappingFrameCollection,
     MappingFrameDiagnostics,
     MappingImage,
@@ -18,46 +14,57 @@ from mapping.mapping_data import (
 
 
 class MappingFrameBuilder:
-    """Extract mapping images and build the verified image-pair graph."""
+    """Build one COLMAP database incrementally from fixed-interval frames."""
 
-    MINIMUM_PAIR_MATCHES = 20
     MINIMUM_PAIR_INLIERS = 20
 
     def __init__(
         self,
         camera_matrix,
         distortion,
-        feature_matcher,
+        skin_mask_provider,
         start_frame,
         end_frame,
-        frame_step,
-        recent_pair_count,
-        motion_targets_px,
+        keyframe_interval,
         maximum_features,
-        feature_grid_rows,
-        feature_grid_columns,
+        sequential_overlap,
+        vocabulary_tree_path,
         imu_gravity_provider=None,
     ):
+        if keyframe_interval <= 0:
+            raise ValueError("keyframe_interval must be positive")
+        if maximum_features <= 0:
+            raise ValueError("maximum_features must be positive")
+        if sequential_overlap <= 0:
+            raise ValueError("sequential_overlap must be positive")
+
         self.camera_matrix = camera_matrix
         self.distortion = distortion
-        self.feature_matcher = feature_matcher
+        self.skin_mask_provider = skin_mask_provider
         self.start_frame = start_frame
         self.end_frame = end_frame
-        self.frame_step = frame_step
-        self.recent_pair_count = recent_pair_count
-        self.motion_targets_px = tuple(motion_targets_px)
+        self.keyframe_interval = keyframe_interval
         self.maximum_features = maximum_features
-        self.feature_grid_rows = feature_grid_rows
-        self.feature_grid_columns = feature_grid_columns
+        self.sequential_overlap = sequential_overlap
+        self.vocabulary_tree_path = vocabulary_tree_path
         self.imu_gravity_provider = imu_gravity_provider
         self.aruco_detector = create_aruco_detector()
 
-    def build(self, video_path, images_directory, database_path):
+    def build(
+        self,
+        video_path,
+        images_directory,
+        masks_directory,
+        database_path,
+    ):
+        self._validate_vocabulary_tree()
         collection_started = time.perf_counter()
         setup_started = time.perf_counter()
         capture = cv2.VideoCapture(str(video_path))
-        database = pycolmap.Database.open(database_path)
+        if not capture.isOpened():
+            raise RuntimeError(f"Could not open mapping video: {video_path}")
 
+        database = pycolmap.Database.open(database_path)
         try:
             camera = self._create_colmap_camera(capture)
             camera.camera_id = database.write_camera(camera)
@@ -65,30 +72,21 @@ class MappingFrameBuilder:
                 database,
                 camera.camera_id,
             )
-            setup_seconds = time.perf_counter() - setup_started
+        finally:
+            database.close()
+        setup_seconds = time.perf_counter() - setup_started
 
-            images = []
-            frame_diagnostics = []
-            pair_selector = AdaptiveKeyframePairSelector(
-                self.recent_pair_count,
-                self.motion_targets_px,
-            )
-            geometry_options = pycolmap.TwoViewGeometryOptions()
-            geometry_options.ransac.random_seed = 0
+        images = []
+        frame_diagnostics = []
+        frame_read_seconds = 0.0
+        image_save_seconds = 0.0
+        mask_generation_seconds = 0.0
+        feature_extraction_seconds = 0.0
+        aruco_detection_seconds = 0.0
+        image_database_write_seconds = 0.0
+        sequential_matching_seconds = 0.0
 
-            attempted_pair_count = 0
-            verified_pair_count = 0
-            frame_read_seconds = 0.0
-            image_save_seconds = 0.0
-            feature_extraction_seconds = 0.0
-            local_tracking_seconds = 0.0
-            aruco_detection_seconds = 0.0
-            image_database_write_seconds = 0.0
-            pair_selection_seconds = 0.0
-            feature_matching_seconds = 0.0
-            geometry_verification_seconds = 0.0
-            pair_database_write_seconds = 0.0
-
+        try:
             self._skip_frames_before_mapping(capture)
             for frame_index in range(self.start_frame, self.end_frame + 1):
                 read_started = time.perf_counter()
@@ -96,7 +94,7 @@ class MappingFrameBuilder:
                 frame_read_seconds += time.perf_counter() - read_started
                 if not success:
                     break
-                if frame_index % self.frame_step != 0:
+                if (frame_index - self.start_frame) % self.keyframe_interval:
                     continue
 
                 image_name = f"frame_{frame_index:06d}.png"
@@ -105,32 +103,21 @@ class MappingFrameBuilder:
                     images_directory / image_name,
                 )
 
-                extraction_started = time.perf_counter()
-                features = self._extract_features(frame)
-                feature_extraction_seconds += (
-                    time.perf_counter() - extraction_started
-                )
-                tracking_started = time.perf_counter()
-                local_tracks = pair_selector.update_tracks(
-                    frame,
-                    features["keypoints"],
-                )
-                local_tracking_seconds += (
-                    time.perf_counter() - tracking_started
-                )
+                mask_started = time.perf_counter()
+                roi_top, mapping_mask = self._mapping_mask(frame)
+                self._save_mask(mapping_mask, masks_directory / image_name)
+                mask_generation_seconds += time.perf_counter() - mask_started
 
                 timestamp_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
                 gravity, imu_status = self._gravity_for_timestamp(timestamp_s)
 
                 aruco_started = time.perf_counter()
                 aruco_pose = self._detect_aruco_pose(frame)
-                aruco_detection_seconds += (
-                    time.perf_counter() - aruco_started
-                )
+                aruco_detection_seconds += time.perf_counter() - aruco_started
 
                 database_write_started = time.perf_counter()
-                database_image_id = self._write_mapping_image(
-                    database,
+                image_id = self._write_image_to_database(
+                    database_path,
                     camera,
                     image_name,
                     len(images) + 1,
@@ -138,90 +125,101 @@ class MappingFrameBuilder:
                     rig_id,
                     gravity,
                 )
-                database.write_keypoints(
-                    database_image_id,
-                    features["keypoints"],
-                )
                 image_database_write_seconds += (
                     time.perf_counter() - database_write_started
                 )
 
+                extraction_started = time.perf_counter()
+                self._extract_new_image_features(
+                    database_path,
+                    images_directory,
+                    masks_directory,
+                    image_name,
+                    camera.camera_id,
+                )
+                feature_extraction_seconds += (
+                    time.perf_counter() - extraction_started
+                )
+
+                features = self._read_features(
+                    database_path,
+                    image_id,
+                    frame.shape,
+                    roi_top,
+                    mapping_mask,
+                )
+                pairs_before = self._database_pair_statistics(database_path)
+                matching_started = time.perf_counter()
+                self._match_database_sequentially(database_path)
+                sequential_matching_seconds += (
+                    time.perf_counter() - matching_started
+                )
+                pairs_after = self._database_pair_statistics(database_path)
+                pair_delta = {
+                    key: pairs_after[key] - pairs_before[key]
+                    for key in pairs_after
+                }
+
                 current_image = MappingImage(
                     frame_index=frame_index,
                     name=image_name,
-                    database_image_id=database_image_id,
+                    database_image_id=image_id,
                     timestamp_s=timestamp_s,
                     features=features,
-                    local_tracks=local_tracks,
                     aruco_pose=aruco_pose,
                 )
-                selection_started = time.perf_counter()
-                pair_selector.register_keyframe(current_image)
-                pair_selection = pair_selector.select_pairs(current_image)
-                pair_selection_seconds += (
-                    time.perf_counter() - selection_started
-                )
-                pairing = self._match_previous_images(
-                    database,
-                    camera,
-                    pair_selection,
-                    current_image,
-                    geometry_options,
-                )
-                attempted_pair_count += pairing.attempted_pair_count
-                verified_pair_count += pairing.verified_pair_count
-                feature_matching_seconds += pairing.matching_seconds
-                geometry_verification_seconds += (
-                    pairing.geometry_verification_seconds
-                )
-                pair_database_write_seconds += pairing.database_write_seconds
-
                 images.append(current_image)
                 frame_diagnostics.append(
-                    self._create_frame_diagnostics(
-                        current_image,
-                        pair_selection,
-                        pairing,
-                    )
+                    self._create_frame_diagnostics(current_image, pair_delta)
                 )
                 print(
-                    f"Mapping frame processing: frame {frame_index}/"
-                    f"{self.end_frame} | "
-                    f"features: {len(features['keypoints'])} | "
-                    f"selected pairs: {len(pair_selection.pairs)} | "
-                    f"verified pairs: {verified_pair_count}{imu_status}"
+                    f"Mapping keyframe: frame {frame_index}/"
+                    f"{self.end_frame} | SIFT features: "
+                    f"{len(features['keypoints'])} | new sequential pairs: "
+                    f"{pair_delta['matched_pairs']} | new verified pairs: "
+                    f"{pair_delta['verified_pairs']}{imu_status}"
                 )
-
-            timing = FrameCollectionTiming(
-                setup_seconds=setup_seconds,
-                frame_read_seconds=frame_read_seconds,
-                image_save_seconds=image_save_seconds,
-                feature_extraction_seconds=feature_extraction_seconds,
-                local_tracking_seconds=local_tracking_seconds,
-                aruco_detection_seconds=aruco_detection_seconds,
-                image_database_write_seconds=image_database_write_seconds,
-                pair_selection_seconds=pair_selection_seconds,
-                feature_matching_seconds=feature_matching_seconds,
-                geometry_verification_seconds=geometry_verification_seconds,
-                pair_database_write_seconds=pair_database_write_seconds,
-                wall_seconds=time.perf_counter() - collection_started,
-            )
-            imu_summary = (
-                None
-                if self.imu_gravity_provider is None
-                else self.imu_gravity_provider.summary()
-            )
-            return MappingFrameCollection(
-                images=images,
-                frame_diagnostics=frame_diagnostics,
-                attempted_pair_count=attempted_pair_count,
-                verified_pair_count=verified_pair_count,
-                timing=timing,
-                imu_gravity_summary=imu_summary,
-            )
         finally:
             capture.release()
-            database.close()
+
+        final_pair_statistics = self._database_pair_statistics(database_path)
+        timing = FrameCollectionTiming(
+            setup_seconds=setup_seconds,
+            frame_read_seconds=frame_read_seconds,
+            image_save_seconds=image_save_seconds,
+            mask_generation_seconds=mask_generation_seconds,
+            feature_extraction_seconds=feature_extraction_seconds,
+            aruco_detection_seconds=aruco_detection_seconds,
+            image_database_write_seconds=image_database_write_seconds,
+            sequential_matching_seconds=sequential_matching_seconds,
+            wall_seconds=time.perf_counter() - collection_started,
+        )
+        imu_summary = (
+            None
+            if self.imu_gravity_provider is None
+            else self.imu_gravity_provider.summary()
+        )
+        return MappingFrameCollection(
+            images=images,
+            frame_diagnostics=frame_diagnostics,
+            matched_pair_count=final_pair_statistics["matched_pairs"],
+            verified_pair_count=final_pair_statistics["verified_pairs"],
+            timing=timing,
+            imu_gravity_summary=imu_summary,
+        )
+
+    def _validate_vocabulary_tree(self):
+        if self.vocabulary_tree_path is None:
+            raise RuntimeError(
+                "COLMAP loop detection requires a vocabulary tree. Set "
+                "COLMAP_VOCAB_TREE_PATH or pass vocabulary_tree_path."
+            )
+        if not self.vocabulary_tree_path.is_file():
+            raise FileNotFoundError(
+                "COLMAP vocabulary tree was not found: "
+                f"{self.vocabulary_tree_path}. Set COLMAP_VOCAB_TREE_PATH "
+                "to a downloaded COLMAP vocabulary-tree .bin file."
+            )
 
     def _skip_frames_before_mapping(self, capture):
         for _ in range(self.start_frame):
@@ -232,100 +230,198 @@ class MappingFrameBuilder:
     @staticmethod
     def _save_image(frame, output_path):
         started = time.perf_counter()
-        cv2.imwrite(str(output_path), frame)
+        if not cv2.imwrite(str(output_path), frame):
+            raise RuntimeError(f"Could not save mapping image: {output_path}")
         return time.perf_counter() - started
 
-    def _extract_features(self, frame):
-        detected_features = self.feature_matcher.extract(frame)
-        return self._select_spatially_distributed_features(detected_features)
+    @staticmethod
+    def _save_mask(mask, output_path):
+        if not cv2.imwrite(str(output_path), mask.astype(np.uint8) * 255):
+            raise RuntimeError(f"Could not save mapping mask: {output_path}")
 
-    def _select_spatially_distributed_features(self, features):
-        keypoints = features["keypoints"]
-        scores = features["scores"]
-        width, height = features["image_size"]
-        roi_top = features["roi_top"]
-        selection_mask = features.get("selection_mask")
-        if selection_mask is None:
-            selection_left = 0
-            selection_top = roi_top
-            selection_right = width
-            selection_bottom = height
-        else:
-            mask_y, mask_x = np.nonzero(selection_mask)
-            if not len(mask_x):
-                return self._empty_selected_features(features)
-            selection_left = mask_x.min()
-            selection_top = mask_y.min()
-            selection_right = mask_x.max() + 1
-            selection_bottom = mask_y.max() + 1
-
-        columns = np.minimum(
-            (
-                (keypoints[:, 0] - selection_left)
-                * self.feature_grid_columns
-                / (selection_right - selection_left)
-            ).astype(int),
-            self.feature_grid_columns - 1,
+    def _mapping_mask(self, frame):
+        height, width = frame.shape[:2]
+        roi_top = round(
+            height
+            * (1.0 - self.skin_mask_provider.feature_roi_bottom_fraction)
         )
-        rows = np.minimum(
-            (
-                (keypoints[:, 1] - selection_top)
-                * self.feature_grid_rows
-                / (selection_bottom - selection_top)
-            ).astype(int),
-            self.feature_grid_rows - 1,
-        )
+        roi_mask = np.zeros((height, width), dtype=bool)
+        roi_mask[roi_top:] = True
+        skin_mask = self.skin_mask_provider.adaptive_skin_mask(frame, roi_top)
+        if skin_mask is None:
+            skin_mask = np.ones((height, width), dtype=bool)
+        return roi_top, roi_mask & skin_mask.astype(bool)
 
-        indices_by_cell = []
-        for row in range(self.feature_grid_rows):
-            for column in range(self.feature_grid_columns):
-                cell_indices = np.flatnonzero(
-                    (rows == row) & (columns == column)
+    def _write_image_to_database(
+        self,
+        database_path,
+        camera,
+        image_name,
+        image_id,
+        camera_sensor,
+        rig_id,
+        gravity,
+    ):
+        database = pycolmap.Database.open(database_path)
+        try:
+            return self._write_mapping_image(
+                database,
+                camera,
+                image_name,
+                image_id,
+                camera_sensor,
+                rig_id,
+                gravity,
+            )
+        finally:
+            database.close()
+
+    def _extract_new_image_features(
+        self,
+        database_path,
+        images_directory,
+        masks_directory,
+        image_name,
+        camera_id,
+    ):
+        database = pycolmap.Database.open(database_path)
+        try:
+            image_id = database.read_image_with_name(image_name).image_id
+            if database.exists_keypoints(image_id) or database.exists_descriptors(
+                image_id
+            ):
+                raise RuntimeError(
+                    f"Features already exist for new keyframe {image_name}"
                 )
-                score_order = np.argsort(scores[cell_indices])[::-1]
-                indices_by_cell.append(cell_indices[score_order])
+        finally:
+            database.close()
 
-        selected_indices = []
-        cell_rank = 0
-        while len(selected_indices) < self.maximum_features:
-            added_feature = False
-            for cell_indices in indices_by_cell:
-                if cell_rank < len(cell_indices):
-                    selected_indices.append(cell_indices[cell_rank])
-                    added_feature = True
-                    if len(selected_indices) == self.maximum_features:
-                        break
-            if not added_feature:
-                break
-            cell_rank += 1
+        reader_options = pycolmap.ImageReaderOptions(
+            existing_camera_id=camera_id,
+            mask_path=masks_directory,
+        )
+        extraction_options = pycolmap.FeatureExtractionOptions()
+        extraction_options.max_image_size = -1
+        extraction_options.sift.max_num_features = self.maximum_features
+        extraction_options.sift.max_num_orientations = 1
+        # The frozen-map tracker consumes unit-normalized SIFT descriptors.
+        extraction_options.sift.normalization = pycolmap.Normalization.L2
+        pycolmap.extract_features(
+            database_path=database_path,
+            image_path=images_directory,
+            image_names=[image_name],
+            camera_mode=pycolmap.CameraMode.SINGLE,
+            reader_options=reader_options,
+            extraction_options=extraction_options,
+            device=pycolmap.Device.auto,
+        )
 
-        selected_indices = np.asarray(selected_indices, dtype=int)
-        selected = {
-            "keypoints": features["keypoints"][selected_indices],
-            "descriptors": features["descriptors"][selected_indices],
-            "scores": features["scores"][selected_indices],
-            "image_size": features["image_size"],
-            "roi_top": roi_top,
-            "selection_bounds": np.array(
+    def _match_database_sequentially(self, database_path):
+        pairing_options = pycolmap.SequentialPairingOptions(
+            overlap=self.sequential_overlap,
+            quadratic_overlap=False,
+            loop_detection=True,
+            loop_detection_period=1,
+            vocab_tree_path=self.vocabulary_tree_path,
+        )
+        matching_options = pycolmap.FeatureMatchingOptions(
+            skip_geometric_verification=False,
+        )
+        verification_options = pycolmap.TwoViewGeometryOptions()
+        verification_options.min_num_inliers = self.MINIMUM_PAIR_INLIERS
+        verification_options.ransac.random_seed = 0
+        pycolmap.match_sequential(
+            database_path=database_path,
+            matching_options=matching_options,
+            pairing_options=pairing_options,
+            verification_options=verification_options,
+            device=pycolmap.Device.auto,
+        )
+
+    @staticmethod
+    def _database_pair_statistics(database_path):
+        database = pycolmap.Database.open(database_path)
+        try:
+            return {
+                "matched_pairs": database.num_matched_image_pairs(),
+                "raw_matches": database.num_matches(),
+                "verified_pairs": database.num_verified_image_pairs(),
+                "verified_inliers": database.num_inlier_matches(),
+            }
+        finally:
+            database.close()
+
+    @staticmethod
+    def _read_features(
+        database_path,
+        image_id,
+        frame_shape,
+        roi_top,
+        mapping_mask,
+    ):
+        database = pycolmap.Database.open(database_path)
+        try:
+            colmap_keypoints = database.read_keypoints(image_id).copy()
+            descriptors = (
+                database.read_descriptors(image_id).to_float().data.copy()
+            )
+        finally:
+            database.close()
+
+        descriptor_norms = np.linalg.norm(descriptors, axis=1, keepdims=True)
+        descriptors /= np.maximum(descriptor_norms, np.finfo(np.float32).eps)
+        scales, orientations = MappingFrameBuilder._scales_and_orientations(
+            colmap_keypoints
+        )
+        mask_y, mask_x = np.nonzero(mapping_mask)
+        if len(mask_x):
+            selection_bounds = np.array(
                 [
-                    selection_left,
-                    selection_top,
-                    selection_right,
-                    selection_bottom,
+                    mask_x.min(),
+                    mask_y.min(),
+                    mask_x.max() + 1,
+                    mask_y.max() + 1,
                 ],
                 dtype=np.int32,
+            )
+        else:
+            selection_bounds = np.array(
+                [0, roi_top, frame_shape[1], frame_shape[0]],
+                dtype=np.int32,
+            )
+
+        return {
+            "keypoints": colmap_keypoints[:, :2].astype(np.float32),
+            "descriptors": descriptors.astype(np.float32),
+            "scores": np.ones(len(colmap_keypoints), dtype=np.float32),
+            "scales": scales,
+            "oris": orientations,
+            "image_size": np.array(
+                [frame_shape[1], frame_shape[0]], dtype=np.float32
             ),
-            "selection_contour": self._selection_contour(selection_mask),
+            "roi_top": roi_top,
+            "selection_bounds": selection_bounds,
+            "selection_contour": MappingFrameBuilder._selection_contour(
+                mapping_mask
+            ),
         }
-        for field_name in ("scales", "oris"):
-            if field_name in features:
-                selected[field_name] = features[field_name][selected_indices]
-        return selected
+
+    @staticmethod
+    def _scales_and_orientations(keypoints):
+        if keypoints.shape[1] >= 6:
+            affine = keypoints[:, 2:6].reshape(-1, 2, 2)
+            scales = np.sqrt(np.abs(np.linalg.det(affine)))
+            orientations = np.arctan2(affine[:, 1, 0], affine[:, 0, 0])
+        elif keypoints.shape[1] >= 4:
+            scales = keypoints[:, 2]
+            orientations = keypoints[:, 3]
+        else:
+            scales = np.ones(len(keypoints), dtype=np.float32)
+            orientations = np.zeros(len(keypoints), dtype=np.float32)
+        return scales.astype(np.float32), orientations.astype(np.float32)
 
     @staticmethod
     def _selection_contour(selection_mask):
-        if selection_mask is None:
-            return np.empty((0, 1, 2), dtype=np.int32)
         contours, _ = cv2.findContours(
             selection_mask.astype(np.uint8),
             cv2.RETR_EXTERNAL,
@@ -337,131 +433,17 @@ class MappingFrameBuilder:
         return cv2.approxPolyDP(contour, 1.0, True)
 
     @staticmethod
-    def _empty_selected_features(features):
-        selected = {
-            "keypoints": features["keypoints"][:0],
-            "descriptors": features["descriptors"][:0],
-            "scores": features["scores"][:0],
-            "image_size": features["image_size"],
-            "roi_top": features["roi_top"],
-            "selection_bounds": np.array(
-                [
-                    0,
-                    features["roi_top"],
-                    features["image_size"][0],
-                    features["image_size"][1],
-                ],
-                dtype=np.int32,
-            ),
-            "selection_contour": np.empty((0, 1, 2), dtype=np.int32),
-        }
-        for field_name in ("scales", "oris"):
-            if field_name in features:
-                selected[field_name] = features[field_name][:0]
-        return selected
-
-    def _match_previous_images(
-        self,
-        database,
-        camera,
-        pair_selection,
-        current_image,
-        geometry_options,
-    ):
-        raw_match_count = 0
-        verified_pair_count = 0
-        verified_inlier_count = 0
-        matching_seconds = 0.0
-        geometry_seconds = 0.0
-        database_write_seconds = 0.0
-
-        for selected_pair in pair_selection.pairs:
-            previous_image = selected_pair.image
-            matching_started = time.perf_counter()
-            matches = self.feature_matcher.match(
-                previous_image.features,
-                current_image.features,
-            )
-            matching_seconds += time.perf_counter() - matching_started
-            raw_match_count += len(matches)
-            if len(matches) < self.MINIMUM_PAIR_MATCHES:
-                continue
-
-            geometry_started = time.perf_counter()
-            geometry = pycolmap.estimate_two_view_geometry(
-                camera,
-                previous_image.features["keypoints"],
-                camera,
-                current_image.features["keypoints"],
-                matches,
-                geometry_options,
-            )
-            geometry_seconds += time.perf_counter() - geometry_started
-            if len(geometry.inlier_matches) < self.MINIMUM_PAIR_INLIERS:
-                continue
-
-            verified_pair_count += 1
-            verified_inlier_count += len(geometry.inlier_matches)
-            writing_started = time.perf_counter()
-            database.write_two_view_geometry(
-                previous_image.database_image_id,
-                current_image.database_image_id,
-                geometry,
-            )
-            database_write_seconds += time.perf_counter() - writing_started
-
-        return FramePairingResult(
-            attempted_pair_count=len(pair_selection.pairs),
-            raw_match_count=raw_match_count,
-            verified_pair_count=verified_pair_count,
-            verified_inlier_count=verified_inlier_count,
-            matching_seconds=matching_seconds,
-            geometry_verification_seconds=geometry_seconds,
-            database_write_seconds=database_write_seconds,
-        )
-
-    def _create_frame_diagnostics(
-        self,
-        image,
-        pair_selection,
-        pairing,
-    ):
-        aruco_quality = (
-            None if image.aruco_pose is None else image.aruco_pose[2]
-        )
-        selected_motions = [
-            pair.median_displacement_px
-            for pair in pair_selection.pairs
-            if np.isfinite(pair.median_displacement_px)
-        ]
-        selected_overlaps = [
-            pair.overlap
-            for pair in pair_selection.pairs
-        ]
+    def _create_frame_diagnostics(image, pair_delta):
+        aruco_quality = None if image.aruco_pose is None else image.aruco_pose[2]
         return MappingFrameDiagnostics(
             frame_index=image.frame_index,
             timestamp_s=image.timestamp_s,
             image_name=image.name,
             feature_count=len(image.features["keypoints"]),
-            continued_track_count=(
-                image.local_tracks.continued_track_count
-            ),
-            new_track_count=image.local_tracks.new_track_count,
-            active_pair_candidates=(
-                pair_selection.active_candidate_count
-            ),
-            recent_pair_count=pair_selection.recent_pair_count,
-            motion_pair_count=pair_selection.motion_pair_count,
-            maximum_selected_motion_px=(
-                max(selected_motions) if selected_motions else np.nan
-            ),
-            minimum_selected_overlap=(
-                min(selected_overlaps) if selected_overlaps else np.nan
-            ),
-            attempted_pairs=pairing.attempted_pair_count,
-            raw_matches=pairing.raw_match_count,
-            verified_pairs=pairing.verified_pair_count,
-            verified_inliers=pairing.verified_inlier_count,
+            matched_pairs=pair_delta["matched_pairs"],
+            raw_matches=pair_delta["raw_matches"],
+            verified_pairs=pair_delta["verified_pairs"],
+            verified_inliers=pair_delta["verified_inliers"],
             aruco_detected=image.aruco_pose is not None,
             aruco_reprojection_rms_px=(
                 np.nan
@@ -499,10 +481,7 @@ class MappingFrameBuilder:
 
     def _create_colmap_camera(self, capture):
         distortion = self.distortion.reshape(-1)
-        distortion = np.pad(
-            distortion,
-            (0, max(0, 8 - len(distortion))),
-        )
+        distortion = np.pad(distortion, (0, max(0, 8 - len(distortion))))
         fx = self.camera_matrix[0, 0]
         fy = self.camera_matrix[1, 1]
         cx = self.camera_matrix[0, 2]
@@ -524,10 +503,7 @@ class MappingFrameBuilder:
         if self.imu_gravity_provider is None:
             return None, None
 
-        camera_sensor = pycolmap.sensor_t(
-            pycolmap.SensorType.CAMERA,
-            camera_id,
-        )
+        camera_sensor = pycolmap.sensor_t(pycolmap.SensorType.CAMERA, camera_id)
         rig = pycolmap.Rig()
         rig.add_ref_sensor(camera_sensor)
         return camera_sensor, database.write_rig(rig)

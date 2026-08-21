@@ -89,9 +89,7 @@ def run_recording(
         reconstruction_method=config["reconstruction_method"],
         **frame_range,
         feature_type=config["feature_type"],
-        mapping_frame_step=config["mapping_frame_step"],
-        mapping_recent_pair_count=config["mapping_recent_pair_count"],
-        mapping_motion_targets_px=config["mapping_motion_targets_px"],
+        keyframe_interval=config["keyframe_interval"],
         use_imu=config["use_imu"],
     )
 

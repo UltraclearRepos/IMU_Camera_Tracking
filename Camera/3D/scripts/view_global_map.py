@@ -14,12 +14,11 @@ import plotly.io as pio
 SCRIPT_DIR = Path(__file__).resolve().parent
 MAP_PATH = (
     SCRIPT_DIR.parent
-    / "results"
+    / "jenkins_results"
     / "Cylinder"
+    / "sift_every_frame"
     / "sift"
-    / "global"
-    / "noIMU"
-    / "initial_50mm_Arc180-Speed-3_2026-08-18_17.47.36"
+    / "initial_50mm_Arc180-Speed-3_2026-08-20_14.39.08"
     / "map"
     / "global_map.npz"
 )

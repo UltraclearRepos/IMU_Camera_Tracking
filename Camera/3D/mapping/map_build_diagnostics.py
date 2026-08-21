@@ -177,7 +177,7 @@ class MapBuildDiagnostics:
         feature_count = self._field(metrics, "feature_count")
         raw_matches = self._field(metrics, "raw_matches")
         verified_inliers = self._field(metrics, "verified_inliers")
-        attempted_pairs = self._field(metrics, "attempted_pairs")
+        matched_pairs = self._field(metrics, "matched_pairs")
         verified_pairs = self._field(metrics, "verified_pairs")
         registered = self._field(metrics, "registered").astype(bool)
         triangulated = self._field(metrics, "triangulated_observations")
@@ -201,9 +201,9 @@ class MapBuildDiagnostics:
         aruco_detected = self._field(metrics, "aruco_detected").astype(bool)
         aruco_rms = self._field(metrics, "aruco_reprojection_rms_px")
 
-        matches_per_pair = raw_matches / np.maximum(attempted_pairs, 1)
+        matches_per_pair = raw_matches / np.maximum(matched_pairs, 1)
         inliers_per_pair = verified_inliers / np.maximum(verified_pairs, 1)
-        pair_acceptance = verified_pairs / np.maximum(attempted_pairs, 1)
+        pair_acceptance = verified_pairs / np.maximum(matched_pairs, 1)
 
         figure, axes = plt.subplots(6, 1, figsize=(16, 19), sharex=True)
         axes[0].plot(frames, feature_count, color="tab:blue")
@@ -211,7 +211,7 @@ class MapBuildDiagnostics:
         axes[0].set_title("1. Spatial feature selection")
         axes[0].grid(True)
 
-        axes[1].plot(frames, matches_per_pair, label="Matches / attempted pair")
+        axes[1].plot(frames, matches_per_pair, label="Matches / matched pair")
         axes[1].plot(frames, inliers_per_pair, label="Inliers / accepted pair")
         axes[1].set_ylabel("Correspondences")
         axes[1].set_title("2. Matching and two-view verification")
@@ -318,112 +318,34 @@ class MapBuildDiagnostics:
         output_path,
         recording_name,
     ):
-        """Save diagnostics specific to local tracking and pair selection."""
+        """Save diagnostics for COLMAP sequential and loop matching."""
         metrics = frame_collection.frame_diagnostics
         frames = self._field(metrics, "frame_index")
-        continued_tracks = self._field(metrics, "continued_track_count")
-        new_tracks = self._field(metrics, "new_track_count")
-        active_candidates = self._field(metrics, "active_pair_candidates")
-        recent_pairs = self._field(metrics, "recent_pair_count")
-        motion_pairs = self._field(metrics, "motion_pair_count")
-        attempted_pairs = self._field(metrics, "attempted_pairs")
+        matched_pairs = self._field(metrics, "matched_pairs")
         verified_pairs = self._field(metrics, "verified_pairs")
-        maximum_motion = self._field(
-            metrics,
-            "maximum_selected_motion_px",
-        )
-        minimum_overlap = self._field(metrics, "minimum_selected_overlap")
         raw_matches = self._field(metrics, "raw_matches")
         verified_inliers = self._field(metrics, "verified_inliers")
 
-        total_tracks = continued_tracks + new_tracks
-        matches_per_pair = raw_matches / np.maximum(attempted_pairs, 1)
+        matches_per_pair = raw_matches / np.maximum(matched_pairs, 1)
         inliers_per_pair = verified_inliers / np.maximum(verified_pairs, 1)
 
-        figure, axes = plt.subplots(4, 1, figsize=(16, 14), sharex=True)
-
-        axes[0].plot(frames, continued_tracks, label="Continued LK tracks")
-        axes[0].plot(frames, new_tracks, label="New SIFT tracks")
-        axes[0].plot(
-            frames,
-            total_tracks,
-            color="black",
-            alpha=0.65,
-            label="Active local tracks",
-        )
-        axes[0].set_title("1. Local tracks used to choose keyframe pairs")
-        axes[0].set_ylabel("Tracks")
+        figure, axes = plt.subplots(2, 1, figsize=(16, 9), sharex=True)
+        axes[0].plot(frames, matched_pairs, label="New matched pairs")
+        axes[0].plot(frames, verified_pairs, label="New verified pairs")
+        axes[0].set_title("1. COLMAP sequential and loop pairs")
+        axes[0].set_ylabel("Image pairs")
         axes[0].grid(True)
         axes[0].legend(loc="upper left")
 
-        axes[1].plot(
-            frames,
-            active_candidates,
-            color="tab:gray",
-            label="Older candidates with sufficient overlap",
-        )
-        axes[1].plot(frames, recent_pairs, label="Selected recent pairs")
-        axes[1].plot(frames, motion_pairs, label="Selected motion pairs")
-        axes[1].plot(
-            frames,
-            attempted_pairs,
-            color="black",
-            alpha=0.65,
-            label="Pairs sent to matching",
-        )
-        axes[1].set_title("2. Pair selection")
-        axes[1].set_ylabel("Image pairs")
+        axes[1].plot(frames, matches_per_pair, label="Matches / new pair")
+        axes[1].plot(frames, inliers_per_pair, label="Inliers / verified pair")
+        axes[1].set_title("2. COLMAP matching and geometric verification")
+        axes[1].set_ylabel("Correspondences")
+        axes[1].set_xlabel("Video frame")
         axes[1].grid(True)
         axes[1].legend(loc="upper left")
-        verified_axis = axes[1].twinx()
-        verified_axis.plot(
-            frames,
-            verified_pairs,
-            color="tab:green",
-            alpha=0.7,
-            label="Verified pairs",
-        )
-        verified_axis.set_ylabel("Verified pairs")
-        verified_axis.legend(loc="upper right")
 
-        axes[2].plot(
-            frames,
-            maximum_motion,
-            color="tab:purple",
-            label="Maximum selected displacement",
-        )
-        axes[2].set_title("3. Selected-pair geometry")
-        axes[2].set_ylabel("Displacement [px]")
-        axes[2].grid(True)
-        axes[2].legend(loc="upper left")
-        overlap_axis = axes[2].twinx()
-        overlap_axis.plot(
-            frames,
-            100.0 * minimum_overlap,
-            color="tab:orange",
-            label="Minimum selected overlap",
-        )
-        overlap_axis.set_ylabel("Overlap [%]")
-        overlap_axis.set_ylim(0.0, 105.0)
-        overlap_axis.legend(loc="upper right")
-
-        axes[3].plot(
-            frames,
-            matches_per_pair,
-            label="Raw matches / selected pair",
-        )
-        axes[3].plot(
-            frames,
-            inliers_per_pair,
-            label="Inliers / verified pair",
-        )
-        axes[3].set_title("4. Matching result for selected pairs")
-        axes[3].set_ylabel("Correspondences")
-        axes[3].set_xlabel("Video frame")
-        axes[3].grid(True)
-        axes[3].legend(loc="upper left")
-
-        figure.suptitle(f"{recording_name}: keyframe-pairing diagnostics")
+        figure.suptitle(f"{recording_name}: COLMAP matching diagnostics")
         figure.tight_layout()
         figure.savefig(output_path, dpi=160)
         plt.close(figure)
@@ -501,16 +423,16 @@ class MapBuildDiagnostics:
         return {
             "frame_collection": {
                 "processed_frames": frame_collection.image_count,
-                "attempted_pairs": frame_collection.attempted_pair_count,
+                "matched_pairs": frame_collection.matched_pair_count,
                 "verified_pairs": frame_collection.verified_pair_count,
                 "setup_s": collection_timing.setup_seconds,
                 "frame_read_s": collection_timing.frame_read_seconds,
                 "image_save_s": collection_timing.image_save_seconds,
+                "mask_generation_s": (
+                    collection_timing.mask_generation_seconds
+                ),
                 "feature_extraction_s": (
                     collection_timing.feature_extraction_seconds
-                ),
-                "local_tracking_s": (
-                    collection_timing.local_tracking_seconds
                 ),
                 "aruco_detection_s": (
                     collection_timing.aruco_detection_seconds
@@ -518,17 +440,8 @@ class MapBuildDiagnostics:
                 "image_database_write_s": (
                     collection_timing.image_database_write_seconds
                 ),
-                "pair_selection_s": (
-                    collection_timing.pair_selection_seconds
-                ),
-                "feature_matching_s": (
-                    collection_timing.feature_matching_seconds
-                ),
-                "geometry_verification_s": (
-                    collection_timing.geometry_verification_seconds
-                ),
-                "pair_database_write_s": (
-                    collection_timing.pair_database_write_seconds
+                "sequential_matching_and_verification_s": (
+                    collection_timing.sequential_matching_seconds
                 ),
                 "wall_time_s": collection_timing.wall_seconds,
                 "average_wall_time_per_frame_ms": (
@@ -561,33 +474,20 @@ class MapBuildDiagnostics:
         pairing_plot_path,
     ):
         return {
-            "feature_type": configuration.feature_type,
+            "mapping_feature_type": configuration.mapping_feature_type,
             "mapping_start_frame": configuration.start_frame,
             "mapping_end_frame": configuration.end_frame,
             "reconstruction_method": configuration.reconstruction_method,
-            "mapping_frame_step": configuration.frame_step,
-            "adaptive_pair_selection": {
-                "recent_pair_count": configuration.recent_pair_count,
-                "motion_targets_px": list(configuration.motion_targets_px),
-                "minimum_new_track_distance_px": (
-                    configuration.minimum_new_track_distance_px
-                ),
-                "maximum_active_track_count": (
-                    configuration.maximum_active_track_count
-                ),
-                "maximum_forward_backward_error_px": (
-                    configuration.maximum_forward_backward_error_px
-                ),
-                "minimum_keyframe_overlap": (
-                    configuration.minimum_keyframe_overlap
-                ),
-                "maximum_motion_anchor_px": (
-                    configuration.maximum_motion_anchor_px
-                ),
+            "colmap_mapping": {
+                "keyframe_interval": configuration.keyframe_interval,
+                "maximum_features": configuration.maximum_features,
+                "sequential_overlap": configuration.sequential_overlap,
+                "loop_detection": configuration.loop_detection,
+                "vocabulary_tree_path": configuration.vocabulary_tree_path,
             },
             "coordinate_frame": frozen_map.coordinate_frame,
             "extracted_images": frame_collection.image_count,
-            "attempted_image_pairs": frame_collection.attempted_pair_count,
+            "matched_image_pairs": frame_collection.matched_pair_count,
             "verified_image_pairs": frame_collection.verified_pair_count,
             "registered_images": reconstruction.num_reg_images(),
             "selected_landmarks": len(frozen_map.positions),
@@ -666,16 +566,14 @@ class MapBuildDiagnostics:
         print(f"    Setup: {collection['setup_s']:.2f} s")
         print(f"    Frame reading: {collection['frame_read_s']:.2f} s")
         print(f"    Image saving: {collection['image_save_s']:.2f} s")
+        print(f"    Mask generation: {collection['mask_generation_s']:.2f} s")
         print(
             "    Feature extraction: "
             f"{collection['feature_extraction_s']:.2f} s"
         )
         print(
-            f"    Matching: {collection['feature_matching_s']:.2f} s"
-        )
-        print(
-            "    Geometry verification: "
-            f"{collection['geometry_verification_s']:.2f} s"
+            "    Sequential matching and geometric verification: "
+            f"{collection['sequential_matching_and_verification_s']:.2f} s"
         )
         print(f"    TOTAL: {collection['wall_time_s']:.2f} s")
         print("  AFTER COLLECTION")

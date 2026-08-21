@@ -13,10 +13,8 @@ import pycolmap
 
 from camera_tracking import (
     FEATURE_TYPE,
+    KEYFRAME_INTERVAL,
     MAPPING_END_FRAME,
-    MAPPING_FRAME_STEP,
-    MAPPING_MOTION_TARGETS_PX,
-    MAPPING_RECENT_PAIR_COUNT,
     MAPPING_START_FRAME,
     TRACKING_START_FRAME,
     USE_IMU_GRAVITY_PRIOR,
@@ -49,7 +47,7 @@ def parse_arguments():
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument(
         "--reconstruction-method",
-        choices=("global", "incremental"),
+        choices=("global",),
         required=True,
     )
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -77,9 +75,7 @@ def main():
         mapping_end_frame=MAPPING_END_FRAME,
         tracking_start_frame=TRACKING_START_FRAME,
         feature_type=FEATURE_TYPE,
-        mapping_frame_step=MAPPING_FRAME_STEP,
-        mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
-        mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
+        keyframe_interval=KEYFRAME_INTERVAL,
         use_imu=USE_IMU_GRAVITY_PRIOR,
     )
     metrics["total_pipeline_seconds"] = time.perf_counter() - started

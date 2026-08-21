@@ -8,17 +8,6 @@ FeatureData = dict[str, np.ndarray]
 ArucoPose = tuple[np.ndarray, np.ndarray, dict[str, Any]]
 
 
-@dataclass(frozen=True)
-class LocalTrackSnapshot:
-    track_ids: np.ndarray
-    positions: np.ndarray
-    continued_track_count: int
-    new_track_count: int
-
-    def __len__(self):
-        return len(self.track_ids)
-
-
 @dataclass
 class MappingImage:
     frame_index: int
@@ -26,32 +15,8 @@ class MappingImage:
     database_image_id: int
     timestamp_s: float
     features: FeatureData
-    local_tracks: LocalTrackSnapshot
     aruco_pose: ArucoPose | None
 
-
-@dataclass(frozen=True)
-class KeyframePairCandidate:
-    image: MappingImage
-    shared_track_count: int
-    overlap: float
-    median_displacement_px: float
-    reason: str
-    motion_target_px: float | None
-
-
-@dataclass(frozen=True)
-class KeyframePairSelection:
-    pairs: tuple[KeyframePairCandidate, ...]
-    active_candidate_count: int
-
-    @property
-    def recent_pair_count(self):
-        return sum(pair.reason == "recent" for pair in self.pairs)
-
-    @property
-    def motion_pair_count(self):
-        return sum(pair.reason == "motion_target" for pair in self.pairs)
 
 @dataclass
 class MappingFrameDiagnostics:
@@ -59,14 +24,7 @@ class MappingFrameDiagnostics:
     timestamp_s: float
     image_name: str
     feature_count: int
-    continued_track_count: int
-    new_track_count: int
-    active_pair_candidates: int
-    recent_pair_count: int
-    motion_pair_count: int
-    maximum_selected_motion_px: float
-    minimum_selected_overlap: float
-    attempted_pairs: int
+    matched_pairs: int
     raw_matches: int
     verified_pairs: int
     verified_inliers: int
@@ -87,33 +45,19 @@ class FrameCollectionTiming:
     setup_seconds: float
     frame_read_seconds: float
     image_save_seconds: float
+    mask_generation_seconds: float
     feature_extraction_seconds: float
-    local_tracking_seconds: float
     aruco_detection_seconds: float
     image_database_write_seconds: float
-    pair_selection_seconds: float
-    feature_matching_seconds: float
-    geometry_verification_seconds: float
-    pair_database_write_seconds: float
+    sequential_matching_seconds: float
     wall_seconds: float
-
-
-@dataclass(frozen=True)
-class FramePairingResult:
-    attempted_pair_count: int
-    raw_match_count: int
-    verified_pair_count: int
-    verified_inlier_count: int
-    matching_seconds: float
-    geometry_verification_seconds: float
-    database_write_seconds: float
 
 
 @dataclass
 class MappingFrameCollection:
     images: list[MappingImage]
     frame_diagnostics: list[MappingFrameDiagnostics]
-    attempted_pair_count: int
+    matched_pair_count: int
     verified_pair_count: int
     timing: FrameCollectionTiming
     imu_gravity_summary: dict[str, Any] | None
@@ -209,15 +153,12 @@ class MapBuildDurations:
 
 @dataclass(frozen=True)
 class MapBuildConfiguration:
-    feature_type: str
+    mapping_feature_type: str
     start_frame: int
     end_frame: int
     reconstruction_method: str
-    frame_step: int
-    recent_pair_count: int
-    motion_targets_px: tuple[float, ...]
-    minimum_new_track_distance_px: float
-    maximum_active_track_count: int
-    maximum_forward_backward_error_px: float
-    minimum_keyframe_overlap: float
-    maximum_motion_anchor_px: float
+    keyframe_interval: int
+    maximum_features: int
+    sequential_overlap: int
+    loop_detection: bool
+    vocabulary_tree_path: str
