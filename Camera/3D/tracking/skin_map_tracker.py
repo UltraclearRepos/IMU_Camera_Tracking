@@ -256,6 +256,10 @@ class SkinMapTracker:
             len(current_features["keypoints"])
             - len(np.unique(matches[:, 1]))
         )
+        if initializing:
+            self.last_diagnostics["initialization_points"] = (
+                current_features["keypoints"][matches[:, 1]].copy()
+            )
         if len(matches) < required_matches:
             return None
 

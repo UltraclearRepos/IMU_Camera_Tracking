@@ -686,7 +686,7 @@ def diagnostic_frame(
     )
 
     tracked = result is not None
-    initializing = not tracker.keyframes and tracker.initialization is not None
+    initializing = not tracker.initialized
     if tracked:
         color = (40, 200, 40)
         method = tracker.last_diagnostics.get(
@@ -696,10 +696,7 @@ def diagnostic_frame(
         label = f"TRACKING - {method.replace('_', ' ').upper()}"
     elif initializing:
         color = (0, 180, 255)
-        label = "INITIALIZING"
-    elif not tracker.keyframes:
-        color = (0, 180, 255)
-        label = "WAITING FOR ARUCO"
+        label = "WAITING FOR GLOBAL-MAP PNP"
     else:
         color = (30, 30, 220)
         label = "LOST"
