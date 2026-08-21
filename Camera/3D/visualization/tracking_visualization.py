@@ -653,9 +653,8 @@ def diagnostic_frame(
     initialization_min_landmarks,
     tracking_time_ms,
 ):
-    output = frame.copy()
     roi_top = round(frame.shape[0] * (1.0 - feature_roi_bottom_fraction))
-    output[:roi_top] = 0
+    output = tracking_mask_overlay(frame, tracker, roi_top)
     cv2.line(
         output,
         (0, roi_top),
@@ -665,8 +664,8 @@ def diagnostic_frame(
     )
     cv2.putText(
         output,
-        "Feature ROI below this line",
-        (12, roi_top + 24),
+        "Cyan: adaptive skin ROI | Magenta: skin mask",
+        (12, output.shape[0] - 40),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
         (255, 180, 0),
@@ -819,6 +818,49 @@ def diagnostic_frame(
         (255, 255, 255),
         2,
     )
+    return output
+
+
+def tracking_mask_overlay(frame, tracker, roi_top):
+    """Render the current tracking mask like the mapping-feature video."""
+    height, width = frame.shape[:2]
+    roi_mask = np.zeros((height, width), dtype=bool)
+    roi_mask[roi_top:] = True
+    skin_mask = tracker.feature_matching.last_skin_mask
+    selection_mask = (
+        roi_mask
+        if skin_mask is None
+        else roi_mask & skin_mask.astype(bool)
+    )
+    mask_y, mask_x = np.nonzero(selection_mask)
+    output = np.zeros_like(frame)
+    if not len(mask_x):
+        return output
+
+    left, top = int(mask_x.min()), int(mask_y.min())
+    right, bottom = int(mask_x.max() + 1), int(mask_y.max() + 1)
+    output[top:bottom, left:right] = frame[top:bottom, left:right]
+    cv2.rectangle(
+        output,
+        (left, top),
+        (right - 1, bottom - 1),
+        (255, 180, 0),
+        2,
+    )
+    contours, _ = cv2.findContours(
+        selection_mask.astype(np.uint8),
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    if contours:
+        cv2.drawContours(
+            output,
+            [max(contours, key=cv2.contourArea)],
+            -1,
+            (255, 0, 255),
+            2,
+            cv2.LINE_AA,
+        )
     return output
 
 

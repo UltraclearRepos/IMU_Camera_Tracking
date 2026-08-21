@@ -39,7 +39,6 @@ class ColmapMappingDatabase:
             database.close()
 
     def add_image(self, image_name, image_id, timestamp_s):
-        gravity, status = self._gravity(timestamp_s)
         database = pycolmap.Database.open(self.database_path)
         try:
             if self.camera_sensor is None:
@@ -51,8 +50,9 @@ class ColmapMappingDatabase:
                     ),
                     use_image_id=True,
                 )
-                return image_id, status
+                return image_id, ""
 
+            gravity, status = self._gravity(timestamp_s)
             camera_data = pycolmap.data_t(self.camera_sensor, image_id)
             colmap_frame = pycolmap.Frame(rig_id=self.rig_id)
             colmap_frame.add_data_id(camera_data)
@@ -82,8 +82,6 @@ class ColmapMappingDatabase:
         return self.imu_gravity_provider.summary()
 
     def _gravity(self, timestamp_s):
-        if self.imu_gravity_provider is None:
-            return None, ""
         gravity, diagnostics = (
             self.imu_gravity_provider.gravity_at_video_time(timestamp_s)
         )
