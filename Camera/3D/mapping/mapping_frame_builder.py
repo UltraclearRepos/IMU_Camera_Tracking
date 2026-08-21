@@ -21,7 +21,6 @@ class MappingFrameBuilder:
         keyframe_interval,
         maximum_features,
         sequential_overlap,
-        matcher_type,
         loop_detection,
         loop_detection_period,
         vocabulary_tree_path,
@@ -39,7 +38,6 @@ class MappingFrameBuilder:
         self.colmap = ColmapIncrementalMatcher(
             maximum_features=maximum_features,
             sequential_overlap=sequential_overlap,
-            matcher_type=matcher_type,
             loop_detection=loop_detection,
             loop_detection_period=loop_detection_period,
             vocabulary_tree_path=vocabulary_tree_path,
@@ -47,7 +45,7 @@ class MappingFrameBuilder:
 
     @property
     def matcher_type(self):
-        return self.colmap.matcher_type
+        return self.colmap.MATCHER_TYPE
 
     def build(
         self,
@@ -72,6 +70,7 @@ class MappingFrameBuilder:
             imu_gravity_provider=self.imu_gravity_provider,
         )
         database.initialize()
+        self.colmap.bind_reader(database.camera_id, masks_directory)
         images = []
 
         try:
@@ -99,9 +98,7 @@ class MappingFrameBuilder:
                 self.colmap.extract(
                     database_path,
                     images_directory,
-                    masks_directory,
                     image_name,
-                    database.camera_id,
                 )
                 self.colmap.match(database_path)
                 images.append(

@@ -3,7 +3,6 @@ import time
 from pathlib import Path
 
 from mapping.aruco_map_aligner import ArucoMapAligner
-from mapping.colmap_matching import ColmapIncrementalMatcher
 from mapping.global_map_builder import GlobalMapBuilder
 from mapping.map_build_diagnostics import MapBuildDiagnostics
 from mapping.mapping_data import (
@@ -27,7 +26,6 @@ class SkinMapBuilder:
         keyframe_interval,
         maximum_features,
         sequential_overlap,
-        matcher_type,
         loop_detection,
         loop_detection_period,
         vocabulary_tree_path,
@@ -42,9 +40,6 @@ class SkinMapBuilder:
             if vocabulary_tree_path is None
             else Path(vocabulary_tree_path)
         )
-        resolved_matcher_type = ColmapIncrementalMatcher.resolve_matcher_type(
-            matcher_type
-        )
         self.configuration = MapBuildConfiguration(
             mapping_feature_type="sift",
             start_frame=mapping_start_frame,
@@ -53,7 +48,7 @@ class SkinMapBuilder:
             keyframe_interval=keyframe_interval,
             maximum_features=maximum_features,
             sequential_overlap=sequential_overlap,
-            matcher_type=resolved_matcher_type.name,
+            matcher_type="SIFT_LIGHTGLUE",
             loop_detection=bool(loop_detection),
             loop_detection_period=loop_detection_period,
             vocabulary_tree_path=(
@@ -71,7 +66,6 @@ class SkinMapBuilder:
             keyframe_interval=keyframe_interval,
             maximum_features=maximum_features,
             sequential_overlap=sequential_overlap,
-            matcher_type=resolved_matcher_type,
             loop_detection=loop_detection,
             loop_detection_period=loop_detection_period,
             vocabulary_tree_path=vocabulary_tree_path,

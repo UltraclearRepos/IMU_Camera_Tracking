@@ -51,7 +51,6 @@ RECONSTRUCTION_METHOD = "global"  # Mapping always runs GLOMAP once.
 KEYFRAME_INTERVAL = 5  # Use every Nth video frame as a mapping keyframe.
 COLMAP_MAX_NUM_FEATURES = 256
 COLMAP_SEQUENTIAL_OVERLAP = 10
-COLMAP_MATCHER = "SIFT_LIGHTGLUE"
 COLMAP_LOOP_DETECTION = True
 COLMAP_LOOP_DETECTION_PERIOD = 10
 COLMAP_VOCAB_TREE_PATH = Path(
@@ -243,7 +242,6 @@ def run_tracking(
         keyframe_interval,
         colmap_max_num_features,
         colmap_sequential_overlap,
-        COLMAP_MATCHER,
         colmap_loop_detection,
         colmap_loop_detection_period,
         COLMAP_VOCAB_TREE_PATH,
