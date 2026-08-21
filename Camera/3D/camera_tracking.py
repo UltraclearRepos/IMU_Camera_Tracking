@@ -312,8 +312,8 @@ def run_tracking(
     positions = []
     tracking_top_view_states = []
     tracking_times_ms = []
-    initial_position = None
-    initial_rotation = None
+    tracking_reference_position_map = None
+    tracking_reference_camera_to_map_rotation = None
     for _ in range(tracking_start_frame):
         success, _ = capture.read()
         if not success:
@@ -347,15 +347,21 @@ def run_tracking(
         euler = np.full(3, np.nan)
 
         if result is not None:
-            absolute_position = camera_position(result["R"], result["t"])
-            camera_rotation = result["R"].T
+            camera_position_map = camera_position(result["R"], result["t"])
+            camera_to_map_rotation = result["R"].T
 
-            if initial_position is None:
-                initial_position = absolute_position.copy()
-                initial_rotation = camera_rotation.copy()
+            if tracking_reference_position_map is None:
+                tracking_reference_position_map = camera_position_map.copy()
+                tracking_reference_camera_to_map_rotation = camera_to_map_rotation.copy()
 
-            position = absolute_position - initial_position
-            relative_rotation = initial_rotation.T @ camera_rotation
+            position = (
+                tracking_reference_camera_to_map_rotation.T
+                @ (camera_position_map - tracking_reference_position_map)
+            )
+            relative_rotation = (
+                tracking_reference_camera_to_map_rotation.T
+                @ camera_to_map_rotation
+            )
             euler = Rotation.from_matrix(relative_rotation).as_euler(
                 "xyz", degrees=True
             )
@@ -365,27 +371,11 @@ def run_tracking(
 
         positions.append(position)
         time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
-        if (
-            was_initializing
-            and diagnostics["initialization_aruco_detected"]
-        ):
-            aruco_decision = (
-                "accepted"
-                if diagnostics["initialization_aruco_accepted"]
-                else "rejected"
-            )
+        if was_initializing and result is not None:
             print(
-                f"Frame {frame_index} ({time_s:.3f} s): ArUco "
-                f"RMS={diagnostics['initialization_aruco_reprojection_rms_px']:.2f} px, "
-                f"max={diagnostics['initialization_aruco_reprojection_max_px']:.2f} px, "
-                f"min side={diagnostics['initialization_aruco_min_side_length_px']:.1f} px "
-                f"-> {aruco_decision}"
+                f"Tracking initialized from global-map PnP at frame "
+                f"{frame_index} ({time_s:.3f} s)."
             )
-            if diagnostics["initialization_aruco_accepted"]:
-                print(
-                    f"Tracking initialized from ArUco at frame "
-                    f"{frame_index} ({time_s:.3f} s)."
-                )
         rows.append(
             {
                 "frame": frame_index,
@@ -395,7 +385,6 @@ def run_tracking(
                 "feature_extraction_ms": diagnostics[
                     "feature_extraction_ms"
                 ],
-                "aruco_pose_ms": diagnostics["aruco_pose_ms"],
                 "global_map_projection_ms": diagnostics[
                     "global_map_projection_ms"
                 ],
@@ -443,18 +432,6 @@ def run_tracking(
                 ],
                 "initialization_matches": diagnostics[
                     "initialization_matches"
-                ],
-                "initialization_aruco_accepted": diagnostics[
-                    "initialization_aruco_accepted"
-                ],
-                "initialization_aruco_reprojection_rms_px": diagnostics[
-                    "initialization_aruco_reprojection_rms_px"
-                ],
-                "initialization_aruco_reprojection_max_px": diagnostics[
-                    "initialization_aruco_reprojection_max_px"
-                ],
-                "initialization_aruco_min_side_length_px": diagnostics[
-                    "initialization_aruco_min_side_length_px"
                 ],
                 "landmarks": len(tracker.landmarks),
                 "keyframe_added": diagnostics["keyframe_added"],

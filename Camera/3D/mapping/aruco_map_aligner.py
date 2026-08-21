@@ -1,11 +1,10 @@
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 from mapping.mapping_data import ArucoAlignment, MappingFrameCollection
 
 
 class ArucoMapAligner:
-    """Estimate and apply the SfM-to-ArUco metric similarity transform."""
+    """Estimate the metric scale of a COLMAP/GLOMAP reconstruction."""
 
     MINIMUM_ALIGNMENT_FRAMES = 3
 
@@ -33,51 +32,24 @@ class ArucoMapAligner:
             registered_images,
             aruco_poses,
         )
-        rotation, sfm_centers, aruco_centers = self._estimate_rotation(
-            alignment_images,
-            aruco_poses,
+        sfm_centers = np.asarray(
+            [image.projection_center() for image in alignment_images]
         )
-        scale, translation, aligned_centers = self._estimate_scale_translation(
-            rotation,
-            sfm_centers,
-            aruco_centers,
+        aruco_centers = np.asarray(
+            [
+                self.camera_center(*aruco_poses[image.name][:2])
+                for image in alignment_images
+            ]
         )
-        residuals = np.linalg.norm(aligned_centers - aruco_centers, axis=1)
-        rmse_mm = float(np.sqrt(np.mean(residuals**2)))
+        scale, rmse_mm = self._estimate_scale(sfm_centers, aruco_centers)
 
         return ArucoAlignment(
             scale=float(scale),
-            rotation=rotation,
-            translation=translation,
             rmse_mm=rmse_mm,
             candidate_frame_count=len(registered_images),
             aligned_frame_count=len(alignment_images),
             reprojection_rms_threshold_px=rms_threshold,
-            reference_image_name=alignment_images[0].name,
-            center_residuals_by_image={
-                image.name: float(residual)
-                for image, residual in zip(alignment_images, residuals)
-            },
         )
-
-    def transform_points(self, points, alignment: ArucoAlignment):
-        return (
-            alignment.scale * (alignment.rotation @ points.T).T
-            + alignment.translation
-        )
-
-    def transform_pose(self, image, alignment: ArucoAlignment):
-        sfm_pose = image.cam_from_world()
-        sfm_to_camera_rotation = sfm_pose.rotation.matrix()
-        sfm_to_camera_translation = np.asarray(sfm_pose.translation)
-        map_to_camera_rotation = (
-            sfm_to_camera_rotation @ alignment.rotation.T
-        )
-        map_to_camera_translation = (
-            alignment.scale * sfm_to_camera_translation
-            - map_to_camera_rotation @ alignment.translation
-        )
-        return map_to_camera_rotation, map_to_camera_translation
 
     @staticmethod
     def camera_center(world_to_camera_rotation, world_to_camera_translation):
@@ -103,44 +75,29 @@ class ArucoMapAligner:
         alignment_images.sort(key=lambda image: image.name)
         return alignment_images, float(np.max(reprojection_rms[best_indices]))
 
-    def _estimate_rotation(self, alignment_images, aruco_poses):
-        rotation_candidates = []
-        sfm_centers = []
-        aruco_centers = []
-        for image in alignment_images:
-            aruco_to_camera_rotation, aruco_to_camera_translation, _ = (
-                aruco_poses[image.name]
-            )
-            sfm_to_camera_rotation = image.cam_from_world().rotation.matrix()
-            rotation_candidates.append(
-                aruco_to_camera_rotation.T @ sfm_to_camera_rotation
-            )
-            sfm_centers.append(image.projection_center())
-            aruco_centers.append(
-                self.camera_center(
-                    aruco_to_camera_rotation,
-                    aruco_to_camera_translation,
-                )
-            )
-
-        rotation = Rotation.from_matrix(rotation_candidates).mean().as_matrix()
-        return rotation, np.asarray(sfm_centers), np.asarray(aruco_centers)
-
     @staticmethod
-    def _estimate_scale_translation(rotation, sfm_centers, aruco_centers):
-        rotated_centers = (rotation @ sfm_centers.T).T
-        rotated_mean = np.mean(rotated_centers, axis=0)
-        aruco_mean = np.mean(aruco_centers, axis=0)
-        rotated_centered = rotated_centers - rotated_mean
-        aruco_centered = aruco_centers - aruco_mean
-        scale_denominator = np.sum(rotated_centered**2)
-        if scale_denominator <= np.finfo(float).eps:
+    def _estimate_scale(sfm_centers, aruco_centers):
+        pair_indices = np.triu_indices(len(sfm_centers), k=1)
+        sfm_distances = np.linalg.norm(
+            sfm_centers[pair_indices[0]] - sfm_centers[pair_indices[1]],
+            axis=1,
+        )
+        aruco_distances = np.linalg.norm(
+            aruco_centers[pair_indices[0]] - aruco_centers[pair_indices[1]],
+            axis=1,
+        )
+        valid_pairs = sfm_distances > np.finfo(float).eps
+        if not np.any(valid_pairs):
             raise RuntimeError(
                 "ArUco alignment frames do not contain enough camera translation"
             )
-        scale = (
-            np.sum(rotated_centered * aruco_centered) / scale_denominator
+        distance_ratios = (
+            aruco_distances[valid_pairs] / sfm_distances[valid_pairs]
         )
-        translation = aruco_mean - scale * rotated_mean
-        aligned_centers = scale * rotated_centers + translation
-        return scale, translation, aligned_centers
+        scale = float(np.median(distance_ratios))
+        residuals = (
+            aruco_distances[valid_pairs]
+            - scale * sfm_distances[valid_pairs]
+        )
+        rmse_mm = float(np.sqrt(np.mean(residuals**2)))
+        return scale, rmse_mm

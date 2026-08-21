@@ -74,14 +74,12 @@ class MappingFrameDiagnostics:
     aruco_reprojection_rms_px: float
     aruco_reprojection_max_px: float
     registered: bool = False
-    aruco_alignment_used: bool = False
     triangulated_observations: int = 0
     triangulated_feature_ratio: float = 0.0
     median_point_track_length: float = np.nan
     median_point_reprojection_error_px: float = np.nan
     camera_translation_step_mm: float = np.nan
     camera_rotation_step_deg: float = np.nan
-    aruco_alignment_residual_mm: float = np.nan
 
 
 @dataclass(frozen=True)
@@ -128,14 +126,10 @@ class MappingFrameCollection:
 @dataclass(frozen=True)
 class ArucoAlignment:
     scale: float
-    rotation: np.ndarray
-    translation: np.ndarray
     rmse_mm: float
     candidate_frame_count: int
     aligned_frame_count: int
     reprojection_rms_threshold_px: float
-    reference_image_name: str
-    center_residuals_by_image: dict[str, float]
 
 
 @dataclass

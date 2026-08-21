@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from mapping.aruco_map_aligner import ArucoMapAligner
 from mapping.mapping_data import (
     ArucoAlignment,
     FrozenMap,
@@ -20,9 +19,6 @@ from mapping.mapping_data import (
 class MapBuildDiagnostics:
     """Collect, save, plot, and print mapping diagnostics."""
 
-    def __init__(self, aruco_aligner: ArucoMapAligner):
-        self.aruco_aligner = aruco_aligner
-
     def enrich_frame_metrics(
         self,
         frame_collection: MappingFrameCollection,
@@ -32,20 +28,11 @@ class MapBuildDiagnostics:
         registered_images = {
             image.name: image for image in reconstruction.images.values()
         }
-        camera_steps = self._camera_steps(reconstruction, alignment)
+        camera_steps = self._camera_steps(reconstruction, alignment.scale)
 
         for metrics in frame_collection.frame_diagnostics:
             image = registered_images.get(metrics.image_name)
             metrics.registered = image is not None
-            metrics.aruco_alignment_used = (
-                metrics.image_name in alignment.center_residuals_by_image
-            )
-            metrics.aruco_alignment_residual_mm = (
-                alignment.center_residuals_by_image.get(
-                    metrics.image_name,
-                    np.nan,
-                )
-            )
             if image is None:
                 continue
 
@@ -144,7 +131,7 @@ class MapBuildDiagnostics:
             output_directory,
         )
 
-    def _camera_steps(self, reconstruction, alignment):
+    def _camera_steps(self, reconstruction, metric_scale):
         camera_steps = {}
         previous_position = None
         previous_rotation = None
@@ -153,14 +140,8 @@ class MapBuildDiagnostics:
             key=lambda image: image.name,
         )
         for image in registered_images:
-            map_to_camera_rotation, map_to_camera_translation = (
-                self.aruco_aligner.transform_pose(image, alignment)
-            )
-            position = self.aruco_aligner.camera_center(
-                map_to_camera_rotation,
-                map_to_camera_translation,
-            )
-            camera_rotation = map_to_camera_rotation.T
+            position = metric_scale * image.projection_center()
+            camera_rotation = image.cam_from_world().rotation.matrix().T
             if previous_position is None:
                 translation_step = np.nan
                 rotation_step = np.nan
@@ -218,15 +199,7 @@ class MapBuildDiagnostics:
             "camera_rotation_step_deg",
         )
         aruco_detected = self._field(metrics, "aruco_detected").astype(bool)
-        aruco_alignment_used = self._field(
-            metrics,
-            "aruco_alignment_used",
-        ).astype(bool)
         aruco_rms = self._field(metrics, "aruco_reprojection_rms_px")
-        alignment_residual = self._field(
-            metrics,
-            "aruco_alignment_residual_mm",
-        )
 
         matches_per_pair = raw_matches / np.maximum(attempted_pairs, 1)
         inliers_per_pair = verified_inliers / np.maximum(verified_pairs, 1)
@@ -321,31 +294,11 @@ class MapBuildDiagnostics:
             markersize=3,
             label="ArUco reprojection RMS",
         )
-        axes[5].scatter(
-            frames[aruco_alignment_used],
-            aruco_rms[aruco_alignment_used],
-            color="tab:green",
-            s=22,
-            label="Used for alignment",
-            zorder=3,
-        )
         axes[5].set_ylabel("ArUco error [px]")
         axes[5].set_xlabel("Video frame")
-        axes[5].set_title("6. ArUco pose and metric alignment")
+        axes[5].set_title("6. ArUco pose detection")
         axes[5].grid(True)
         axes[5].legend(loc="upper left")
-        residual_axis = axes[5].twinx()
-        finite_residual = np.isfinite(alignment_residual)
-        residual_axis.plot(
-            frames[finite_residual],
-            alignment_residual[finite_residual],
-            marker="o",
-            markersize=3,
-            color="tab:purple",
-            label="Camera-center residual",
-        )
-        residual_axis.set_ylabel("Alignment residual [mm]")
-        residual_axis.legend(loc="upper right")
 
         figure.suptitle(f"{recording_name}: mapping pipeline diagnostics")
         figure.tight_layout()
@@ -586,7 +539,7 @@ class MapBuildDiagnostics:
             },
             "after_collection": {
                 "reconstruction_s": durations.reconstruction_seconds,
-                "aruco_alignment_s": durations.alignment_seconds,
+                "aruco_scale_estimation_s": durations.alignment_seconds,
                 "map_finalization_s": durations.map_finalization_seconds,
                 "map_saving_s": durations.map_saving_seconds,
                 "wall_time_s": after_collection_seconds,
@@ -640,13 +593,12 @@ class MapBuildDiagnostics:
             "selected_landmarks": len(frozen_map.positions),
             "candidate_landmarks": len(frozen_map.candidate_positions),
             "occupied_grid_cells": frozen_map.occupied_grid_cell_count,
-            "alignment_candidate_frames": alignment.candidate_frame_count,
-            "alignment_frames": alignment.aligned_frame_count,
-            "alignment_reprojection_rms_threshold_px": (
+            "scale_candidate_frames": alignment.candidate_frame_count,
+            "scale_frames": alignment.aligned_frame_count,
+            "scale_reprojection_rms_threshold_px": (
                 alignment.reprojection_rms_threshold_px
             ),
-            "alignment_rmse_mm": alignment.rmse_mm,
-            "reference_image": alignment.reference_image_name,
+            "scale_pairwise_distance_rmse_mm": alignment.rmse_mm,
             "last_mapping_image": max(
                 image.name for image in reconstruction.images.values()
             ),
@@ -728,7 +680,10 @@ class MapBuildDiagnostics:
         print(f"    TOTAL: {collection['wall_time_s']:.2f} s")
         print("  AFTER COLLECTION")
         print(f"    Reconstruction: {after['reconstruction_s']:.2f} s")
-        print(f"    ArUco alignment: {after['aruco_alignment_s']:.2f} s")
+        print(
+            "    ArUco scale estimation: "
+            f"{after['aruco_scale_estimation_s']:.2f} s"
+        )
         print(f"    Map finalization: {after['map_finalization_s']:.2f} s")
         print(f"    Map saving: {after['map_saving_s']:.2f} s")
         print(f"    TOTAL: {after['wall_time_s']:.2f} s")

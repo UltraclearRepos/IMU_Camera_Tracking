@@ -81,7 +81,6 @@ def save_skin_mask_initialization_diagnostics(feature_matching, output_dir):
 def save_timing_diagnostics(rows, output_path, recording_name):
     stages = {
         "DISK feature extraction": "feature_extraction_ms",
-        "ArUco initial pose": "aruco_pose_ms",
         "Global map preparation": "global_map_projection_ms",
         "LightGlue matching": "lightglue_ms",
         "Optical flow": "optical_flow_ms",
@@ -794,15 +793,9 @@ def diagnostic_frame(
                 -1,
             )
 
-        if not diagnostics["initialization_aruco_detected"]:
-            aruco_status = "not detected"
-        elif diagnostics["initialization_aruco_accepted"]:
-            aruco_status = "accepted"
-        else:
-            aruco_status = "rejected by quality gate"
         cv2.putText(
             output,
-            f"ArUco: {aruco_status}",
+            "Waiting for global-map PnP",
             (12, 52),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
@@ -813,32 +806,6 @@ def diagnostic_frame(
             output,
             f"Frames checked: {diagnostics['initialization_frames']}",
             (12, 75),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 255, 255),
-            2,
-        )
-        cv2.putText(
-            output,
-            (
-                "ArUco reprojection RMS/max: "
-                f"{diagnostics['initialization_aruco_reprojection_rms_px']:.2f}"
-                "/"
-                f"{diagnostics['initialization_aruco_reprojection_max_px']:.2f} px"
-            ),
-            (12, 98),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 255, 255),
-            2,
-        )
-        cv2.putText(
-            output,
-            (
-                "Marker min side: "
-                f"{diagnostics['initialization_aruco_min_side_length_px']:.1f} px"
-            ),
-            (12, 121),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
             (255, 255, 255),
@@ -890,7 +857,7 @@ def optical_flow_diagnostic_frame(
     )
 
     if result is None:
-        label = "WAITING FOR ARUCO" if not tracker.keyframes else "LOST"
+        label = "WAITING FOR GLOBAL-MAP PNP" if not tracker.keyframes else "LOST"
         color = (0, 180, 255) if not tracker.keyframes else (30, 30, 220)
     else:
         label = "TRACKING"

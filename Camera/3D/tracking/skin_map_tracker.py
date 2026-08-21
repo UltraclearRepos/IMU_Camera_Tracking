@@ -4,7 +4,6 @@ import cv2
 import numpy as np
 import torch
 
-from mapping.aruco_reference import create_aruco_detector, detect_aruco_pose
 from mapping.feature_matching import DEVICE
 
 
@@ -14,8 +13,6 @@ MIN_INLIERS = 20
 MIN_INLIER_RATIO = 0.125
 MAX_REPROJECTION_ERROR_PX = 3.0
 GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80
-MAX_ARUCO_REPROJECTION_RMS_PX = 2.0
-MAX_ARUCO_REPROJECTION_MAX_PX = 3.0
 
 MAP_COVERAGE_GRID_ROWS = 4
 MAP_COVERAGE_GRID_COLUMNS = 4
@@ -60,9 +57,10 @@ class SkinMapTracker:
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
         self.feature_matching = feature_matching
 
-        if global_map.coordinate_frame != "aruco":
+        if global_map.coordinate_frame != "last_registered_mapping_camera":
             raise ValueError(
-                "The frozen map must use the ArUco coordinate frame"
+                "The frozen map must use the last registered mapping camera "
+                "coordinate frame"
             )
 
         self.map_points = global_map.positions.copy()
@@ -77,10 +75,11 @@ class SkinMapTracker:
                 "SIFT global map must contain landmark scales and "
                 "orientations"
             )
+        # The map frame is the last mapping-camera frame, so I, 0 is the
+        # initial pose hypothesis for the first tracking frame.
         self.R_map_to_camera = np.eye(3, dtype=np.float64)
         self.t_map_to_camera = np.zeros(3, dtype=np.float64)
         self.initialized = False
-        self.aruco_detector = create_aruco_detector()
 
         self.landmarks = {
             landmark_id: {
@@ -90,7 +89,7 @@ class SkinMapTracker:
             for landmark_id in range(len(self.map_points))
         }
         self.keyframes = []
-        self.initialization = {"frames": 0}
+        self.initialization_frame_count = 0
         self.map_coverage_grid_rows = MAP_COVERAGE_GRID_ROWS
         self.map_coverage_grid_columns = MAP_COVERAGE_GRID_COLUMNS
         self.map_coverage_ratio = 0.0
@@ -98,19 +97,6 @@ class SkinMapTracker:
 
     def all_map_points(self):
         return self.map_points
-
-    def initialize_working_map(self, R_aruco_to_camera, t_aruco_to_camera):
-        self.map_points = (
-            R_aruco_to_camera @ self.map_points.T
-        ).T + t_aruco_to_camera
-        for landmark_id, landmark in self.landmarks.items():
-            landmark["position"] = self.map_points[landmark_id]
-
-        self.R_map_to_camera = np.eye(3, dtype=np.float64)
-        self.t_map_to_camera = np.zeros(3, dtype=np.float64)
-        self.initialized = True
-        self.initialization = None
-        self.keyframes = ["tracking_start"]
 
     def visible_global_map(self, current_features):
         rvec = cv2.Rodrigues(self.R_map_to_camera)[0]
@@ -208,13 +194,7 @@ class SkinMapTracker:
             "initialization_confirmed": 0,
             "initialization_matches": 0,
             "initialization_points": np.empty((0, 2)),
-            "initialization_aruco_detected": 0,
-            "initialization_aruco_accepted": 0,
-            "initialization_aruco_reprojection_rms_px": np.nan,
-            "initialization_aruco_reprojection_max_px": np.nan,
-            "initialization_aruco_min_side_length_px": np.nan,
             "feature_extraction_ms": np.nan,
-            "aruco_pose_ms": np.nan,
             "global_map_projection_ms": np.nan,
             "lightglue_ms": np.nan,
             "optical_flow_ms": np.nan,
@@ -227,67 +207,6 @@ class SkinMapTracker:
 
     def track(self, frame):
         initializing = not self.initialized
-        if initializing:
-            self.reset_diagnostics(0)
-            self.initialization["frames"] += 1
-            self.last_diagnostics["initialization_frames"] = (
-                self.initialization["frames"]
-            )
-            aruco_started = start_timer()
-            aruco_pose = detect_aruco_pose(
-                frame,
-                self.camera_matrix,
-                self.distortion,
-                self.aruco_detector,
-            )
-            self.last_diagnostics["aruco_pose_ms"] = elapsed_ms(
-                aruco_started
-            )
-            if aruco_pose is None:
-                return None
-
-            R_aruco_to_camera, t_aruco_to_camera, aruco_quality = aruco_pose
-            self.last_diagnostics["initialization_aruco_detected"] = 1
-            self.last_diagnostics[
-                "initialization_aruco_reprojection_rms_px"
-            ] = aruco_quality["reprojection_rms_px"]
-            self.last_diagnostics[
-                "initialization_aruco_reprojection_max_px"
-            ] = aruco_quality["reprojection_max_px"]
-            self.last_diagnostics[
-                "initialization_aruco_min_side_length_px"
-            ] = aruco_quality["min_side_length_px"]
-            if (
-                aruco_quality["reprojection_rms_px"]
-                > MAX_ARUCO_REPROJECTION_RMS_PX
-                or aruco_quality["reprojection_max_px"]
-                > MAX_ARUCO_REPROJECTION_MAX_PX
-            ):
-                return None
-
-            # The frozen map is in ArUco coordinates.  A quality-checked
-            # marker pose therefore directly defines the first camera frame.
-            self.initialize_working_map(
-                R_aruco_to_camera,
-                t_aruco_to_camera,
-            )
-            self.last_diagnostics["initialization_aruco_accepted"] = 1
-            self.last_diagnostics["initialization_confirmed"] = 1
-            return {
-                "R": self.R_map_to_camera,
-                "t": self.t_map_to_camera,
-                "inliers": 0,
-                "inlier_map_points": np.empty((0, 3)),
-                "inlier_image_points": np.empty((0, 2)),
-                "inlier_landmark_ids": np.empty(0, dtype=np.int64),
-                "outlier_points": np.empty((0, 2)),
-                "nearby_associations": 0,
-                "new_landmark_image_points": np.empty((0, 2)),
-                "new_landmark_ids": np.empty(0, dtype=np.int64),
-                "visible_landmarks": 0,
-                "map_coverage_ratio": np.nan,
-            }
-
         extraction_started = start_timer()
         current_features = self.feature_matching.extract(frame)
         feature_extraction_ms = elapsed_ms(extraction_started)
@@ -295,6 +214,11 @@ class SkinMapTracker:
         self.last_diagnostics["feature_extraction_ms"] = (
             feature_extraction_ms
         )
+        if initializing:
+            self.initialization_frame_count += 1
+            self.last_diagnostics["initialization_frames"] = (
+                self.initialization_frame_count
+            )
 
         projection_started = start_timer()
         visible_map = self.visible_global_map(current_features)
@@ -345,21 +269,24 @@ class SkinMapTracker:
             dtype=np.float64,
         )
 
-        rvec = cv2.Rodrigues(self.R_map_to_camera)[0]
-        tvec = self.t_map_to_camera.reshape(3, 1).copy()
+        pnp_guess = {}
+        if self.initialized:
+            pnp_guess = {
+                "rvec": cv2.Rodrigues(self.R_map_to_camera)[0],
+                "tvec": self.t_map_to_camera.reshape(3, 1).copy(),
+                "useExtrinsicGuess": True,
+            }
         pnp_started = start_timer()
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
             map_points,
             image_points,
             self.camera_matrix,
             self.distortion,
-            rvec=rvec,
-            tvec=tvec,
-            useExtrinsicGuess=True,
             iterationsCount=200,
             reprojectionError=MAX_REPROJECTION_ERROR_PX,
             confidence=0.999,
             flags=cv2.SOLVEPNP_ITERATIVE,
+            **pnp_guess,
         )
         self.last_diagnostics["pnp_ransac_ms"] = elapsed_ms(pnp_started)
 
@@ -387,6 +314,11 @@ class SkinMapTracker:
 
         self.R_map_to_camera = cv2.Rodrigues(rvec)[0]
         self.t_map_to_camera = tvec.reshape(3)
+        if initializing:
+            self.initialized = True
+            self.keyframes = ["tracking_start"]
+            self.last_diagnostics["initialization_confirmed"] = 1
+            self.last_diagnostics["initialization_matches"] = len(matches)
 
         projected_visible, _ = cv2.projectPoints(
             visible_map_points,

@@ -90,12 +90,9 @@ class SkinMapBuilder:
             maximum_landmarks=maximum_global_landmarks,
             grid_rows=global_map_grid_rows,
             grid_columns=global_map_grid_columns,
-            reprojection_error_weight=(
-                global_map_reprojection_error_weight
-            ),
-            aruco_aligner=self.aruco_aligner,
+            reprojection_error_weight=global_map_reprojection_error_weight,
         )
-        self.diagnostics = MapBuildDiagnostics(self.aruco_aligner)
+        self.diagnostics = MapBuildDiagnostics()
 
     def build(self, video_path, output_directory, diagnostics_output_dir=None):
         build_started = time.perf_counter()
