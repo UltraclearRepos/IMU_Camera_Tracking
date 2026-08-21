@@ -59,6 +59,14 @@ class GlobalMapBuilder:
             image.frame_index: image.features["keypoints"].copy()
             for image in frame_collection.images
         }
+        feature_bounds_by_frame = {
+            image.frame_index: image.features["selection_bounds"].copy()
+            for image in frame_collection.images
+        }
+        feature_contours_by_frame = {
+            image.frame_index: image.features["selection_contour"].copy()
+            for image in frame_collection.images
+        }
 
         frozen_map = FrozenMap(
             positions=selection.positions,
@@ -73,6 +81,17 @@ class GlobalMapBuilder:
             mapping_times_s=trajectory.timestamps_s,
             mapping_feature_keypoints=tuple(
                 features_by_frame[int(frame)]
+                for frame in trajectory.frames
+            ),
+            mapping_feature_bounds=np.asarray(
+                [
+                    feature_bounds_by_frame[int(frame)]
+                    for frame in trajectory.frames
+                ],
+                dtype=np.int32,
+            ),
+            mapping_feature_contours=tuple(
+                feature_contours_by_frame[int(frame)]
                 for frame in trajectory.frames
             ),
             mapping_camera_positions=trajectory.camera_positions,
@@ -107,6 +126,7 @@ class GlobalMapBuilder:
             ),
             "mapping_frames": frozen_map.mapping_frames,
             "mapping_times_s": frozen_map.mapping_times_s,
+            "mapping_feature_bounds": frozen_map.mapping_feature_bounds,
             "mapping_camera_positions": frozen_map.mapping_camera_positions,
             "mapping_camera_rotations": frozen_map.mapping_camera_rotations,
             "mapping_camera_headings": frozen_map.mapping_camera_headings,

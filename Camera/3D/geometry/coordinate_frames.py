@@ -1,14 +1,15 @@
 import numpy as np
 
 
-# Provisional fixed orientation of the camera mounted on the Dobot TCP.
+# Fixed orientation of the camera mounted on the Dobot TCP.
+# Relative to the previous camera convention: X' = -Y, Y' = X, Z' = Z.
 # It converts vectors expressed in TCP axes into native camera axes:
-# Dobot +X -> camera -X, Dobot +Z -> camera -Y.
+# Dobot +X -> camera +Z, Dobot +Y -> camera -X, Dobot +Z -> camera -Y.
 TCP_TO_CAMERA_AXES = np.array(
     [
-        [-1.0, 0.0, 0.0],
-        [0.0, 0.0, -1.0],
         [0.0, -1.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [1.0, 0.0, 0.0],
     ]
 )
 

@@ -27,6 +27,7 @@ from visualization.tracking_visualization import (
     create_comparison_plots,
     diagnostic_frame,
     save_mapping_feature_video,
+    save_skin_mask_initialization_diagnostics,
     save_3d_tracking_diagnostics,
     save_timing_diagnostics,
 )
@@ -60,6 +61,7 @@ GLOBAL_MAP_GRID_ROWS = 8  # Surface grid rows used for uniform landmark selectio
 GLOBAL_MAP_GRID_COLUMNS = 8  # Surface grid columns used for uniform landmark selection.
 GLOBAL_MAP_REPROJECTION_ERROR_WEIGHT = 0.70  # Geometry error weight versus track length.
 MASK_ARUCO_FEATURES = True  # Prevent the removable marker becoming a landmark.
+USE_ADAPTIVE_SKIN_MASK = True
 USE_IMU_GRAVITY_PRIOR = False
 IMU_GRAVITY_HISTORY_SECONDS = 0.05
 IMU_ACCELERATION_MAGNITUDE_TOLERANCE_M_S2 = 1.5
@@ -223,6 +225,7 @@ def run_tracking(
         feature_roi_bottom_fraction,
         feature_type=feature_type,
         mask_aruco_features=MASK_ARUCO_FEATURES,
+        use_adaptive_skin_mask=USE_ADAPTIVE_SKIN_MASK,
     )
     map_builder = SkinMapBuilder(
         camera_matrix,
@@ -269,6 +272,7 @@ def run_tracking(
             MAPPING_FEATURE_VIDEO_FPS,
             feature_roi_bottom_fraction,
         )
+    save_skin_mask_initialization_diagnostics(feature_matching, output_dir)
     if SAVE_MAP_BUILD_TOP_VIEW:
         map_build_top_view_path = output_dir / "map_build_top_view.mp4"
         save_map_build_top_view(

@@ -244,16 +244,34 @@ class MappingFrameBuilder:
         scores = features["scores"]
         width, height = features["image_size"]
         roi_top = features["roi_top"]
+        selection_mask = features.get("selection_mask")
+        if selection_mask is None:
+            selection_left = 0
+            selection_top = roi_top
+            selection_right = width
+            selection_bottom = height
+        else:
+            mask_y, mask_x = np.nonzero(selection_mask)
+            if not len(mask_x):
+                return self._empty_selected_features(features)
+            selection_left = mask_x.min()
+            selection_top = mask_y.min()
+            selection_right = mask_x.max() + 1
+            selection_bottom = mask_y.max() + 1
 
         columns = np.minimum(
-            (keypoints[:, 0] * self.feature_grid_columns / width).astype(int),
+            (
+                (keypoints[:, 0] - selection_left)
+                * self.feature_grid_columns
+                / (selection_right - selection_left)
+            ).astype(int),
             self.feature_grid_columns - 1,
         )
         rows = np.minimum(
             (
-                (keypoints[:, 1] - roi_top)
+                (keypoints[:, 1] - selection_top)
                 * self.feature_grid_rows
-                / (height - roi_top)
+                / (selection_bottom - selection_top)
             ).astype(int),
             self.feature_grid_rows - 1,
         )
@@ -288,10 +306,58 @@ class MappingFrameBuilder:
             "scores": features["scores"][selected_indices],
             "image_size": features["image_size"],
             "roi_top": roi_top,
+            "selection_bounds": np.array(
+                [
+                    selection_left,
+                    selection_top,
+                    selection_right,
+                    selection_bottom,
+                ],
+                dtype=np.int32,
+            ),
+            "selection_contour": self._selection_contour(selection_mask),
         }
         for field_name in ("scales", "oris"):
             if field_name in features:
                 selected[field_name] = features[field_name][selected_indices]
+        return selected
+
+    @staticmethod
+    def _selection_contour(selection_mask):
+        if selection_mask is None:
+            return np.empty((0, 1, 2), dtype=np.int32)
+        contours, _ = cv2.findContours(
+            selection_mask.astype(np.uint8),
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        if not contours:
+            return np.empty((0, 1, 2), dtype=np.int32)
+        contour = max(contours, key=cv2.contourArea)
+        return cv2.approxPolyDP(contour, 1.0, True)
+
+    @staticmethod
+    def _empty_selected_features(features):
+        selected = {
+            "keypoints": features["keypoints"][:0],
+            "descriptors": features["descriptors"][:0],
+            "scores": features["scores"][:0],
+            "image_size": features["image_size"],
+            "roi_top": features["roi_top"],
+            "selection_bounds": np.array(
+                [
+                    0,
+                    features["roi_top"],
+                    features["image_size"][0],
+                    features["image_size"][1],
+                ],
+                dtype=np.int32,
+            ),
+            "selection_contour": np.empty((0, 1, 2), dtype=np.int32),
+        }
+        for field_name in ("scales", "oris"):
+            if field_name in features:
+                selected[field_name] = features[field_name][:0]
         return selected
 
     def _match_previous_images(

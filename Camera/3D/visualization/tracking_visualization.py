@@ -11,6 +11,73 @@ from geometry.coordinate_frames import (
 )
 
 
+def save_skin_mask_initialization_diagnostics(feature_matching, output_dir):
+    """Save the central seed and the first adaptive skin-mask result."""
+    frame = feature_matching.initial_skin_frame
+    seed = feature_matching.initial_skin_seed
+    valid = feature_matching.initial_skin_valid
+    skin_mask = feature_matching.initial_skin_mask
+    if frame is None or seed is None or valid is None or skin_mask is None:
+        return False
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    height, width = frame.shape[:2]
+    roi_top = round(
+        height * (1.0 - feature_matching.feature_roi_bottom_fraction)
+    )
+    roi_color = (255, 180, 0)
+
+    seed_image = frame.copy()
+    seed_image[:roi_top] = 0
+    seed_image[~valid] = 0
+    seed_overlay = seed_image.copy()
+    seed_overlay[seed] = (0, 255, 255)
+    seed_image = cv2.addWeighted(seed_overlay, 0.45, seed_image, 0.55, 0)
+    cv2.line(seed_image, (0, roi_top), (width - 1, roi_top), roi_color, 2)
+    cv2.putText(
+        seed_image,
+        "Initial skin seed (yellow): pixels used to learn skin colour",
+        (12, 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2,
+    )
+    cv2.imwrite(str(output_dir / "skin_mask_initial_seed.png"), seed_image)
+
+    mask_y, mask_x = np.nonzero(skin_mask)
+    result_image = np.zeros_like(frame)
+    left, top = mask_x.min(), mask_y.min()
+    right, bottom = mask_x.max() + 1, mask_y.max() + 1
+    result_image[top:bottom, left:right] = frame[top:bottom, left:right]
+    result_image[~valid] = 0
+    cv2.line(result_image, (0, roi_top), (width - 1, roi_top), roi_color, 2)
+    cv2.rectangle(
+        result_image,
+        (left, top),
+        (right - 1, bottom - 1),
+        roi_color,
+        2,
+    )
+    contours, _ = cv2.findContours(
+        skin_mask.astype(np.uint8),
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    cv2.drawContours(result_image, contours, -1, (255, 0, 255), 2, cv2.LINE_AA)
+    cv2.putText(
+        result_image,
+        "Initial skin mask | cyan: bounds | magenta: mask boundary",
+        (12, 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2,
+    )
+    cv2.imwrite(str(output_dir / "skin_mask_initial_result.png"), result_image)
+    return True
+
+
 def save_timing_diagnostics(rows, output_path, recording_name):
     stages = {
         "DISK feature extraction": "feature_extraction_ms",
@@ -495,9 +562,11 @@ def save_mapping_feature_video(
 
     roi_top = round(height * (1.0 - feature_roi_bottom_fraction))
     next_video_frame = 0
-    for frame_index, keypoints in zip(
+    for frame_index, keypoints, selection_bounds, selection_contour in zip(
         global_map.mapping_frames,
         global_map.mapping_feature_keypoints,
+        global_map.mapping_feature_bounds,
+        global_map.mapping_feature_contours,
     ):
         target_frame = int(frame_index)
         frame = None
@@ -513,8 +582,9 @@ def save_mapping_feature_video(
 
         keypoints = np.rint(keypoints).astype(np.int32)
 
-        output = frame.copy()
-        output[:roi_top] = 0
+        output = np.zeros_like(frame)
+        left, top, right, bottom = selection_bounds.astype(int)
+        output[top:bottom, left:right] = frame[top:bottom, left:right]
         cv2.line(
             output,
             (0, roi_top),
@@ -522,6 +592,22 @@ def save_mapping_feature_video(
             (255, 180, 0),
             2,
         )
+        cv2.rectangle(
+            output,
+            (left, top),
+            (right - 1, bottom - 1),
+            (255, 180, 0),
+            2,
+        )
+        if len(selection_contour):
+            cv2.drawContours(
+                output,
+                [selection_contour.astype(np.int32)],
+                -1,
+                (255, 0, 255),
+                2,
+                cv2.LINE_AA,
+            )
         for x, y in keypoints:
             cv2.circle(output, (x, y), 2, (0, 255, 0), -1, cv2.LINE_AA)
         cv2.putText(
@@ -541,6 +627,15 @@ def save_mapping_feature_video(
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
             (0, 255, 0),
+            2,
+        )
+        cv2.putText(
+            output,
+            "Cyan: adaptive skin ROI | Magenta: skin mask",
+            (12, height - 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 180, 0),
             2,
         )
         writer.write(output)
