@@ -299,7 +299,10 @@ def run_tracking(
     if not capture.isOpened():
         raise FileNotFoundError(video_path)
 
-    frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = float(capture.get(cv2.CAP_PROP_FPS))
+    if fps <= 0.0:
+        capture.release()
+        raise RuntimeError("Tracking video does not report a valid FPS")
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -319,20 +322,21 @@ def run_tracking(
     tracking_times_ms = []
     tracking_reference_position_map = None
     tracking_reference_camera_to_map_rotation = None
-    for _ in range(tracking_start_frame):
-        success, _ = capture.read()
-        if not success:
-            break
-
-    frame_index = tracking_start_frame
     print(
-        f"Frozen 3D map ready. Starting tracking at frame {frame_index}..."
+        f"Frozen 3D map ready. Starting tracking at frame "
+        f"{tracking_start_frame}..."
     )
 
     tracking_wall_started = time.perf_counter()
-    while frame_index < MAX_FRAMES:
+    while True:
         success, frame = capture.read()
         if not success:
+            break
+        time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        frame_index = round(time_s * fps)
+        if frame_index < tracking_start_frame:
+            continue
+        if frame_index >= MAX_FRAMES:
             break
 
         if DEVICE == "cuda":
@@ -375,7 +379,6 @@ def run_tracking(
         )
 
         positions.append(position)
-        time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
         if was_initializing and result is not None:
             print(
                 f"Tracking initialized from global-map PnP at frame "
@@ -474,8 +477,7 @@ def run_tracking(
                     break
 
         if frame_index % 100 == 0:
-            print(f"Frame {frame_index}/{frame_count}, keyframes: {len(tracker.keyframes)}")
-        frame_index += 1
+            print(f"Frame {frame_index}, keyframes: {len(tracker.keyframes)}")
     tracking_wall_time_s = time.perf_counter() - tracking_wall_started
 
     capture.release()

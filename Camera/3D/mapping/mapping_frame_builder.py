@@ -72,12 +72,21 @@ class MappingFrameBuilder:
         database.initialize()
         self.colmap.bind_reader(database.camera_id, masks_directory)
         images = []
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        if fps <= 0.0:
+            capture.release()
+            raise RuntimeError("Mapping video does not report a valid FPS")
 
         try:
-            self._skip_to_mapping_start(capture)
-            for frame_index in range(self.start_frame, self.end_frame + 1):
+            while True:
                 success, frame = capture.read()
                 if not success:
+                    break
+                timestamp_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                frame_index = round(timestamp_s * fps)
+                if frame_index < self.start_frame:
+                    continue
+                if frame_index > self.end_frame:
                     break
                 if not self._is_keyframe(frame_index):
                     continue
@@ -89,7 +98,6 @@ class MappingFrameBuilder:
                     self._mapping_mask(frame).astype(np.uint8) * 255,
                 )
 
-                timestamp_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
                 image_id, imu_status = database.add_image(
                     image_name,
                     len(images) + 1,
@@ -136,12 +144,6 @@ class MappingFrameBuilder:
         if skin_mask is None:
             skin_mask = np.ones((height, width), dtype=bool)
         return roi_mask & skin_mask.astype(bool)
-
-    def _skip_to_mapping_start(self, capture):
-        for _ in range(self.start_frame):
-            success, _ = capture.read()
-            if not success:
-                break
 
     @staticmethod
     def _save_png(path, image):

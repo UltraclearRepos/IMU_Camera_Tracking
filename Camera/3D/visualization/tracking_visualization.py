@@ -549,6 +549,10 @@ def save_mapping_feature_video(
 
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    source_fps = float(capture.get(cv2.CAP_PROP_FPS))
+    if source_fps <= 0.0:
+        capture.release()
+        raise RuntimeError("Mapping video does not report a valid FPS")
     writer = cv2.VideoWriter(
         str(output_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
@@ -560,7 +564,8 @@ def save_mapping_feature_video(
         raise RuntimeError(f"Could not open video writer: {output_path}")
 
     roi_top = round(height * (1.0 - feature_roi_bottom_fraction))
-    next_video_frame = 0
+    decoded_frame = None
+    decoded_frame_index = None
     for frame_index, keypoints, selection_bounds, selection_contour in zip(
         global_map.mapping_frames,
         global_map.mapping_feature_keypoints,
@@ -568,16 +573,16 @@ def save_mapping_feature_video(
         global_map.mapping_feature_contours,
     ):
         target_frame = int(frame_index)
-        frame = None
-        while next_video_frame <= target_frame:
-            success, decoded_frame = capture.read()
+        while decoded_frame_index is None or decoded_frame_index < target_frame:
+            success, next_decoded_frame = capture.read()
             if not success:
                 break
-            if next_video_frame == target_frame:
-                frame = decoded_frame
-            next_video_frame += 1
-        if frame is None:
+            decoded_frame = next_decoded_frame
+            timestamp_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            decoded_frame_index = round(timestamp_s * source_fps)
+        if decoded_frame_index != target_frame:
             continue
+        frame = decoded_frame
 
         keypoints = np.rint(keypoints).astype(np.int32)
 
