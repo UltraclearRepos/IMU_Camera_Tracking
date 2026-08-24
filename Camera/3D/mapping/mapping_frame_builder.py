@@ -89,14 +89,24 @@ class MappingFrameBuilder:
             geometry_verification_seconds = 0.0
             pair_database_write_seconds = 0.0
 
-            self._skip_frames_before_mapping(capture)
-            for frame_index in range(self.start_frame, self.end_frame + 1):
+            fps = float(capture.get(cv2.CAP_PROP_FPS))
+            if fps <= 0.0:
+                raise RuntimeError("Mapping video does not report a valid FPS")
+
+            while True:
                 read_started = time.perf_counter()
                 success, frame = capture.read()
                 frame_read_seconds += time.perf_counter() - read_started
                 if not success:
                     break
-                if frame_index % self.frame_step != 0:
+
+                timestamp_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+                frame_index = round(timestamp_s * fps)
+                if frame_index < self.start_frame:
+                    continue
+                if frame_index > self.end_frame:
+                    break
+                if not self._is_keyframe(frame_index):
                     continue
 
                 image_name = f"frame_{frame_index:06d}.png"
@@ -119,7 +129,6 @@ class MappingFrameBuilder:
                     time.perf_counter() - tracking_started
                 )
 
-                timestamp_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
                 gravity, imu_status = self._gravity_for_timestamp(timestamp_s)
 
                 aruco_started = time.perf_counter()
@@ -223,11 +232,8 @@ class MappingFrameBuilder:
             capture.release()
             database.close()
 
-    def _skip_frames_before_mapping(self, capture):
-        for _ in range(self.start_frame):
-            success, _ = capture.read()
-            if not success:
-                break
+    def _is_keyframe(self, frame_index):
+        return (frame_index - self.start_frame) % self.frame_step == 0
 
     @staticmethod
     def _save_image(frame, output_path):

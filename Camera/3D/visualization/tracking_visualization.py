@@ -549,6 +549,10 @@ def save_mapping_feature_video(
 
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    source_fps = float(capture.get(cv2.CAP_PROP_FPS))
+    if source_fps <= 0.0:
+        capture.release()
+        raise RuntimeError("Mapping video does not report a valid FPS")
     writer = cv2.VideoWriter(
         str(output_path),
         cv2.VideoWriter_fourcc(*"mp4v"),
@@ -560,7 +564,8 @@ def save_mapping_feature_video(
         raise RuntimeError(f"Could not open video writer: {output_path}")
 
     roi_top = round(height * (1.0 - feature_roi_bottom_fraction))
-    next_video_frame = 0
+    decoded_frame = None
+    decoded_frame_index = None
     for frame_index, keypoints, selection_bounds, selection_contour in zip(
         global_map.mapping_frames,
         global_map.mapping_feature_keypoints,
@@ -568,16 +573,22 @@ def save_mapping_feature_video(
         global_map.mapping_feature_contours,
     ):
         target_frame = int(frame_index)
-        frame = None
-        while next_video_frame <= target_frame:
+        while (
+            decoded_frame_index is None
+            or decoded_frame_index < target_frame
+        ):
             success, decoded_frame = capture.read()
             if not success:
+                decoded_frame = None
                 break
-            if next_video_frame == target_frame:
-                frame = decoded_frame
-            next_video_frame += 1
-        if frame is None:
+            timestamp_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            decoded_frame_index = round(timestamp_s * source_fps)
+        if (
+            decoded_frame is None
+            or decoded_frame_index != target_frame
+        ):
             continue
+        frame = decoded_frame
 
         keypoints = np.rint(keypoints).astype(np.int32)
 
@@ -653,16 +664,60 @@ def diagnostic_frame(
     initialization_min_landmarks,
     tracking_time_ms,
 ):
-    output = frame.copy()
-    roi_top = round(frame.shape[0] * (1.0 - feature_roi_bottom_fraction))
-    output[:roi_top] = 0
+    height, width = frame.shape[:2]
+    roi_top = round(height * (1.0 - feature_roi_bottom_fraction))
+    skin_mask = tracker.feature_matching.last_skin_mask
+    selection_left = 0
+    selection_top = roi_top
+    selection_right = width
+    selection_bottom = height
+    selection_contour = None
+    if skin_mask is not None and skin_mask.shape == frame.shape[:2]:
+        mask_y, mask_x = np.nonzero(skin_mask)
+        if len(mask_x):
+            selection_left = int(mask_x.min())
+            selection_top = int(mask_y.min())
+            selection_right = int(mask_x.max()) + 1
+            selection_bottom = int(mask_y.max()) + 1
+            contours, _ = cv2.findContours(
+                skin_mask.astype(np.uint8),
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE,
+            )
+            if contours:
+                selection_contour = max(contours, key=cv2.contourArea)
+
+    output = np.zeros_like(frame)
+    output[
+        selection_top:selection_bottom,
+        selection_left:selection_right,
+    ] = frame[
+        selection_top:selection_bottom,
+        selection_left:selection_right,
+    ]
     cv2.line(
         output,
         (0, roi_top),
-        (frame.shape[1] - 1, roi_top),
+        (width - 1, roi_top),
         (255, 180, 0),
         2,
     )
+    cv2.rectangle(
+        output,
+        (selection_left, selection_top),
+        (selection_right - 1, selection_bottom - 1),
+        (255, 180, 0),
+        2,
+    )
+    if selection_contour is not None:
+        cv2.drawContours(
+            output,
+            [selection_contour],
+            -1,
+            (255, 0, 255),
+            2,
+            cv2.LINE_AA,
+        )
     cv2.putText(
         output,
         "Feature ROI below this line",
@@ -810,6 +865,15 @@ def diagnostic_frame(
         )
 
     cv2.putText(output, label, (12, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    cv2.putText(
+        output,
+        "Cyan: adaptive skin ROI | Magenta: skin mask",
+        (12, output.shape[0] - 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 180, 0),
+        2,
+    )
     cv2.putText(
         output,
         f"keyframes: {len(tracker.keyframes)} | landmarks: {len(tracker.landmarks)}",
