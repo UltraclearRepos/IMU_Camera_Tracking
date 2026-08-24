@@ -40,6 +40,26 @@ def interpolate_columns(sample_times, source_times, values):
     )
 
 
+def continuous_rotation_vectors_degrees(rotations):
+    """Return rotation vectors without the principal-angle jump at 180 deg."""
+    quaternions = Rotation.from_matrix(rotations).as_quat()
+    for index in range(1, len(quaternions)):
+        if np.dot(quaternions[index - 1], quaternions[index]) < 0.0:
+            quaternions[index] *= -1.0
+
+    vector_parts = quaternions[:, :3]
+    vector_norms = np.linalg.norm(vector_parts, axis=1)
+    angles = 2.0 * np.arctan2(vector_norms, quaternions[:, 3])
+    rotation_vectors = np.zeros_like(vector_parts)
+    nonzero = vector_norms > np.finfo(float).eps
+    rotation_vectors[nonzero] = (
+        vector_parts[nonzero]
+        / vector_norms[nonzero, None]
+        * angles[nonzero, None]
+    )
+    return np.degrees(rotation_vectors)
+
+
 def save_mapping_csv(
     frames,
     times_s,
@@ -265,12 +285,12 @@ def evaluate_final_mapping_poses(
             np.transpose(gt_rotations, (0, 2, 1)) @ estimate_rotations
         ).magnitude()
     )
-    estimate_rotation_vectors = Rotation.from_matrix(
+    estimate_rotation_vectors = continuous_rotation_vectors_degrees(
         estimate_rotations
-    ).as_rotvec(degrees=True)
-    ground_truth_rotation_vectors = Rotation.from_matrix(
+    )
+    ground_truth_rotation_vectors = continuous_rotation_vectors_degrees(
         gt_rotations
-    ).as_rotvec(degrees=True)
+    )
     orientation_component_errors = Rotation.from_matrix(
         np.transpose(gt_rotations, (0, 2, 1)) @ estimate_rotations
     ).as_rotvec(degrees=True)
