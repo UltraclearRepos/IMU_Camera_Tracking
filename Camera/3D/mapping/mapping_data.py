@@ -4,8 +4,28 @@ from typing import Any
 import numpy as np
 
 
-FeatureData = dict[str, np.ndarray]
-ArucoPose = tuple[np.ndarray, np.ndarray, dict[str, Any]]
+@dataclass
+class FeatureSet:
+    keypoints: np.ndarray  # (N, 2) float32
+    descriptors: np.ndarray  # (N, D) float32
+    scores: np.ndarray  # (N,) float32
+    image_size: np.ndarray  # (2,) float32 [width, height]
+    roi_top: int
+    scales: np.ndarray | None = None  # SIFT only
+    orientations: np.ndarray | None = None  # SIFT only
+    selection_mask: np.ndarray | None = None
+    selection_bounds: np.ndarray | None = None
+    selection_contour: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class ArucoPoseResult:
+    rotation: np.ndarray  # (3, 3) rotation matrix
+    translation: np.ndarray  # (3,) translation vector
+    reprojection_rms_px: float
+    reprojection_max_px: float
+    corner_errors_px: np.ndarray  # (4,)
+    min_side_length_px: float
 
 
 @dataclass(frozen=True)
@@ -25,9 +45,9 @@ class MappingImage:
     name: str
     database_image_id: int
     timestamp_s: float
-    features: FeatureData
+    features: FeatureSet
     local_tracks: LocalTrackSnapshot
-    aruco_pose: ArucoPose | None
+    aruco_pose: ArucoPoseResult | None
 
 
 @dataclass(frozen=True)

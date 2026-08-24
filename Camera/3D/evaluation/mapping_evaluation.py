@@ -198,17 +198,6 @@ def evaluate_final_mapping_poses(
     camera_positions = global_map.mapping_camera_positions
     camera_rotations = global_map.mapping_camera_rotations
 
-    reference_frame = global_map.mapping_reference_frame
-    reference_index = int(np.flatnonzero(frames == reference_frame)[0])
-    reference_position = camera_positions[reference_index]
-    reference_rotation = camera_rotations[reference_index]
-
-    estimate_positions = (
-        reference_rotation.T
-        @ (camera_positions - reference_position).T
-    ).T
-    estimate_relative_rotations = reference_rotation.T @ camera_rotations
-
     gt_times, gt_positions, gt_euler = load_ground_truth(ground_truth_path)
     gt_euler = np.degrees(np.unwrap(np.radians(gt_euler), axis=0))
 
@@ -217,8 +206,22 @@ def evaluate_final_mapping_poses(
     frames = frames[inside_gt]
     times_s = times_s[inside_gt]
     timestamps = timestamps[inside_gt]
-    estimate_positions = estimate_positions[inside_gt]
-    estimate_relative_rotations = estimate_relative_rotations[inside_gt]
+    camera_positions = camera_positions[inside_gt]
+    camera_rotations = camera_rotations[inside_gt]
+    if not len(frames):
+        raise RuntimeError(
+            "No registered mapping frames overlap the ground-truth timeline"
+        )
+
+    # Metrics describe drift relative to the first registered mapping frame.
+    # The frozen map itself remains anchored at the last registered camera.
+    reference_position = camera_positions[0]
+    reference_rotation = camera_rotations[0]
+    estimate_positions = (
+        reference_rotation.T
+        @ (camera_positions - reference_position).T
+    ).T
+    estimate_relative_rotations = reference_rotation.T @ camera_rotations
 
     interpolated_gt_positions = interpolate_columns(
         timestamps,
@@ -230,19 +233,8 @@ def evaluate_final_mapping_poses(
         gt_times,
         gt_euler,
     )
-    reference_timestamp = (
-        video_start_timestamp + global_map.mapping_times_s[reference_index]
-    )
-    reference_gt_position = interpolate_columns(
-        np.array([reference_timestamp]),
-        gt_times,
-        gt_positions,
-    )[0]
-    reference_gt_euler = interpolate_columns(
-        np.array([reference_timestamp]),
-        gt_times,
-        gt_euler,
-    )[0]
+    reference_gt_position = interpolated_gt_positions[0]
+    reference_gt_euler = interpolated_gt_euler[0]
     ground_truth_rotations = Rotation.from_euler(
         "xyz",
         interpolated_gt_euler,

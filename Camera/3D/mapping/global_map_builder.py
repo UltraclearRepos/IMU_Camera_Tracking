@@ -61,18 +61,25 @@ class GlobalMapBuilder:
             millimeters_per_colmap_unit,
             last_registered_image,
         )
-        features_by_frame = {
-            image.frame_index: image.features["keypoints"].copy()
-            for image in frame_collection.images
-        }
-        feature_bounds_by_frame = {
-            image.frame_index: image.features["selection_bounds"].copy()
-            for image in frame_collection.images
-        }
-        feature_contours_by_frame = {
-            image.frame_index: image.features["selection_contour"].copy()
-            for image in frame_collection.images
-        }
+        features_by_frame = {}
+        feature_bounds_by_frame = {}
+        feature_contours_by_frame = {}
+        for image in frame_collection.images:
+            features = image.features
+            if (
+                features.selection_bounds is None
+                or features.selection_contour is None
+            ):
+                raise RuntimeError(
+                    "Mapping features require selection bounds and contour"
+                )
+            features_by_frame[image.frame_index] = features.keypoints.copy()
+            feature_bounds_by_frame[image.frame_index] = (
+                features.selection_bounds.copy()
+            )
+            feature_contours_by_frame[image.frame_index] = (
+                features.selection_contour.copy()
+            )
 
         frozen_map = FrozenMap(
             positions=selection.positions,
@@ -301,15 +308,23 @@ class GlobalMapBuilder:
                 features = mapping_images[registered_image.name].features
                 feature_index = observation.point2D_idx
                 observation_descriptors.append(
-                    features["descriptors"][feature_index]
+                    features.descriptors[feature_index]
                 )
-                observation_scores.append(features["scores"][feature_index])
+                observation_scores.append(features.scores[feature_index])
                 if include_scale_orientation:
+                    if (
+                        features.scales is None
+                        or features.orientations is None
+                    ):
+                        raise RuntimeError(
+                            "SIFT mapping features require scales and "
+                            "orientations"
+                        )
                     observation_scales.append(
-                        features["scales"][feature_index]
+                        features.scales[feature_index]
                     )
                     observation_orientations.append(
-                        features["oris"][feature_index]
+                        features.orientations[feature_index]
                     )
 
             descriptor = np.mean(observation_descriptors, axis=0)

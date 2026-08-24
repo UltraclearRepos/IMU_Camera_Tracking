@@ -9,6 +9,7 @@ from mapping.adaptive_keyframe_pair_selector import (
 )
 from mapping.aruco_reference import create_aruco_detector, detect_aruco_pose
 from mapping.mapping_data import (
+    FeatureSet,
     FrameCollectionTiming,
     FramePairingResult,
     MappingFrameCollection,
@@ -123,7 +124,7 @@ class MappingFrameBuilder:
                 tracking_started = time.perf_counter()
                 local_tracks = pair_selector.update_tracks(
                     frame,
-                    features["keypoints"],
+                    features.keypoints,
                 )
                 local_tracking_seconds += (
                     time.perf_counter() - tracking_started
@@ -149,7 +150,7 @@ class MappingFrameBuilder:
                 )
                 database.write_keypoints(
                     database_image_id,
-                    features["keypoints"],
+                    features.keypoints,
                 )
                 image_database_write_seconds += (
                     time.perf_counter() - database_write_started
@@ -196,7 +197,7 @@ class MappingFrameBuilder:
                 print(
                     f"Mapping frame processing: frame {frame_index}/"
                     f"{self.end_frame} | "
-                    f"features: {len(features['keypoints'])} | "
+                    f"features: {len(features.keypoints)} | "
                     f"selected pairs: {len(pair_selection.pairs)} | "
                     f"verified pairs: {verified_pair_count}{imu_status}"
                 )
@@ -246,24 +247,23 @@ class MappingFrameBuilder:
         return self._select_spatially_distributed_features(detected_features)
 
     def _select_spatially_distributed_features(self, features):
-        keypoints = features["keypoints"]
-        scores = features["scores"]
-        width, height = features["image_size"]
-        roi_top = features["roi_top"]
-        selection_mask = features.get("selection_mask")
-        if selection_mask is None:
+        keypoints = features.keypoints
+        scores = features.scores
+        width, height = features.image_size
+        roi_top = features.roi_top
+        selection_mask = features.selection_mask
+        if features.selection_bounds is None:
             selection_left = 0
             selection_top = roi_top
             selection_right = width
             selection_bottom = height
         else:
-            mask_y, mask_x = np.nonzero(selection_mask)
-            if not len(mask_x):
-                return self._empty_selected_features(features)
-            selection_left = mask_x.min()
-            selection_top = mask_y.min()
-            selection_right = mask_x.max() + 1
-            selection_bottom = mask_y.max() + 1
+            (
+                selection_left,
+                selection_top,
+                selection_right,
+                selection_bottom,
+            ) = features.selection_bounds
 
         columns = np.minimum(
             (
@@ -306,13 +306,24 @@ class MappingFrameBuilder:
             cell_rank += 1
 
         selected_indices = np.asarray(selected_indices, dtype=int)
-        selected = {
-            "keypoints": features["keypoints"][selected_indices],
-            "descriptors": features["descriptors"][selected_indices],
-            "scores": features["scores"][selected_indices],
-            "image_size": features["image_size"],
-            "roi_top": roi_top,
-            "selection_bounds": np.array(
+        return FeatureSet(
+            keypoints=features.keypoints[selected_indices],
+            descriptors=features.descriptors[selected_indices],
+            scores=features.scores[selected_indices],
+            image_size=features.image_size,
+            roi_top=roi_top,
+            scales=(
+                None
+                if features.scales is None
+                else features.scales[selected_indices]
+            ),
+            orientations=(
+                None
+                if features.orientations is None
+                else features.orientations[selected_indices]
+            ),
+            selection_mask=selection_mask,
+            selection_bounds=np.array(
                 [
                     selection_left,
                     selection_top,
@@ -321,12 +332,8 @@ class MappingFrameBuilder:
                 ],
                 dtype=np.int32,
             ),
-            "selection_contour": self._selection_contour(selection_mask),
-        }
-        for field_name in ("scales", "oris"):
-            if field_name in features:
-                selected[field_name] = features[field_name][selected_indices]
-        return selected
+            selection_contour=self._selection_contour(selection_mask),
+        )
 
     @staticmethod
     def _selection_contour(selection_mask):
@@ -344,27 +351,36 @@ class MappingFrameBuilder:
 
     @staticmethod
     def _empty_selected_features(features):
-        selected = {
-            "keypoints": features["keypoints"][:0],
-            "descriptors": features["descriptors"][:0],
-            "scores": features["scores"][:0],
-            "image_size": features["image_size"],
-            "roi_top": features["roi_top"],
-            "selection_bounds": np.array(
-                [
-                    0,
-                    features["roi_top"],
-                    features["image_size"][0],
-                    features["image_size"][1],
-                ],
-                dtype=np.int32,
+        return FeatureSet(
+            keypoints=features.keypoints[:0],
+            descriptors=features.descriptors[:0],
+            scores=features.scores[:0],
+            image_size=features.image_size,
+            roi_top=features.roi_top,
+            scales=(
+                None if features.scales is None else features.scales[:0]
             ),
-            "selection_contour": np.empty((0, 1, 2), dtype=np.int32),
-        }
-        for field_name in ("scales", "oris"):
-            if field_name in features:
-                selected[field_name] = features[field_name][:0]
-        return selected
+            orientations=(
+                None
+                if features.orientations is None
+                else features.orientations[:0]
+            ),
+            selection_mask=features.selection_mask,
+            selection_bounds=(
+                np.array(
+                    [
+                        0,
+                        features.roi_top,
+                        features.image_size[0],
+                        features.image_size[1],
+                    ],
+                    dtype=np.int32,
+                )
+                if features.selection_bounds is None
+                else features.selection_bounds.copy()
+            ),
+            selection_contour=np.empty((0, 1, 2), dtype=np.int32),
+        )
 
     def _match_previous_images(
         self,
@@ -396,9 +412,9 @@ class MappingFrameBuilder:
             geometry_started = time.perf_counter()
             geometry = pycolmap.estimate_two_view_geometry(
                 camera,
-                previous_image.features["keypoints"],
+                previous_image.features.keypoints,
                 camera,
-                current_image.features["keypoints"],
+                current_image.features.keypoints,
                 matches,
                 geometry_options,
             )
@@ -432,9 +448,7 @@ class MappingFrameBuilder:
         pair_selection,
         pairing,
     ):
-        aruco_quality = (
-            None if image.aruco_pose is None else image.aruco_pose[2]
-        )
+        aruco_pose = image.aruco_pose
         selected_motions = [
             pair.median_displacement_px
             for pair in pair_selection.pairs
@@ -448,7 +462,7 @@ class MappingFrameBuilder:
             frame_index=image.frame_index,
             timestamp_s=image.timestamp_s,
             image_name=image.name,
-            feature_count=len(image.features["keypoints"]),
+            feature_count=len(image.features.keypoints),
             continued_track_count=(
                 image.local_tracks.continued_track_count
             ),
@@ -468,16 +482,16 @@ class MappingFrameBuilder:
             raw_matches=pairing.raw_match_count,
             verified_pairs=pairing.verified_pair_count,
             verified_inliers=pairing.verified_inlier_count,
-            aruco_detected=image.aruco_pose is not None,
+            aruco_detected=aruco_pose is not None,
             aruco_reprojection_rms_px=(
                 np.nan
-                if aruco_quality is None
-                else aruco_quality["reprojection_rms_px"]
+                if aruco_pose is None
+                else aruco_pose.reprojection_rms_px
             ),
             aruco_reprojection_max_px=(
                 np.nan
-                if aruco_quality is None
-                else aruco_quality["reprojection_max_px"]
+                if aruco_pose is None
+                else aruco_pose.reprojection_max_px
             ),
         )
 

@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 from mapping.feature_matching import DEVICE
+from mapping.mapping_data import FeatureSet
 
 
 MIN_MATCHES = 20
@@ -112,8 +113,8 @@ class SkinMapTracker:
             self.R_map_to_camera @ self.map_points.T
         ).T + self.t_map_to_camera
 
-        width, height = current_features["image_size"]
-        roi_top = height * (1.0 - self.feature_roi_bottom_fraction)
+        width, height = current_features.image_size
+        roi_top = current_features.roi_top
         expected_visible = camera_points[:, 2] > 0.0
         expected_visible &= projected_points[:, 0] >= 0.0
         expected_visible &= projected_points[:, 0] < width
@@ -131,15 +132,24 @@ class SkinMapTracker:
         if not len(landmark_ids):
             return None
 
-        global_features = {
-            "keypoints": projected_points[matching_area].astype(np.float32),
-            "descriptors": self.map_descriptors[matching_area],
-            "scores": self.map_scores[matching_area],
-            "image_size": current_features["image_size"],
-        }
+        scales = None
+        orientations = None
         if self.feature_matching.requires_scale_orientation:
-            global_features["scales"] = self.map_scales[matching_area]
-            global_features["oris"] = self.map_orientations[matching_area]
+            if self.map_scales is None or self.map_orientations is None:
+                raise RuntimeError(
+                    "SIFT global map requires scales and orientations"
+                )
+            scales = self.map_scales[matching_area]
+            orientations = self.map_orientations[matching_area]
+        global_features = FeatureSet(
+            keypoints=projected_points[matching_area].astype(np.float32),
+            descriptors=self.map_descriptors[matching_area],
+            scores=self.map_scores[matching_area],
+            image_size=current_features.image_size,
+            roi_top=current_features.roi_top,
+            scales=scales,
+            orientations=orientations,
+        )
         return (
             landmark_ids,
             self.map_points[matching_area],
@@ -210,7 +220,7 @@ class SkinMapTracker:
         extraction_started = start_timer()
         current_features = self.feature_matching.extract(frame)
         feature_extraction_ms = elapsed_ms(extraction_started)
-        self.reset_diagnostics(len(current_features["keypoints"]))
+        self.reset_diagnostics(len(current_features.keypoints))
         self.last_diagnostics["feature_extraction_ms"] = (
             feature_extraction_ms
         )
@@ -237,7 +247,7 @@ class SkinMapTracker:
         self.last_diagnostics["visible_landmarks"] = expected_visible_count
         matchable_landmarks = min(
             expected_visible_count,
-            len(current_features["keypoints"]),
+            len(current_features.keypoints),
         )
         required_matches, required_inliers = required_pose_counts(
             matchable_landmarks
@@ -253,12 +263,12 @@ class SkinMapTracker:
         self.last_diagnostics["lightglue_ms"] = elapsed_ms(matching_started)
         self.last_diagnostics["matches"] = len(matches)
         self.last_diagnostics["new_features"] = (
-            len(current_features["keypoints"])
+            len(current_features.keypoints)
             - len(np.unique(matches[:, 1]))
         )
         if initializing:
             self.last_diagnostics["initialization_points"] = (
-                current_features["keypoints"][matches[:, 1]].copy()
+                current_features.keypoints[matches[:, 1]].copy()
             )
         if len(matches) < required_matches:
             return None
@@ -269,7 +279,7 @@ class SkinMapTracker:
             dtype=np.float64,
         )
         image_points = np.ascontiguousarray(
-            current_features["keypoints"][matches[:, 1]],
+            current_features.keypoints[matches[:, 1]],
             dtype=np.float64,
         )
 
@@ -334,7 +344,7 @@ class SkinMapTracker:
         coverage_started = start_timer()
         visible_count, coverage_ratio = self.map_coverage(
             projected_visible.reshape(-1, 2),
-            current_features["image_size"],
+            current_features.image_size,
         )
         self.last_diagnostics["map_coverage_ms"] = elapsed_ms(
             coverage_started

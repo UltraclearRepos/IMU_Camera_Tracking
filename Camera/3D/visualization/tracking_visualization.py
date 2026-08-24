@@ -13,12 +13,16 @@ from geometry.coordinate_frames import (
 
 def save_skin_mask_initialization_diagnostics(feature_matching, output_dir):
     """Save the central seed and the first adaptive skin-mask result."""
-    frame = feature_matching.initial_skin_frame
-    seed = feature_matching.initial_skin_seed
-    valid = feature_matching.initial_skin_valid
-    skin_mask = feature_matching.initial_skin_mask
-    if frame is None or seed is None or valid is None or skin_mask is None:
+    adaptive_skin_mask = feature_matching.adaptive_skin_mask
+    if adaptive_skin_mask is None:
         return False
+    frame = adaptive_skin_mask.initial_frame
+    seed = adaptive_skin_mask.initial_seed
+    valid = adaptive_skin_mask.initial_valid
+    skin_mask_result = adaptive_skin_mask.initial_result
+    if frame is None or seed is None or valid is None or skin_mask_result is None:
+        return False
+    skin_mask = skin_mask_result.mask
 
     output_dir.mkdir(parents=True, exist_ok=True)
     height, width = frame.shape[:2]
@@ -45,10 +49,8 @@ def save_skin_mask_initialization_diagnostics(feature_matching, output_dir):
     )
     cv2.imwrite(str(output_dir / "skin_mask_initial_seed.png"), seed_image)
 
-    mask_y, mask_x = np.nonzero(skin_mask)
     result_image = np.zeros_like(frame)
-    left, top = mask_x.min(), mask_y.min()
-    right, bottom = mask_x.max() + 1, mask_y.max() + 1
+    left, top, right, bottom = map(int, skin_mask_result.bounds)
     result_image[top:bottom, left:right] = frame[top:bottom, left:right]
     result_image[~valid] = 0
     cv2.line(result_image, (0, roi_top), (width - 1, roi_top), roi_color, 2)
@@ -666,26 +668,32 @@ def diagnostic_frame(
 ):
     height, width = frame.shape[:2]
     roi_top = round(height * (1.0 - feature_roi_bottom_fraction))
-    skin_mask = tracker.feature_matching.last_skin_mask
+    adaptive_skin_mask = tracker.feature_matching.adaptive_skin_mask
+    skin_mask_result = (
+        None
+        if adaptive_skin_mask is None
+        else adaptive_skin_mask.last_result
+    )
+    skin_mask = None if skin_mask_result is None else skin_mask_result.mask
     selection_left = 0
     selection_top = roi_top
     selection_right = width
     selection_bottom = height
     selection_contour = None
     if skin_mask is not None and skin_mask.shape == frame.shape[:2]:
-        mask_y, mask_x = np.nonzero(skin_mask)
-        if len(mask_x):
-            selection_left = int(mask_x.min())
-            selection_top = int(mask_y.min())
-            selection_right = int(mask_x.max()) + 1
-            selection_bottom = int(mask_y.max()) + 1
-            contours, _ = cv2.findContours(
-                skin_mask.astype(np.uint8),
-                cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_SIMPLE,
-            )
-            if contours:
-                selection_contour = max(contours, key=cv2.contourArea)
+        (
+            selection_left,
+            selection_top,
+            selection_right,
+            selection_bottom,
+        ) = map(int, skin_mask_result.bounds)
+        contours, _ = cv2.findContours(
+            skin_mask.astype(np.uint8),
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        if contours:
+            selection_contour = max(contours, key=cv2.contourArea)
 
     output = np.zeros_like(frame)
     output[
@@ -1197,9 +1205,14 @@ def create_comparison_plots(
     ).T
     gt = tcp_displacements_to_camera_axes(tcp_displacements)
     relative_gt_rotations = reference_gt_rotation.T @ gt_rotations
-    gt_euler = Rotation.from_matrix(
-        tcp_rotations_to_camera_axes(relative_gt_rotations)
-    ).as_euler("xyz", degrees=True)
+    gt_rotations_camera = tcp_rotations_to_camera_axes(relative_gt_rotations)
+    # Do not convert the transformed ground truth back to XYZ Euler angles.
+    # Around a 90-degree pitch, the same physical pose has an equivalent Euler
+    # representation with roll and yaw shifted by 180 degrees.  That made a
+    # pure pitch movement appear as large roll/yaw jumps in the comparison.
+    gt_rotation_vectors = Rotation.from_matrix(
+        gt_rotations_camera
+    ).as_rotvec(degrees=True)
     plot_time = camera_time - min(camera_time[0], gt_time[0])
 
     position_component_errors = np.full_like(estimate, np.nan)
@@ -1213,15 +1226,22 @@ def create_comparison_plots(
     estimate_rotations = Rotation.from_euler(
         "xyz", estimate_euler[valid], degrees=True
     ).as_matrix()
-    gt_rotations = Rotation.from_euler(
-        "xyz", gt_euler[valid], degrees=True
-    ).as_matrix()
+    estimate_rotation_vectors = np.full_like(estimate_euler, np.nan)
+    estimate_rotation_vectors[valid] = Rotation.from_matrix(
+        estimate_rotations
+    ).as_rotvec(degrees=True)
     valid_orientation_errors = (
-        estimate_euler[valid] - gt_euler[valid] + 180.0
-    ) % 360.0 - 180.0
-    orientation_component_errors = np.full_like(estimate_euler, np.nan)
+        estimate_rotation_vectors[valid] - gt_rotation_vectors[valid]
+    )
+    orientation_component_errors = np.full_like(
+        estimate_rotation_vectors,
+        np.nan,
+    )
     orientation_component_errors[valid] = valid_orientation_errors
-    relative_rotations = np.transpose(gt_rotations, (0, 2, 1)) @ estimate_rotations
+    relative_rotations = (
+        np.transpose(gt_rotations_camera[valid], (0, 2, 1))
+        @ estimate_rotations
+    )
     valid_angular_errors = np.degrees(
         Rotation.from_matrix(relative_rotations).magnitude()
     )
@@ -1246,8 +1266,8 @@ def create_comparison_plots(
 
     orientation_rmse = save_comparison_figure(
         plot_time,
-        gt_euler,
-        estimate_euler,
+        gt_rotation_vectors,
+        estimate_rotation_vectors,
         orientation_component_errors,
         angular_errors,
         ["Roll", "Pitch", "Yaw"],

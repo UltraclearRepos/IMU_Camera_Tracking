@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from mapping.mapping_data import ArucoPoseResult
+
 
 ARUCO_ID = 7
 ARUCO_SIZE_MM = 20.0
@@ -69,15 +71,13 @@ def detect_aruco_pose(
         axis=1,
     )
 
-    return (
-        cv2.Rodrigues(rvec)[0],
-        tvec.reshape(3),
-        {
-            "reprojection_rms_px": float(
-                np.sqrt(np.mean(corner_errors_px**2))
-            ),
-            "reprojection_max_px": float(np.max(corner_errors_px)),
-            "corner_errors_px": corner_errors_px,
-            "min_side_length_px": float(np.min(marker_side_lengths_px)),
-        },
+    return ArucoPoseResult(
+        rotation=cv2.Rodrigues(rvec)[0],
+        translation=tvec.reshape(3),
+        reprojection_rms_px=float(
+            np.sqrt(np.mean(corner_errors_px**2))
+        ),
+        reprojection_max_px=float(np.max(corner_errors_px)),
+        corner_errors_px=corner_errors_px,
+        min_side_length_px=float(np.min(marker_side_lengths_px)),
     )

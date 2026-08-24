@@ -37,7 +37,10 @@ class ArucoMapAligner:
         )
         aruco_centers = np.asarray(
             [
-                self.camera_center(*aruco_poses[image.name][:2])
+                self.camera_center(
+                    aruco_poses[image.name].rotation,
+                    aruco_poses[image.name].translation,
+                )
                 for image in alignment_images
             ]
         )
@@ -61,7 +64,7 @@ class ArucoMapAligner:
     def _select_alignment_images(self, registered_images, aruco_poses):
         reprojection_rms = np.asarray(
             [
-                aruco_poses[image.name][2]["reprojection_rms_px"]
+                aruco_poses[image.name].reprojection_rms_px
                 for image in registered_images
             ],
             dtype=float,
