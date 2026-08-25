@@ -235,6 +235,7 @@ class MapBuildConfiguration:
     reconstruction_method: str
     keyframe_interval: int
     recent_pair_count: int
+    recent_pair_interval: int
     motion_targets_px: tuple[float, ...]
     minimum_new_track_distance_px: float
     maximum_active_track_count: int

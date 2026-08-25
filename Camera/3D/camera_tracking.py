@@ -57,6 +57,7 @@ MAPPING_EVERY_FRAME_FROM_FRAME = None
 # Adaptive example: recent=2, motion=(10.0, 20.0, 40.0).
 # Legacy example: recent=10, motion=() matches only the 10 previous frames.
 MAPPING_RECENT_PAIR_COUNT = 10
+MAPPING_RECENT_PAIR_INTERVAL = 1
 MAPPING_MOTION_TARGETS_PX = ()
 MAPPING_DETECTED_MAX_FEATURES = 512  # Features detected per map frame.
 MAPPING_MAX_FEATURES = 256  # Spatially distributed features retained per map frame.
@@ -181,6 +182,7 @@ def run_tracking(
     mapping_recent_pair_count,
     mapping_motion_targets_px,
     use_imu,
+    mapping_recent_pair_interval=1,
 ):
     feature_type = feature_type.lower()
     if not torch.cuda.is_available() and DEVICE == "cuda":
@@ -251,6 +253,7 @@ def run_tracking(
         every_frame_until_frame,
         every_frame_from_frame,
         mapping_recent_pair_count,
+        mapping_recent_pair_interval,
         mapping_motion_targets_px,
         mapping_max_features,
         MAPPING_FEATURE_GRID_ROWS,
@@ -583,6 +586,7 @@ def run_tracking(
         "every_frame_until_frame": every_frame_until_frame,
         "every_frame_from_frame": every_frame_from_frame,
         "mapping_recent_pair_count": mapping_recent_pair_count,
+        "mapping_recent_pair_interval": mapping_recent_pair_interval,
         "mapping_motion_targets_px": list(mapping_motion_targets_px),
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": len(global_map.candidate_positions),
@@ -646,6 +650,7 @@ def main():
         mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
         mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
         use_imu=USE_IMU_GRAVITY_PRIOR,
+        mapping_recent_pair_interval=MAPPING_RECENT_PAIR_INTERVAL,
     )
 
 

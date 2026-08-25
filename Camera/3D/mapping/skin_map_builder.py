@@ -31,6 +31,7 @@ class SkinMapBuilder:
         every_frame_until_frame,
         every_frame_from_frame,
         recent_pair_count,
+        recent_pair_interval,
         motion_targets_px,
         mapping_maximum_features,
         mapping_feature_grid_rows,
@@ -48,6 +49,7 @@ class SkinMapBuilder:
             reconstruction_method=reconstruction_method,
             keyframe_interval=keyframe_interval,
             recent_pair_count=recent_pair_count,
+            recent_pair_interval=recent_pair_interval,
             motion_targets_px=tuple(motion_targets_px),
             minimum_new_track_distance_px=(
                 AdaptiveKeyframePairSelector.MINIMUM_NEW_TRACK_DISTANCE_PX
@@ -75,6 +77,7 @@ class SkinMapBuilder:
             every_frame_until_frame=every_frame_until_frame,
             every_frame_from_frame=every_frame_from_frame,
             recent_pair_count=recent_pair_count,
+            recent_pair_interval=recent_pair_interval,
             motion_targets_px=motion_targets_px,
             maximum_features=mapping_maximum_features,
             feature_grid_rows=mapping_feature_grid_rows,

@@ -20,9 +20,16 @@ class AdaptiveKeyframePairSelector:
     MINIMUM_KEYFRAME_OVERLAP = 0.5
     MAXIMUM_MOTION_ANCHOR_PX = 40.0
 
-    def __init__(self, recent_pair_count, motion_targets_px=()):
+    def __init__(
+        self,
+        recent_pair_count,
+        motion_targets_px=(),
+        recent_pair_interval=1,
+    ):
         if recent_pair_count < 0:
             raise ValueError("recent_pair_count must be non-negative")
+        if recent_pair_interval < 1:
+            raise ValueError("recent_pair_interval must be positive")
 
         motion_targets_px = tuple(float(target) for target in motion_targets_px)
         if any(
@@ -42,6 +49,7 @@ class AdaptiveKeyframePairSelector:
             )
 
         self.recent_pair_count = recent_pair_count
+        self.recent_pair_interval = recent_pair_interval
         self.motion_targets_px = motion_targets_px
         self._next_track_id = 0
         self._previous_gray = None
@@ -96,6 +104,8 @@ class AdaptiveKeyframePairSelector:
             current_image.local_tracks.track_ids
         )
         recent_images = list(self._recent_keyframes)[:-1]
+        recent_images = recent_images[::-self.recent_pair_interval]
+        recent_images.reverse()
         recent_image_ids = {
             image.database_image_id for image in recent_images
         }
