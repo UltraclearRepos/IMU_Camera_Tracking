@@ -2,6 +2,7 @@ import argparse
 import csv
 import itertools
 import json
+import sys
 import tempfile
 import traceback
 from pathlib import Path
@@ -10,6 +11,8 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).absolute().parent
 MODULE_DIR = SCRIPT_DIR.parent
 PROJECT_DIR = MODULE_DIR.parent.parent
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
 DEFAULT_CONFIG_PATH = (
     MODULE_DIR / "batch_configs_from_timestamps" / "Cylinder_parameter_sweep.json"
 )
