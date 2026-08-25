@@ -565,7 +565,7 @@ class MapBuildDiagnostics:
             "mapping_start_frame": configuration.start_frame,
             "mapping_end_frame": configuration.end_frame,
             "reconstruction_method": configuration.reconstruction_method,
-            "mapping_frame_step": configuration.frame_step,
+            "keyframe_interval": configuration.keyframe_interval,
             "adaptive_pair_selection": {
                 "recent_pair_count": configuration.recent_pair_count,
                 "motion_targets_px": list(configuration.motion_targets_px),

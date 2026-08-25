@@ -14,10 +14,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 MAP_PATH = (
     SCRIPT_DIR.parent
-    / "jenkins_results"
+    / "results"
     / "Cylinder"
-    / "sift_every_frame"
     / "sift"
+    / "global"
+    / "noIMU"
     / "initial_50mm_Arc180-Speed-3_2026-08-20_14.39.08"
     / "map"
     / "global_map.npz"
@@ -25,7 +26,7 @@ MAP_PATH = (
 
 # "3d"  - current perspective view
 # "top" - orthographic top-down view along Z axis
-VIEW_MODE = "top"
+VIEW_MODE = "3d"
 TOP_PLANE = "xz"  # "xy", "xz" albo "yz"
 
 SHOW_CANDIDATES = False

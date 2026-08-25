@@ -48,7 +48,12 @@ MAPPING_START_FRAME = 1  # First frame used to build the frozen 3D map.
 MAPPING_END_FRAME = 1080  # Last frame used to build the frozen 3D map.
 TRACKING_START_FRAME = 1081  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
-MAPPING_FRAME_STEP = 1  # Use every Nth frame during map construction.
+KEYFRAME_INTERVAL = 1  # Use every Nth frame during map construction.
+# Set these to offsets from the mapping boundaries to keep all frames at the
+# beginning and end. Between them, frames are sampled using KEYFRAME_INTERVAL.
+# None preserves the original uniform sampling across the whole mapping interval.
+MAPPING_EVERY_FRAME_UNTIL_FRAME = None
+MAPPING_EVERY_FRAME_FROM_FRAME = None
 # Adaptive example: recent=2, motion=(10.0, 20.0, 40.0).
 # Legacy example: recent=10, motion=() matches only the 10 previous frames.
 MAPPING_RECENT_PAIR_COUNT = 10
@@ -165,7 +170,9 @@ def run_tracking(
     mapping_end_frame,
     tracking_start_frame,
     feature_type,
-    mapping_frame_step,
+    keyframe_interval,
+    every_frame_until_frame,
+    every_frame_from_frame,
     mapping_recent_pair_count,
     mapping_motion_targets_px,
     use_imu,
@@ -234,7 +241,9 @@ def run_tracking(
         mapping_start_frame,
         mapping_end_frame,
         reconstruction_method,
-        mapping_frame_step,
+        keyframe_interval,
+        every_frame_until_frame,
+        every_frame_from_frame,
         mapping_recent_pair_count,
         mapping_motion_targets_px,
         MAPPING_MAX_FEATURES,
@@ -546,7 +555,9 @@ def run_tracking(
         "tracking_start_frame": tracking_start_frame,
         "reconstruction_method": reconstruction_method,
         "feature_type": feature_type,
-        "mapping_frame_step": mapping_frame_step,
+        "keyframe_interval": keyframe_interval,
+        "every_frame_until_frame": every_frame_until_frame,
+        "every_frame_from_frame": every_frame_from_frame,
         "mapping_recent_pair_count": mapping_recent_pair_count,
         "mapping_motion_targets_px": list(mapping_motion_targets_px),
         "map_landmarks": len(tracker.landmarks),
@@ -602,7 +613,9 @@ def main():
         mapping_end_frame=MAPPING_END_FRAME,
         tracking_start_frame=TRACKING_START_FRAME,
         feature_type=FEATURE_TYPE,
-        mapping_frame_step=MAPPING_FRAME_STEP,
+        keyframe_interval=KEYFRAME_INTERVAL,
+        every_frame_until_frame=MAPPING_EVERY_FRAME_UNTIL_FRAME,
+        every_frame_from_frame=MAPPING_EVERY_FRAME_FROM_FRAME,
         mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
         mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
         use_imu=USE_IMU_GRAVITY_PRIOR,

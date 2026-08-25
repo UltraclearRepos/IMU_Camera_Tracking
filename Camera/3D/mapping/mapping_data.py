@@ -233,7 +233,7 @@ class MapBuildConfiguration:
     start_frame: int
     end_frame: int
     reconstruction_method: str
-    frame_step: int
+    keyframe_interval: int
     recent_pair_count: int
     motion_targets_px: tuple[float, ...]
     minimum_new_track_distance_px: float

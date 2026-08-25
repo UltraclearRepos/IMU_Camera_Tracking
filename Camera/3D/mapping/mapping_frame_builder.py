@@ -31,7 +31,9 @@ class MappingFrameBuilder:
         feature_matcher,
         start_frame,
         end_frame,
-        frame_step,
+        keyframe_interval,
+        every_frame_until_frame,
+        every_frame_from_frame,
         recent_pair_count,
         motion_targets_px,
         maximum_features,
@@ -44,7 +46,9 @@ class MappingFrameBuilder:
         self.feature_matcher = feature_matcher
         self.start_frame = start_frame
         self.end_frame = end_frame
-        self.frame_step = frame_step
+        self.keyframe_interval = keyframe_interval
+        self.every_frame_until_frame = every_frame_until_frame
+        self.every_frame_from_frame = every_frame_from_frame
         self.recent_pair_count = recent_pair_count
         self.motion_targets_px = tuple(motion_targets_px)
         self.maximum_features = maximum_features
@@ -234,7 +238,23 @@ class MappingFrameBuilder:
             database.close()
 
     def _is_keyframe(self, frame_index):
-        return (frame_index - self.start_frame) % self.frame_step == 0
+        if (
+            self.every_frame_until_frame is not None
+            and (
+                frame_index
+                <= self.start_frame + self.every_frame_until_frame
+            )
+        ):
+            return True
+        if (
+            self.every_frame_from_frame is not None
+            and (
+                frame_index
+                >= self.end_frame - self.every_frame_from_frame
+            )
+        ):
+            return True
+        return (frame_index - self.start_frame) % self.keyframe_interval == 0
 
     @staticmethod
     def _save_image(frame, output_path):
