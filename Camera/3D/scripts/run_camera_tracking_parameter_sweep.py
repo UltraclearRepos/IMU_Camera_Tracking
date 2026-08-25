@@ -87,9 +87,10 @@ def main():
         f"Combinations: {len(combinations)}, recordings: {len(recordings)}, "
         f"total runs: {total_runs}"
     )
+
+    for index, parameters in enumerate(combinations, start=1):
+        print(index, parameters)
     if arguments.dry_run:
-        for index, parameters in enumerate(combinations, start=1):
-            print(index, parameters)
         return
 
     # Import the tracking stack only for a real run.
