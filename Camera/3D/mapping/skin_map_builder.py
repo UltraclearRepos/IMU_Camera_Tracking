@@ -97,6 +97,8 @@ class SkinMapBuilder:
             reprojection_error_weight=global_map_reprojection_error_weight,
         )
         self.diagnostics = MapBuildDiagnostics()
+        self.last_online_wall_time_s = None
+        self.last_offline_wall_time_s = None
 
     def build(self, video_path, output_directory, diagnostics_output_dir=None):
         build_started = time.perf_counter()
@@ -164,6 +166,13 @@ class SkinMapBuilder:
             map_finalization_seconds=map_finalization_seconds,
             map_saving_seconds=map_saving_seconds,
             total_seconds=time.perf_counter() - build_started,
+        )
+        self.last_online_wall_time_s = frame_collection.timing.wall_seconds
+        self.last_offline_wall_time_s = (
+            reconstruction_seconds
+            + alignment_seconds
+            + map_finalization_seconds
+            + map_saving_seconds
         )
         self.diagnostics.save_report(
             configuration=self.configuration,

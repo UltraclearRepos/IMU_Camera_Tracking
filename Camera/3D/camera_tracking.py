@@ -561,6 +561,12 @@ def run_tracking(
         "p95_tracking_time_ms": float(p95_tracking_time_ms),
         "tracking_fps": float(tracking_fps),
         "map_build_wall_time_s": float(map_build_wall_time_s),
+        "mapping_online_wall_time_s": float(
+            map_builder.last_online_wall_time_s
+        ),
+        "mapping_offline_wall_time_s": float(
+            map_builder.last_offline_wall_time_s
+        ),
         "tracking_wall_time_s": float(tracking_wall_time_s),
         "feature_roi_bottom_fraction": (
             feature_roi_bottom_fraction
