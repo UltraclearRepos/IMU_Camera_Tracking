@@ -26,6 +26,7 @@ class LightGlueFeatureMatching:
         self,
         feature_roi_bottom_fraction,
         feature_type="disk",
+        max_features=MAX_FEATURES,
         mask_aruco_features=MASK_ARUCO_FEATURES,
         use_adaptive_skin_mask=True,
     ):
@@ -38,17 +39,18 @@ class LightGlueFeatureMatching:
 
         self.device = DEVICE
         self.feature_type = feature_type
+        self.max_features = max_features
         self.requires_scale_orientation = feature_type == "sift"
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
         self.aruco_mask = ArucoMask(margin_px=ARUCO_MASK_MARGIN_PX) if mask_aruco_features else None
         self.adaptive_skin_mask = AdaptiveSkinMask() if use_adaptive_skin_mask else None
         if feature_type == "disk":
             self.extractor = DISK(
-                max_num_keypoints=MAX_FEATURES
+                max_num_keypoints=self.max_features
             ).eval().to(self.device)
         else:
             self.extractor = SIFT(
-                max_num_keypoints=MAX_FEATURES,
+                max_num_keypoints=self.max_features,
                 backend="opencv",
             ).eval().to(self.device)
         self.matcher = LightGlue(features=feature_type).eval().to(

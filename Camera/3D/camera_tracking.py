@@ -58,7 +58,9 @@ MAPPING_EVERY_FRAME_FROM_FRAME = None
 # Legacy example: recent=10, motion=() matches only the 10 previous frames.
 MAPPING_RECENT_PAIR_COUNT = 10
 MAPPING_MOTION_TARGETS_PX = ()
-MAPPING_MAX_FEATURES = 256  # Spatially distributed features passed to LightGlue.
+MAPPING_DETECTED_MAX_FEATURES = 512  # Features detected per map frame.
+MAPPING_MAX_FEATURES = 256  # Spatially distributed features retained per map frame.
+TRACKING_MAX_FEATURES = 512  # Features extracted per tracked frame.
 MAPPING_FEATURE_GRID_ROWS = 4  # Image grid rows used to distribute map features.
 MAPPING_FEATURE_GRID_COLUMNS = 4  # Image grid columns used to distribute map features.
 GLOBAL_MAP_MAX_LANDMARKS = 1024  # Maximum landmarks in the frozen global map.
@@ -170,6 +172,9 @@ def run_tracking(
     mapping_end_frame,
     tracking_start_frame,
     feature_type,
+    mapping_detected_max_features,
+    mapping_max_features,
+    tracking_max_features,
     keyframe_interval,
     every_frame_until_frame,
     every_frame_from_frame,
@@ -228,16 +233,17 @@ def run_tracking(
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
     distortion = np.load(DISTORTION_PATH)
-    feature_matching = LightGlueFeatureMatching(
+    mapping_feature_matching = LightGlueFeatureMatching(
         feature_roi_bottom_fraction,
         feature_type=feature_type,
+        max_features=mapping_detected_max_features,
         mask_aruco_features=MASK_ARUCO_FEATURES,
         use_adaptive_skin_mask=USE_ADAPTIVE_SKIN_MASK,
     )
     map_builder = SkinMapBuilder(
         camera_matrix,
         distortion,
-        feature_matching,
+        mapping_feature_matching,
         mapping_start_frame,
         mapping_end_frame,
         reconstruction_method,
@@ -246,7 +252,7 @@ def run_tracking(
         every_frame_from_frame,
         mapping_recent_pair_count,
         mapping_motion_targets_px,
-        MAPPING_MAX_FEATURES,
+        mapping_max_features,
         MAPPING_FEATURE_GRID_ROWS,
         MAPPING_FEATURE_GRID_COLUMNS,
         GLOBAL_MAP_MAX_LANDMARKS,
@@ -281,7 +287,10 @@ def run_tracking(
             MAPPING_FEATURE_VIDEO_FPS,
             feature_roi_bottom_fraction,
         )
-    save_skin_mask_initialization_diagnostics(feature_matching, output_dir)
+    save_skin_mask_initialization_diagnostics(
+        mapping_feature_matching,
+        output_dir,
+    )
     if SAVE_MAP_BUILD_TOP_VIEW:
         map_build_top_view_path = output_dir / "map_build_top_view.mp4"
         save_map_build_top_view(
@@ -296,7 +305,13 @@ def run_tracking(
         distortion,
         feature_roi_bottom_fraction=feature_roi_bottom_fraction,
         global_map=global_map,
-        feature_matching=feature_matching,
+        feature_matching=LightGlueFeatureMatching(
+            feature_roi_bottom_fraction,
+            feature_type=feature_type,
+            max_features=tracking_max_features,
+            mask_aruco_features=MASK_ARUCO_FEATURES,
+            use_adaptive_skin_mask=USE_ADAPTIVE_SKIN_MASK,
+        ),
     )
 
     capture = cv2.VideoCapture(str(video_path))
@@ -555,6 +570,9 @@ def run_tracking(
         "tracking_start_frame": tracking_start_frame,
         "reconstruction_method": reconstruction_method,
         "feature_type": feature_type,
+        "mapping_detected_max_features": mapping_detected_max_features,
+        "mapping_max_features": mapping_max_features,
+        "tracking_max_features": tracking_max_features,
         "keyframe_interval": keyframe_interval,
         "every_frame_until_frame": every_frame_until_frame,
         "every_frame_from_frame": every_frame_from_frame,
@@ -613,6 +631,9 @@ def main():
         mapping_end_frame=MAPPING_END_FRAME,
         tracking_start_frame=TRACKING_START_FRAME,
         feature_type=FEATURE_TYPE,
+        mapping_detected_max_features=MAPPING_DETECTED_MAX_FEATURES,
+        mapping_max_features=MAPPING_MAX_FEATURES,
+        tracking_max_features=TRACKING_MAX_FEATURES,
         keyframe_interval=KEYFRAME_INTERVAL,
         every_frame_until_frame=MAPPING_EVERY_FRAME_UNTIL_FRAME,
         every_frame_from_frame=MAPPING_EVERY_FRAME_FROM_FRAME,
