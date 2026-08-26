@@ -103,11 +103,11 @@ class AdaptiveKeyframePairSelector:
         common_track_counts = self._common_track_counts(
             current_image.local_tracks.track_ids
         )
-        recent_images = list(self._recent_keyframes)[:-1]
-        recent_images = recent_images[::-self.recent_pair_interval]
+        all_recent_images = list(self._recent_keyframes)[:-1]
+        recent_images = all_recent_images[::-self.recent_pair_interval]
         recent_images.reverse()
         recent_image_ids = {
-            image.database_image_id for image in recent_images
+            image.database_image_id for image in all_recent_images
         }
 
         motion_candidates = []
