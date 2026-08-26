@@ -49,9 +49,6 @@ def parameter_combinations(config):
             **limits,
             "keyframe_interval": keyframe_interval,
             **pairs,
-            "mapping_recent_pair_interval": pairs.get(
-                "mapping_recent_pair_interval", 1
-            ),
         }
 
 
