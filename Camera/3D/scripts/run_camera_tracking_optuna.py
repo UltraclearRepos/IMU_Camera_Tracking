@@ -18,11 +18,12 @@ if str(MODULE_DIR) not in sys.path:
 
 
 OBJECTIVE_NAMES = (
-    "mean_position_rmse_mm",
-    "std_position_rmse_mm",
-    "mean_orientation_rmse_deg",
-    "std_orientation_rmse_deg",
+    "position_score_mm",
+    "orientation_score_deg",
+    "mean_map_build_wall_time_s",
 )
+OBJECTIVE_STUDY_SUFFIX = "quality_time_v1"
+RMSE_STD_WEIGHT = 0.5
 MIN_TRACKED_PERCENT = 90.0
 PENALTY = 1_000_000.0
 
@@ -77,22 +78,31 @@ def selected_recording_metrics(metrics):
 def aggregate_metrics(recording_metrics):
     position = [item["position_rmse_mm"] for item in recording_metrics]
     orientation = [item["orientation_rmse_deg"] for item in recording_metrics]
+    map_build_times = [
+        item["map_build_wall_time_s"] for item in recording_metrics
+    ]
+    mean_position = statistics.fmean(position)
+    std_position = statistics.pstdev(position)
+    mean_orientation = statistics.fmean(orientation)
+    std_orientation = statistics.pstdev(orientation)
+    mean_map_build_time = statistics.fmean(map_build_times)
     values = (
-        statistics.fmean(position),
-        statistics.pstdev(position),
-        statistics.fmean(orientation),
-        statistics.pstdev(orientation),
+        mean_position + RMSE_STD_WEIGHT * std_position,
+        mean_orientation + RMSE_STD_WEIGHT * std_orientation,
+        mean_map_build_time,
     )
     if not all(math.isfinite(value) for value in values):
-        raise ValueError("Non-finite RMSE objective")
+        raise ValueError("Non-finite objective")
 
     return values, {
+        "mean_position_rmse_mm": mean_position,
+        "std_position_rmse_mm": std_position,
+        "mean_orientation_rmse_deg": mean_orientation,
+        "std_orientation_rmse_deg": std_orientation,
         "min_tracked_percent": min(
             item["tracked_percent"] for item in recording_metrics
         ),
-        "mean_map_build_wall_time_s": statistics.fmean(
-            item["map_build_wall_time_s"] for item in recording_metrics
-        ),
+        "mean_map_build_wall_time_s": mean_map_build_time,
         "mean_tracking_wall_time_s": statistics.fmean(
             item["tracking_wall_time_s"] for item in recording_metrics
         ),
@@ -148,7 +158,9 @@ def main():
     )
     database_path = (output_dir / "optuna_study.db").resolve()
     study = optuna.create_study(
-        study_name=config["experiment_name"],
+        study_name=(
+            f'{config["experiment_name"]}_{OBJECTIVE_STUDY_SUFFIX}'
+        ),
         directions=["minimize"] * len(OBJECTIVE_NAMES),
         sampler=sampler,
         storage=f"sqlite:///{database_path.as_posix()}",
@@ -176,6 +188,10 @@ def main():
             cached = cache[signature]
             for key in (
                 "recording_metrics",
+                "mean_position_rmse_mm",
+                "std_position_rmse_mm",
+                "mean_orientation_rmse_deg",
+                "std_orientation_rmse_deg",
                 "min_tracked_percent",
                 "mean_map_build_wall_time_s",
                 "mean_tracking_wall_time_s",
