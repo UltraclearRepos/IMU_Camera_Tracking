@@ -25,7 +25,6 @@ OBJECTIVE_NAMES = (
 OBJECTIVE_STUDY_SUFFIX = "quality_time_v1"
 RMSE_STD_WEIGHT = 0.5
 MIN_TRACKED_PERCENT = 90.0
-PENALTY = 1_000_000.0
 
 
 def load_config(path):
@@ -45,20 +44,12 @@ def suggest_parameters(trial, grid):
     pairs = grid["mapping_pair_settings"][pairs_index]
 
     return {
-        "feature_type": trial.suggest_categorical(
-            "feature_type", grid["feature_type"]
-        ),
-        "use_imu": trial.suggest_categorical("use_imu", grid["use_imu"]),
         **grid["feature_limits"][limits_index],
         "keyframe_interval": trial.suggest_categorical(
             "keyframe_interval", grid["keyframe_interval"]
         ),
         **pairs,
     }
-
-
-def parameter_signature(parameters):
-    return json.dumps(parameters, sort_keys=True, separators=(",", ":"))
 
 
 def selected_recording_metrics(metrics):
@@ -119,7 +110,7 @@ def parse_arguments():
         "--trials",
         type=int,
         default=60,
-        help="Target total number of trials, including resumed trials.",
+        help="Number of trials to run in a new study.",
     )
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
@@ -157,6 +148,12 @@ def main():
         seed=arguments.seed,
     )
     database_path = (output_dir / "optuna_study.db").resolve()
+    if database_path.exists():
+        raise FileExistsError(
+            f"Refusing to reuse existing Optuna database: {database_path}. "
+            "Choose an empty output directory or remove the old database."
+        )
+
     study = optuna.create_study(
         study_name=(
             f'{config["experiment_name"]}_{OBJECTIVE_STUDY_SUFFIX}'
@@ -164,44 +161,12 @@ def main():
         directions=["minimize"] * len(OBJECTIVE_NAMES),
         sampler=sampler,
         storage=f"sqlite:///{database_path.as_posix()}",
-        load_if_exists=True,
     )
     study.set_metric_names(list(OBJECTIVE_NAMES))
 
-    cache = {}
-    for old_trial in study.trials:
-        signature = old_trial.user_attrs.get("parameter_signature")
-        if old_trial.values is not None and signature:
-            cache[signature] = {
-                "number": old_trial.number,
-                "values": old_trial.values,
-                "user_attrs": old_trial.user_attrs,
-            }
-
     def objective(trial):
         parameters = suggest_parameters(trial, grid)
-        signature = parameter_signature(parameters)
         trial.set_user_attr("resolved_parameters", parameters)
-        trial.set_user_attr("parameter_signature", signature)
-
-        if signature in cache:
-            cached = cache[signature]
-            for key in (
-                "recording_metrics",
-                "mean_position_rmse_mm",
-                "std_position_rmse_mm",
-                "mean_orientation_rmse_deg",
-                "std_orientation_rmse_deg",
-                "min_tracked_percent",
-                "mean_map_build_wall_time_s",
-                "mean_tracking_wall_time_s",
-                "tracking_constraint",
-                "error",
-            ):
-                if key in cached["user_attrs"]:
-                    trial.set_user_attr(key, cached["user_attrs"][key])
-            trial.set_user_attr("cached_from_trial", cached["number"])
-            return cached["values"]
 
         experiment_config = {**config, **parameters}
         recording_metrics = []
@@ -228,15 +193,6 @@ def main():
             trial.set_user_attr("tracking_constraint", constraint)
             for key, value in summary.items():
                 trial.set_user_attr(key, value)
-            cache[signature] = {
-                "number": trial.number,
-                "values": values,
-                "user_attrs": {
-                    "recording_metrics": recording_metrics,
-                    "tracking_constraint": constraint,
-                    **summary,
-                },
-            }
             return values
         except Exception as error:
             traceback.print_exc()
@@ -244,25 +200,16 @@ def main():
             trial.set_user_attr(
                 "tracking_constraint", MIN_TRACKED_PERCENT
             )
-            values = (PENALTY,) * len(OBJECTIVE_NAMES)
-            cache[signature] = {
-                "number": trial.number,
-                "values": values,
-                "user_attrs": {
-                    "tracking_constraint": MIN_TRACKED_PERCENT,
-                    "error": f"{type(error).__name__}: {error}",
-                },
-            }
-            return values
+            raise
 
-    target_trials = max(arguments.trials, 0)
-    remaining_trials = max(target_trials - len(study.trials), 0)
-    print(
-        f"Study trials: {len(study.trials)}/{target_trials}; "
-        f"running {remaining_trials} new trials"
+    trial_count = max(arguments.trials, 0)
+    print(f"Running {trial_count} trials in a new study")
+
+    study.optimize(
+        objective,
+        n_trials=trial_count,
+        catch=(Exception,),
     )
-
-    study.optimize(objective, n_trials=remaining_trials)
 
     print(f"Saved Optuna study: {database_path}")
 
