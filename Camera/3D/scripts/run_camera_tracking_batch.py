@@ -99,9 +99,7 @@ def run_recording(
         mapping_recent_pair_count=config["mapping_recent_pair_count"],
         mapping_motion_targets_px=config["mapping_motion_targets_px"],
         use_imu=config["use_imu"],
-        mapping_recent_pair_interval=config.get(
-            "mapping_recent_pair_interval", 1
-        ),
+        mapping_recent_pair_interval=config["mapping_recent_pair_interval"]
     )
 
 

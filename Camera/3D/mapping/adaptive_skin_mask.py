@@ -14,7 +14,7 @@ class AdaptiveSkinMask:
     """Maintain an adaptive LAB skin-colour model and produce binary masks."""
 
     STANDARD_DEVIATION_BY_SKIN_TONE = {
-        "black": 1.0,
+        "black": 0.5,
         "white": 5.0,
     }
 
