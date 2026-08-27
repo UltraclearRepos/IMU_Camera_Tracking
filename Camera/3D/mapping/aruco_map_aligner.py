@@ -1,47 +1,64 @@
-import numpy as np
+from dataclasses import dataclass
 
-from mapping.mapping_data import ArucoAlignment, MappingFrameCollection
+import numpy as np
+import pycolmap
+
+from mapping.mapping_data import (
+    ArucoAlignment,
+    ArucoPoseResult,
+    MappingFrameCollection,
+)
+
+
+@dataclass(frozen=True)
+class AlignmentFrame:
+    name: str
+    aruco_pose: ArucoPoseResult
+    sfm_image: pycolmap.Image
 
 
 class ArucoMapAligner:
     """Estimate the metric scale of a COLMAP/GLOMAP reconstruction."""
 
     MINIMUM_ALIGNMENT_FRAMES = 3
+    MINIMUM_ARUCO_PAIR_DISPLACEMENT_MM = 10.0
 
     def align(self, reconstruction, frame_collection: MappingFrameCollection):
-        aruco_poses = {
-            image.name: image.aruco_pose
-            for image in frame_collection.images
-            if image.aruco_pose is not None
+        registered_images_by_name = {
+            image.name: image
+            for image in reconstruction.images.values()
         }
-        registered_images = sorted(
-            (
-                image
-                for image in reconstruction.images.values()
-                if image.name in aruco_poses
-            ),
-            key=lambda image: image.name,
-        )
-        if len(registered_images) < self.MINIMUM_ALIGNMENT_FRAMES:
+        candidate_frames = [
+            AlignmentFrame(
+                name=image.name,
+                aruco_pose=image.aruco_pose,
+                sfm_image=registered_images_by_name[image.name],
+            )
+            for image in frame_collection.images
+            if (
+                image.aruco_pose is not None
+                and image.name in registered_images_by_name
+            )
+        ]
+        if len(candidate_frames) < self.MINIMUM_ALIGNMENT_FRAMES:
             raise RuntimeError(
                 "ArUco must be visible in at least "
                 f"{self.MINIMUM_ALIGNMENT_FRAMES} registered mapping frames"
             )
 
-        alignment_images, rms_threshold = self._select_alignment_images(
-            registered_images,
-            aruco_poses,
+        alignment_frames, rms_threshold = self._select_alignment_frames(
+            candidate_frames
         )
         sfm_centers = np.asarray(
-            [image.projection_center() for image in alignment_images]
+            [frame.sfm_image.projection_center() for frame in alignment_frames]
         )
         aruco_centers = np.asarray(
             [
                 self.camera_center(
-                    aruco_poses[image.name].rotation,
-                    aruco_poses[image.name].translation,
+                    frame.aruco_pose.rotation,
+                    frame.aruco_pose.translation,
                 )
-                for image in alignment_images
+                for frame in alignment_frames
             ]
         )
         scale, rmse_mm = self._estimate_scale(sfm_centers, aruco_centers)
@@ -49,9 +66,12 @@ class ArucoMapAligner:
         return ArucoAlignment(
             scale=float(scale),
             rmse_mm=rmse_mm,
-            candidate_frame_count=len(registered_images),
-            aligned_frame_count=len(alignment_images),
+            candidate_frame_count=len(candidate_frames),
+            aligned_frame_count=len(alignment_frames),
             reprojection_rms_threshold_px=rms_threshold,
+            aligned_image_names=tuple(
+                frame.name for frame in alignment_frames
+            ),
         )
 
     @staticmethod
@@ -61,22 +81,26 @@ class ArucoMapAligner:
             @ world_to_camera_translation.reshape(3)
         )
 
-    def _select_alignment_images(self, registered_images, aruco_poses):
-        reprojection_rms = np.asarray(
-            [
-                aruco_poses[image.name].reprojection_rms_px
-                for image in registered_images
-            ],
-            dtype=float,
-        )
+    def _select_alignment_frames(self, candidate_frames):
         keep_count = max(
             self.MINIMUM_ALIGNMENT_FRAMES,
-            int(np.ceil(0.5 * len(registered_images))),
+            int(np.ceil(0.5 * len(candidate_frames))),
         )
-        best_indices = np.argsort(reprojection_rms)[:keep_count]
-        alignment_images = [registered_images[index] for index in best_indices]
-        alignment_images.sort(key=lambda image: image.name)
-        return alignment_images, float(np.max(reprojection_rms[best_indices]))
+
+        frames_by_reprojection_quality = sorted(
+            candidate_frames,
+            key=lambda frame: (
+                frame.aruco_pose.reprojection_rms_px,
+                frame.name,
+            ),
+        )
+        alignment_frames = frames_by_reprojection_quality[:keep_count]
+        rms_threshold = max(
+            frame.aruco_pose.reprojection_rms_px
+            for frame in alignment_frames
+        )
+        alignment_frames.sort(key=lambda frame: frame.name)
+        return alignment_frames, float(rms_threshold)
 
     @staticmethod
     def _estimate_scale(sfm_centers, aruco_centers):
@@ -90,9 +114,15 @@ class ArucoMapAligner:
             axis=1,
         )
         valid_pairs = sfm_distances > np.finfo(float).eps
+        valid_pairs &= (
+            aruco_distances
+            >= ArucoMapAligner.MINIMUM_ARUCO_PAIR_DISPLACEMENT_MM
+        )
         if not np.any(valid_pairs):
             raise RuntimeError(
-                "ArUco alignment frames do not contain enough camera translation"
+                "ArUco alignment frames do not contain a camera-position "
+                "pair separated by at least "
+                f"{ArucoMapAligner.MINIMUM_ARUCO_PAIR_DISPLACEMENT_MM:g} mm"
             )
         distance_ratios = (
             aruco_distances[valid_pairs] / sfm_distances[valid_pairs]

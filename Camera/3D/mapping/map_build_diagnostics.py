@@ -88,6 +88,7 @@ class MapBuildDiagnostics:
         )
         self._save_frame_plot(
             frame_collection,
+            alignment,
             diagnostics_plot_path,
             video_path.stem,
         )
@@ -171,7 +172,13 @@ class MapBuildDiagnostics:
             writer.writeheader()
             writer.writerows(rows)
 
-    def _save_frame_plot(self, frame_collection, output_path, recording_name):
+    def _save_frame_plot(
+        self,
+        frame_collection,
+        alignment,
+        output_path,
+        recording_name,
+    ):
         metrics = frame_collection.frame_diagnostics
         frames = self._field(metrics, "frame_index")
         feature_count = self._field(metrics, "feature_count")
@@ -200,6 +207,11 @@ class MapBuildDiagnostics:
         )
         aruco_detected = self._field(metrics, "aruco_detected").astype(bool)
         aruco_rms = self._field(metrics, "aruco_reprojection_rms_px")
+        aligned_image_names = set(alignment.aligned_image_names)
+        used_for_scale = np.asarray(
+            [item.image_name in aligned_image_names for item in metrics],
+            dtype=bool,
+        )
 
         matches_per_pair = raw_matches / np.maximum(attempted_pairs, 1)
         inliers_per_pair = verified_inliers / np.maximum(verified_pairs, 1)
@@ -293,6 +305,16 @@ class MapBuildDiagnostics:
             marker="o",
             markersize=3,
             label="ArUco reprojection RMS",
+        )
+        axes[5].scatter(
+            frames[used_for_scale],
+            aruco_rms[used_for_scale],
+            color="tab:red",
+            marker="x",
+            s=40,
+            linewidths=1.5,
+            label="Used for scale estimation",
+            zorder=3,
         )
         axes[5].set_ylabel("ArUco error [px]")
         axes[5].set_xlabel("Video frame")
@@ -598,6 +620,7 @@ class MapBuildDiagnostics:
             "scale_reprojection_rms_threshold_px": (
                 alignment.reprojection_rms_threshold_px
             ),
+            "scale_image_names": list(alignment.aligned_image_names),
             "scale_pairwise_distance_rmse_mm": alignment.rmse_mm,
             "last_mapping_image": max(
                 image.name for image in reconstruction.images.values()

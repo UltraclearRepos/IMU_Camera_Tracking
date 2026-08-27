@@ -150,6 +150,7 @@ class ArucoAlignment:
     candidate_frame_count: int
     aligned_frame_count: int
     reprojection_rms_threshold_px: float
+    aligned_image_names: tuple[str, ...]
 
 
 @dataclass
