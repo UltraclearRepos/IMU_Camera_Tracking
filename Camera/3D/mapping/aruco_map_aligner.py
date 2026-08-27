@@ -13,6 +13,7 @@ from mapping.mapping_data import (
 @dataclass(frozen=True)
 class AlignmentFrame:
     name: str
+    frame_number: int
     aruco_pose: ArucoPoseResult
     sfm_image: pycolmap.Image
     aruco_center_mm: np.ndarray
@@ -31,7 +32,9 @@ class ArucoMapAligner:
     """Estimate the metric scale of a COLMAP/GLOMAP reconstruction."""
 
     MINIMUM_ALIGNMENT_FRAMES = 3
-    MINIMUM_ARUCO_PAIR_DISPLACEMENT_MM = 5.0
+    MAXIMUM_ARUCO_REPROJECTION_RMS_PX = 1.0
+    MINIMUM_ARUCO_PAIR_DISPLACEMENT_MM = 3.0
+    MAXIMUM_ALIGNMENT_PAIR_FRAME_GAP = 200
 
     def align(self, reconstruction, frame_collection: MappingFrameCollection):
         registered_images_by_name = {
@@ -50,6 +53,7 @@ class ArucoMapAligner:
             candidate_frames.append(
                 AlignmentFrame(
                     name=image.name,
+                    frame_number=image.frame_index,
                     aruco_pose=image.aruco_pose,
                     sfm_image=sfm_image,
                     aruco_center_mm=self.camera_center(
@@ -103,30 +107,29 @@ class ArucoMapAligner:
         )
 
     def _select_alignment_frames(self, candidate_frames):
-        keep_count = max(
-            self.MINIMUM_ALIGNMENT_FRAMES,
-            int(np.ceil(0.5 * len(candidate_frames))),
-        )
+        alignment_frames = [
+            frame
+            for frame in candidate_frames
+            if frame.aruco_pose.reprojection_rms_px
+            <= self.MAXIMUM_ARUCO_REPROJECTION_RMS_PX
+        ]
+        if len(alignment_frames) < self.MINIMUM_ALIGNMENT_FRAMES:
+            raise RuntimeError(
+                "ArUco reprojection RMS must not exceed "
+                f"{self.MAXIMUM_ARUCO_REPROJECTION_RMS_PX:g} px in at least "
+                f"{self.MINIMUM_ALIGNMENT_FRAMES} registered mapping frames"
+            )
 
-        frames_by_reprojection_quality = sorted(
-            candidate_frames,
-            key=lambda frame: (
-                frame.aruco_pose.reprojection_rms_px,
-                frame.name,
-            ),
-        )
-        alignment_frames = frames_by_reprojection_quality[:keep_count]
-        rms_threshold = max(
-            frame.aruco_pose.reprojection_rms_px
-            for frame in alignment_frames
-        )
         alignment_frames.sort(key=lambda frame: frame.name)
-        return alignment_frames, float(rms_threshold)
+        return alignment_frames, self.MAXIMUM_ARUCO_REPROJECTION_RMS_PX
 
     def _select_alignment_pairs(self, alignment_frames):
         candidate_pairs = []
         for first_index, first in enumerate(alignment_frames):
             for second in alignment_frames[first_index + 1 :]:
+
+                if (abs(first.frame_number - second.frame_number) > self.MAXIMUM_ALIGNMENT_PAIR_FRAME_GAP):
+                    continue
 
                 aruco_distance_mm = float(
                     np.linalg.norm(

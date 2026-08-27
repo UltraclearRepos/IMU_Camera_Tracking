@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 import torch
 from evaluation.mapping_evaluation import evaluate_final_mapping_poses
+from mapping.adaptive_skin_mask import AdaptiveSkinMask
 from mapping.feature_matching import DEVICE, LightGlueFeatureMatching
 from mapping.skin_map_builder import SkinMapBuilder
 from scipy.spatial.transform import Rotation
@@ -36,11 +37,13 @@ from visualization.tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_14.39.08"
+# RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_14.39.08"
+RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_15.30.28"
+SKIN_TONE = "black"
 DATA_FOLDER = "Cylinder"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
-MAX_FRAMES = 2200
+MAX_FRAMES = 1150
 FEATURE_ROI_BOTTOM_FRACTION = 0.85
 FEATURE_TYPE = "sift"  # "disk" or "sift".
 
@@ -48,15 +51,15 @@ MAPPING_START_FRAME = 1  # First frame used to build the frozen 3D map.
 MAPPING_END_FRAME = 1080  # Last frame used to build the frozen 3D map.
 TRACKING_START_FRAME = 1081  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
-KEYFRAME_INTERVAL = 1  # Use every Nth frame during map construction.
+KEYFRAME_INTERVAL = 5  # Use every Nth frame during map construction.
 # Set these to offsets from the mapping boundaries to keep all frames at the
 # beginning and end. Between them, frames are sampled using KEYFRAME_INTERVAL.
 # None preserves the original uniform sampling across the whole mapping interval.
-MAPPING_EVERY_FRAME_UNTIL_FRAME = 100
-MAPPING_EVERY_FRAME_FROM_FRAME = 100
+MAPPING_EVERY_FRAME_UNTIL_FRAME = 30
+MAPPING_EVERY_FRAME_FROM_FRAME = 30
 # Adaptive example: recent=2, motion=(10.0, 20.0, 40.0).
 # Legacy example: recent=10, motion=() matches only the 10 previous frames.
-MAPPING_RECENT_PAIR_COUNT = 10
+MAPPING_RECENT_PAIR_COUNT = 3
 MAPPING_RECENT_PAIR_INTERVAL = 1
 MAPPING_MOTION_TARGETS_PX = ()
 MAPPING_DETECTED_MAX_FEATURES = 512  # Features detected per map frame.
@@ -69,6 +72,7 @@ GLOBAL_MAP_GRID_ROWS = 8  # Surface grid rows used for uniform landmark selectio
 GLOBAL_MAP_GRID_COLUMNS = 8  # Surface grid columns used for uniform landmark selection.
 GLOBAL_MAP_REPROJECTION_ERROR_WEIGHT = 0.70  # Geometry error weight versus track length.
 MASK_ARUCO_FEATURES = True  # Prevent the removable marker becoming a landmark.
+ARUCO_MASK_MARGIN_MM = 7.0
 USE_ADAPTIVE_SKIN_MASK = True
 USE_IMU_GRAVITY_PRIOR = False
 IMU_GRAVITY_HISTORY_SECONDS = 0.05
@@ -172,6 +176,7 @@ def run_tracking(
     mapping_start_frame,
     mapping_end_frame,
     tracking_start_frame,
+    skin_tone,
     feature_type,
     mapping_detected_max_features,
     mapping_max_features,
@@ -235,12 +240,14 @@ def run_tracking(
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
     distortion = np.load(DISTORTION_PATH)
+    mapping_adaptive_skin_mask = AdaptiveSkinMask(skin_tone) if USE_ADAPTIVE_SKIN_MASK else None
     mapping_feature_matching = LightGlueFeatureMatching(
         feature_roi_bottom_fraction,
         feature_type=feature_type,
         max_features=mapping_detected_max_features,
         mask_aruco_features=MASK_ARUCO_FEATURES,
-        use_adaptive_skin_mask=USE_ADAPTIVE_SKIN_MASK,
+        aruco_mask_margin_mm=ARUCO_MASK_MARGIN_MM,
+        adaptive_skin_mask=mapping_adaptive_skin_mask,
     )
     map_builder = SkinMapBuilder(
         camera_matrix,
@@ -313,7 +320,8 @@ def run_tracking(
             feature_type=feature_type,
             max_features=tracking_max_features,
             mask_aruco_features=MASK_ARUCO_FEATURES,
-            use_adaptive_skin_mask=USE_ADAPTIVE_SKIN_MASK,
+            aruco_mask_margin_mm=ARUCO_MASK_MARGIN_MM,
+            adaptive_skin_mask=AdaptiveSkinMask(skin_tone) if USE_ADAPTIVE_SKIN_MASK else None,
         ),
     )
 
@@ -579,6 +587,7 @@ def run_tracking(
         "mapping_start_frame": mapping_start_frame,
         "mapping_end_frame": mapping_end_frame,
         "tracking_start_frame": tracking_start_frame,
+        "skin_tone": skin_tone,
         "reconstruction_method": reconstruction_method,
         "feature_type": feature_type,
         "mapping_detected_max_features": mapping_detected_max_features,
@@ -643,6 +652,7 @@ def main():
         mapping_start_frame=MAPPING_START_FRAME,
         mapping_end_frame=MAPPING_END_FRAME,
         tracking_start_frame=TRACKING_START_FRAME,
+        skin_tone=SKIN_TONE,
         feature_type=FEATURE_TYPE,
         mapping_detected_max_features=MAPPING_DETECTED_MAX_FEATURES,
         mapping_max_features=MAPPING_MAX_FEATURES,

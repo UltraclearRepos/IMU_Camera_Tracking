@@ -1,16 +1,16 @@
 import cv2
 import numpy as np
 
-from mapping.aruco_reference import create_aruco_detector
+from mapping.aruco_reference import aruco_object_points, create_aruco_detector
 
 
 class ArucoMask:
     """Detect ArUco markers and mask their image regions."""
 
-    def __init__(self, margin_px=20):
-        if margin_px < 0:
-            raise ValueError("margin_px must be non-negative")
-        self.margin_px = int(margin_px)
+    def __init__(self, margin_mm=10.0):
+        if margin_mm < 0:
+            raise ValueError("margin_mm must be non-negative")
+        self.margin_mm = float(margin_mm)
         self.detector = create_aruco_detector()
         self._last_detected_ids = np.empty(0, dtype=np.int32)
         self._last_detected_count = 0
@@ -43,11 +43,24 @@ class ArucoMask:
             else np.empty(0, dtype=np.int32)
         )
         self._last_detected_count = len(corners)
+        marker_points_mm = aruco_object_points()[:, :2].astype(np.float32)
+        mask_points_mm = (
+            marker_points_mm
+            + np.sign(marker_points_mm) * self.margin_mm
+        )
         for marker_corners in corners:
-            polygon = np.rint(marker_corners.reshape(4, 2)).astype(np.int32)
-            cv2.fillConvexPoly(mask, polygon, 0)
+            homography = cv2.getPerspectiveTransform(
+                marker_points_mm,
+                marker_corners.reshape(4, 2).astype(np.float32),
+            )
+            mask_polygon = cv2.perspectiveTransform(
+                mask_points_mm.reshape(1, 4, 2),
+                homography,
+            ).reshape(4, 2)
+            cv2.fillConvexPoly(
+                mask,
+                np.rint(mask_polygon).astype(np.int32),
+                0,
+            )
 
-        if self.margin_px > 0:
-            size = 2 * self.margin_px + 1
-            mask = cv2.erode(mask, np.ones((size, size), dtype=np.uint8))
         return mask

@@ -13,18 +13,32 @@ class SkinMaskResult:
 class AdaptiveSkinMask:
     """Maintain an adaptive LAB skin-colour model and produce binary masks."""
 
+    BOUND_STANDARD_DEVIATIONS_BY_SKIN_TONE = {
+        "black": 1.0,
+        "white": 5.0,
+    }
+
     def __init__(
         self,
-        seed_width_fraction=0.2,
-        seed_height_fraction=0.70,
-        bound_standard_deviations=1.0,
-        minimum_standard_deviation=8.0,
+        skin_tone,
+        seed_width_fraction=0.4,
+        seed_height_fraction=0.85,
         model_update_rate=0.03,
     ):
+        skin_tone = skin_tone.lower()
+        if skin_tone not in self.BOUND_STANDARD_DEVIATIONS_BY_SKIN_TONE:
+            raise ValueError(
+                "skin_tone must be one of "
+                f"{tuple(self.BOUND_STANDARD_DEVIATIONS_BY_SKIN_TONE)}, "
+                f"got {skin_tone!r}"
+            )
+
+        self.skin_tone = skin_tone
         self.seed_width_fraction = seed_width_fraction
         self.seed_height_fraction = seed_height_fraction
-        self.bound_standard_deviations = bound_standard_deviations
-        self.minimum_standard_deviation = minimum_standard_deviation
+        self.bound_standard_deviations = (
+            self.BOUND_STANDARD_DEVIATIONS_BY_SKIN_TONE[skin_tone]
+        )
         self.model_update_rate = model_update_rate
         self._skin_mean_ab = None
         self._skin_std_ab = None
@@ -160,9 +174,17 @@ class AdaptiveSkinMask:
 
     def _set_model(self, samples):
         self._skin_mean_ab = np.mean(samples, axis=0, dtype=np.float32)
-        self._skin_std_ab = np.maximum(
-            np.std(samples, axis=0, dtype=np.float32),
-            self.minimum_standard_deviation,
+        measured_standard_deviation = np.std(
+            samples,
+            axis=0,
+            dtype=np.float32,
+        )
+        self._skin_std_ab = measured_standard_deviation
+        print(
+            f"Initial {self.skin_tone} skin colour std (LAB a/b): "
+            f"measured=[{measured_standard_deviation[0]:.2f}, "
+            f"{measured_standard_deviation[1]:.2f}], "
+            f"bounds={self.bound_standard_deviations:g} std"
         )
         self._update_bounds()
 
@@ -171,9 +193,10 @@ class AdaptiveSkinMask:
             return
         samples = samples[::max(1, len(samples) // 10000)]
         mean = np.mean(samples, axis=0, dtype=np.float32)
-        standard_deviation = np.maximum(
-            np.std(samples, axis=0, dtype=np.float32),
-            self.minimum_standard_deviation,
+        standard_deviation = np.std(
+            samples,
+            axis=0,
+            dtype=np.float32,
         )
         rate = self.model_update_rate
         self._skin_mean_ab = (1.0 - rate) * self._skin_mean_ab + rate * mean

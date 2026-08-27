@@ -4,14 +4,10 @@ import torch
 from lightglue import DISK, SIFT, LightGlue
 from lightglue.utils import rbd
 
-from mapping.adaptive_skin_mask import AdaptiveSkinMask
 from mapping.aruco_mask import ArucoMask
 from mapping.mapping_data import FeatureSet
 
 DEVICE = "cuda"
-MAX_FEATURES = 512
-MASK_ARUCO_FEATURES = True
-ARUCO_MASK_MARGIN_PX = 20
 FEATURE_TYPES = ("disk", "sift")
 
 
@@ -25,10 +21,11 @@ class LightGlueFeatureMatching:
     def __init__(
         self,
         feature_roi_bottom_fraction,
+        max_features,
+        mask_aruco_features,
+        aruco_mask_margin_mm,
+        adaptive_skin_mask,
         feature_type="disk",
-        max_features=MAX_FEATURES,
-        mask_aruco_features=MASK_ARUCO_FEATURES,
-        use_adaptive_skin_mask=True,
     ):
         feature_type = feature_type.lower()
         if feature_type not in FEATURE_TYPES:
@@ -42,8 +39,8 @@ class LightGlueFeatureMatching:
         self.max_features = max_features
         self.requires_scale_orientation = feature_type == "sift"
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
-        self.aruco_mask = ArucoMask(margin_px=ARUCO_MASK_MARGIN_PX) if mask_aruco_features else None
-        self.adaptive_skin_mask = AdaptiveSkinMask() if use_adaptive_skin_mask else None
+        self.aruco_mask = (ArucoMask(margin_mm=aruco_mask_margin_mm) if mask_aruco_features else None)
+        self.adaptive_skin_mask = adaptive_skin_mask
         if feature_type == "disk":
             self.extractor = DISK(
                 max_num_keypoints=self.max_features
