@@ -13,7 +13,7 @@ class SkinMaskResult:
 class AdaptiveSkinMask:
     """Maintain an adaptive LAB skin-colour model and produce binary masks."""
 
-    BOUND_STANDARD_DEVIATIONS_BY_SKIN_TONE = {
+    STANDARD_DEVIATION_BY_SKIN_TONE = {
         "black": 1.0,
         "white": 5.0,
     }
@@ -26,22 +26,21 @@ class AdaptiveSkinMask:
         model_update_rate=0.03,
     ):
         skin_tone = skin_tone.lower()
-        if skin_tone not in self.BOUND_STANDARD_DEVIATIONS_BY_SKIN_TONE:
+        if skin_tone not in self.STANDARD_DEVIATION_BY_SKIN_TONE:
             raise ValueError(
                 "skin_tone must be one of "
-                f"{tuple(self.BOUND_STANDARD_DEVIATIONS_BY_SKIN_TONE)}, "
+                f"{tuple(self.STANDARD_DEVIATION_BY_SKIN_TONE)}, "
                 f"got {skin_tone!r}"
             )
 
         self.skin_tone = skin_tone
         self.seed_width_fraction = seed_width_fraction
         self.seed_height_fraction = seed_height_fraction
-        self.bound_standard_deviations = (
-            self.BOUND_STANDARD_DEVIATIONS_BY_SKIN_TONE[skin_tone]
+        self.standard_deviation = (
+            self.STANDARD_DEVIATION_BY_SKIN_TONE[skin_tone]
         )
         self.model_update_rate = model_update_rate
         self._skin_mean_ab = None
-        self._skin_std_ab = None
         self._skin_lower_bound = None
         self._skin_upper_bound = None
         self._previous_mask = None
@@ -179,12 +178,11 @@ class AdaptiveSkinMask:
             axis=0,
             dtype=np.float32,
         )
-        self._skin_std_ab = measured_standard_deviation
         print(
             f"Initial {self.skin_tone} skin colour std (LAB a/b): "
             f"measured=[{measured_standard_deviation[0]:.2f}, "
             f"{measured_standard_deviation[1]:.2f}], "
-            f"bounds={self.bound_standard_deviations:g} std"
+            f"used={self.standard_deviation:g}"
         )
         self._update_bounds()
 
@@ -193,27 +191,18 @@ class AdaptiveSkinMask:
             return
         samples = samples[::max(1, len(samples) // 10000)]
         mean = np.mean(samples, axis=0, dtype=np.float32)
-        standard_deviation = np.std(
-            samples,
-            axis=0,
-            dtype=np.float32,
-        )
         rate = self.model_update_rate
         self._skin_mean_ab = (1.0 - rate) * self._skin_mean_ab + rate * mean
-        self._skin_std_ab = (
-            (1.0 - rate) * self._skin_std_ab + rate * standard_deviation
-        )
         self._update_bounds()
 
     def _update_bounds(self):
-        half_range = self.bound_standard_deviations * self._skin_std_ab
         self._skin_lower_bound = np.clip(
-            self._skin_mean_ab - half_range,
+            self._skin_mean_ab - self.standard_deviation,
             0,
             255,
         ).astype(np.uint8)
         self._skin_upper_bound = np.clip(
-            self._skin_mean_ab + half_range,
+            self._skin_mean_ab + self.standard_deviation,
             0,
             255,
         ).astype(np.uint8)

@@ -37,9 +37,9 @@ from visualization.tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-# RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_14.39.08"
-RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_15.30.28"
-SKIN_TONE = "black"
+RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_14.39.08"
+# RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_15.30.28"
+SKIN_TONE = "white"
 DATA_FOLDER = "Cylinder"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
