@@ -1,4 +1,5 @@
 numpy==2.2.6
+pandas==2.3.2
 scipy==1.15.3
 matplotlib==3.10.9
 pillow==12.2.0
@@ -8,4 +9,6 @@ kornia==0.8.2
 torch==2.11.0+cu128
 torchvision==0.26.0+cu128
 huggingface_hub>=0.34.0
+optuna==4.9.0
+optuna-dashboard==0.20.0
 lightglue @ git+https://github.com/cvg/LightGlue.git@eb42fee2d71449efb0aa5c10549752b5d75384d8

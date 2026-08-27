@@ -527,6 +527,7 @@ def run_tracking(
     tracking_fps = 1000.0 / average_tracking_time_ms
 
     csv_path = output_dir / "camera.csv"
+    camera_gt_path = output_dir / "camera_gt.csv"
     position_plot_path = output_dir / "position.png"
     orientation_plot_path = output_dir / "orientation.png"
     timing_plot_path = output_dir / "timing_diagnostics.png"
@@ -550,6 +551,7 @@ def run_tracking(
         ground_truth_path,
         position_plot_path,
         orientation_plot_path,
+        camera_gt_path,
         recording_name,
     )
     tracked_frames = sum(row["tracked"] for row in rows)
@@ -600,6 +602,7 @@ def run_tracking(
         json.dump(metrics, file, indent=2)
 
     print(f"Saved: {csv_path}")
+    print(f"Saved: {camera_gt_path}")
     print(f"Saved: {position_plot_path}")
     print(f"Saved: {orientation_plot_path}")
     print(f"Saved: {timing_plot_path}")

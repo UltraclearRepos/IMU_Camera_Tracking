@@ -1118,13 +1118,69 @@ def save_comparison_figure(
     return overall_rmse
 
 
+def save_camera_gt_csv(
+    frames,
+    times_s,
+    timestamps,
+    estimate_positions,
+    ground_truth_positions,
+    estimate_rotation_vectors,
+    ground_truth_rotation_vectors,
+    output_path,
+):
+    """Save tracking poses and synchronized GT in a common camera frame."""
+    fieldnames = [
+        "frame",
+        "time_s",
+        "timestamp",
+        "x_mm",
+        "y_mm",
+        "z_mm",
+        "gt_x_mm",
+        "gt_y_mm",
+        "gt_z_mm",
+        "rotation_x_deg",
+        "rotation_y_deg",
+        "rotation_z_deg",
+        "gt_rotation_x_deg",
+        "gt_rotation_y_deg",
+        "gt_rotation_z_deg",
+    ]
+    with output_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        for index, frame in enumerate(frames):
+            writer.writerow(
+                {
+                    "frame": int(frame),
+                    "time_s": times_s[index],
+                    "timestamp": timestamps[index],
+                    "x_mm": estimate_positions[index, 0],
+                    "y_mm": estimate_positions[index, 1],
+                    "z_mm": estimate_positions[index, 2],
+                    "gt_x_mm": ground_truth_positions[index, 0],
+                    "gt_y_mm": ground_truth_positions[index, 1],
+                    "gt_z_mm": ground_truth_positions[index, 2],
+                    "rotation_x_deg": estimate_rotation_vectors[index, 0],
+                    "rotation_y_deg": estimate_rotation_vectors[index, 1],
+                    "rotation_z_deg": estimate_rotation_vectors[index, 2],
+                    "gt_rotation_x_deg": ground_truth_rotation_vectors[index, 0],
+                    "gt_rotation_y_deg": ground_truth_rotation_vectors[index, 1],
+                    "gt_rotation_z_deg": ground_truth_rotation_vectors[index, 2],
+                }
+            )
+
+
 def create_comparison_plots(
     rows,
     gt_path,
     position_output_path,
     orientation_output_path,
+    camera_gt_output_path,
     recording_name,
 ):
+    camera_frames = np.asarray([row["frame"] for row in rows])
+    camera_times_s = np.asarray([row["time_s"] for row in rows], dtype=float)
     camera_time = np.array([row["timestamp"] for row in rows])
     estimate = np.array(
         [[row["x_mm"], row["y_mm"], row["z_mm"]] for row in rows],
@@ -1189,6 +1245,8 @@ def create_comparison_plots(
             for axis in range(3)
         ]
     )[0]
+    camera_frames = camera_frames[within_ground_truth]
+    camera_times_s = camera_times_s[within_ground_truth]
     reference_gt_rotation = Rotation.from_euler(
         "xyz",
         reference_gt_euler,
@@ -1248,6 +1306,17 @@ def create_comparison_plots(
     angular_errors = np.full(len(estimate), np.nan)
     angular_errors[valid] = valid_angular_errors
     tracking_coverage = 100.0 * np.mean(valid)
+
+    save_camera_gt_csv(
+        camera_frames,
+        camera_times_s,
+        camera_time,
+        estimate,
+        gt,
+        estimate_rotation_vectors,
+        gt_rotation_vectors,
+        camera_gt_output_path,
+    )
 
     position_rmse = save_comparison_figure(
         plot_time,
