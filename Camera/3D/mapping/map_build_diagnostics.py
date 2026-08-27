@@ -316,6 +316,37 @@ class MapBuildDiagnostics:
             label="Used for scale estimation",
             zorder=3,
         )
+        frame_by_image_name = {
+            item.image_name: item.frame_index for item in metrics
+        }
+        pair_distance_axis = axes[5].twinx()
+        for pair_index, (image_pair, distance_mm) in enumerate(
+            zip(
+                alignment.aligned_image_pairs,
+                alignment.aligned_pair_distances_mm,
+            )
+        ):
+            first_name, second_name = image_pair
+            pair_distance_axis.plot(
+                [
+                    frame_by_image_name[first_name],
+                    frame_by_image_name[second_name],
+                ],
+                [distance_mm, distance_mm],
+                color="tab:purple",
+                marker="o",
+                markersize=4,
+                linewidth=1.5,
+                alpha=0.7,
+                label=(
+                    "Selected ArUco pair distance"
+                    if pair_index == 0
+                    else None
+                ),
+                zorder=2,
+            )
+        pair_distance_axis.set_ylabel("Selected pair distance [mm]")
+        pair_distance_axis.legend(loc="upper right")
         axes[5].set_ylabel("ArUco error [px]")
         axes[5].set_xlabel("Video frame")
         axes[5].set_title("6. ArUco pose detection")
@@ -621,6 +652,12 @@ class MapBuildDiagnostics:
                 alignment.reprojection_rms_threshold_px
             ),
             "scale_image_names": list(alignment.aligned_image_names),
+            "scale_image_pairs": [
+                list(pair) for pair in alignment.aligned_image_pairs
+            ],
+            "scale_pair_distances_mm": list(
+                alignment.aligned_pair_distances_mm
+            ),
             "scale_pairwise_distance_rmse_mm": alignment.rmse_mm,
             "last_mapping_image": max(
                 image.name for image in reconstruction.images.values()

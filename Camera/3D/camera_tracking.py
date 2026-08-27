@@ -52,8 +52,8 @@ KEYFRAME_INTERVAL = 1  # Use every Nth frame during map construction.
 # Set these to offsets from the mapping boundaries to keep all frames at the
 # beginning and end. Between them, frames are sampled using KEYFRAME_INTERVAL.
 # None preserves the original uniform sampling across the whole mapping interval.
-MAPPING_EVERY_FRAME_UNTIL_FRAME = None
-MAPPING_EVERY_FRAME_FROM_FRAME = None
+MAPPING_EVERY_FRAME_UNTIL_FRAME = 100
+MAPPING_EVERY_FRAME_FROM_FRAME = 100
 # Adaptive example: recent=2, motion=(10.0, 20.0, 40.0).
 # Legacy example: recent=10, motion=() matches only the 10 previous frames.
 MAPPING_RECENT_PAIR_COUNT = 10
@@ -88,7 +88,7 @@ TOP_VIEW_PADDING_MM = 20.0
 SHOW_PREVIEW = False
 
 USE_IMU_SUBFOLDER = "IMU" if USE_IMU_GRAVITY_PRIOR else "noIMU"
-RESULTS_DIR = SCRIPT_DIR / "results" / DATA_FOLDER / FEATURE_TYPE / RECONSTRUCTION_METHOD / USE_IMU_SUBFOLDER
+RESULTS_DIR = SCRIPT_DIR / "results" / DATA_FOLDER / FEATURE_TYPE / RECONSTRUCTION_METHOD / USE_IMU_SUBFOLDER / "newScaleEstimation"
 CAMERA_MATRIX_PATH = (
     CAMERA_DIR
     / "calibrations"
