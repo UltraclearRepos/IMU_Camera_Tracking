@@ -18,7 +18,7 @@ from mapping.aruco_mask import ArucoMask
 RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_15.30.28"
 DATA_FOLDER = "Cylinder"
 CAMERA_NAME = "cam1"
-SKIN_TONE = "black"
+KEYFRAME_INTERVAL = 10
 FEATURE_ROI_BOTTOM_FRACTION = 0.85
 ARUCO_MASK_MARGIN_MM = 7.0
 MAX_FRAMES = None  # None processes the entire video.
@@ -63,7 +63,6 @@ def draw_mask_diagnostics(
     frame,
     frame_index,
     roi_top,
-    skin_tone,
     skin_result,
     aruco_exclusion_mask,
     detected_aruco_ids,
@@ -141,7 +140,7 @@ def draw_mask_diagnostics(
     cv2.rectangle(output, (0, 0), (output.shape[1] - 1, 58), (0, 0, 0), -1)
     cv2.putText(
         output,
-        f"frame {frame_index} | tone: {skin_tone} | ArUco: {aruco_ids}",
+        f"frame {frame_index} | ArUco: {aruco_ids}",
         (10, 22),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.52,
@@ -162,10 +161,49 @@ def draw_mask_diagnostics(
     return output
 
 
+def save_initial_growing_diagnostics(output, skin_mask, output_path):
+    seed = skin_mask.initial_seed
+    if seed is None:
+        return None
+
+    diagnostic = output.copy()
+    blend_colour(diagnostic, seed, (0, 255, 255), 0.35)
+    seed_contours, _ = cv2.findContours(
+        seed.astype(np.uint8),
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    cv2.drawContours(
+        diagnostic,
+        seed_contours,
+        -1,
+        (0, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    height, width = diagnostic.shape[:2]
+    cv2.rectangle(diagnostic, (0, height - 25), (width - 1, height - 1), (0, 0, 0), -1)
+    cv2.putText(
+        diagnostic,
+        "yellow: initial skin seed | green/magenta: grown skin mask",
+        (10, height - 8),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.43,
+        (255, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
+    image_path = output_path.with_name(
+        f"{output_path.stem}_initial_growing.png"
+    )
+    if not cv2.imwrite(str(image_path), diagnostic):
+        raise RuntimeError(f"Could not save initial growing image: {image_path}")
+    return image_path
+
+
 def run_preview(
     recording_name,
     data_folder,
-    skin_tone,
     roi_bottom_fraction,
     aruco_mask_margin_mm,
     max_frames,
@@ -197,8 +235,9 @@ def run_preview(
 
     roi_top = round(height * (1.0 - roi_bottom_fraction))
     aruco_mask = ArucoMask(margin_mm=aruco_mask_margin_mm)
-    skin_mask = AdaptiveSkinMask(skin_tone)
+    skin_mask = AdaptiveSkinMask()
     processed_frames = 0
+    initial_growing_path = None
 
     try:
         while max_frames is None or processed_frames < max_frames:
@@ -207,6 +246,10 @@ def run_preview(
                 break
 
             frame_index = int(capture.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+
+            if frame_index % KEYFRAME_INTERVAL != 0:
+                continue
+
             aruco_exclusion_mask = aruco_mask.compute(frame)
             skin_result = skin_mask.compute(
                 frame,
@@ -217,11 +260,16 @@ def run_preview(
                 frame,
                 frame_index,
                 roi_top,
-                skin_tone,
                 skin_result,
                 aruco_exclusion_mask,
                 aruco_mask.last_detected_ids,
             )
+            if processed_frames == 0:
+                initial_growing_path = save_initial_growing_diagnostics(
+                    output,
+                    skin_mask,
+                    output_path,
+                )
             writer.write(output)
             processed_frames += 1
             if processed_frames == 1 or processed_frames % 100 == 0:
@@ -233,6 +281,18 @@ def run_preview(
     if processed_frames == 0:
         raise RuntimeError(f"No frames were read from {video_path}")
 
+    effective_fps = (
+        skin_mask.compute_count / skin_mask.compute_seconds
+        if skin_mask.compute_seconds > 0.0
+        else 0.0
+    )
+    print(
+        f"Skin mask timing: {skin_mask.compute_seconds:.3f} s total, "
+        f"{skin_mask.average_compute_ms:.2f} ms/frame, "
+        f"{effective_fps:.1f} FPS"
+    )
+    if initial_growing_path is not None:
+        print(f"Saved initial growing image: {initial_growing_path}")
     print(f"Saved {processed_frames} frames: {output_path}")
     return output_path
 
@@ -241,7 +301,6 @@ def main():
     run_preview(
         recording_name=RECORDING_NAME,
         data_folder=DATA_FOLDER,
-        skin_tone=SKIN_TONE,
         roi_bottom_fraction=FEATURE_ROI_BOTTOM_FRACTION,
         aruco_mask_margin_mm=ARUCO_MASK_MARGIN_MM,
         max_frames=MAX_FRAMES,

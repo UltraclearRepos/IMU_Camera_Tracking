@@ -562,6 +562,7 @@ class MapBuildDiagnostics:
                 "feature_extraction_s": (
                     collection_timing.feature_extraction_seconds
                 ),
+                "skin_masking_s": collection_timing.skin_masking_seconds,
                 "local_tracking_s": (
                     collection_timing.local_tracking_seconds
                 ),
@@ -730,6 +731,7 @@ class MapBuildDiagnostics:
             "    Feature extraction: "
             f"{collection['feature_extraction_s']:.2f} s"
         )
+        print(f"    Skin masking: {collection['skin_masking_s']:.2f} s")
         print(
             f"    Matching: {collection['feature_matching_s']:.2f} s"
         )

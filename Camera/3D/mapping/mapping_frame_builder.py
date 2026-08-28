@@ -214,6 +214,11 @@ class MappingFrameBuilder:
                 frame_read_seconds=frame_read_seconds,
                 image_save_seconds=image_save_seconds,
                 feature_extraction_seconds=feature_extraction_seconds,
+                skin_masking_seconds=(
+                    0.0
+                    if self.feature_matcher.adaptive_skin_mask is None
+                    else self.feature_matcher.adaptive_skin_mask.compute_seconds
+                ),
                 local_tracking_seconds=local_tracking_seconds,
                 aruco_detection_seconds=aruco_detection_seconds,
                 image_database_write_seconds=image_database_write_seconds,

@@ -108,6 +108,7 @@ class FrameCollectionTiming:
     frame_read_seconds: float
     image_save_seconds: float
     feature_extraction_seconds: float
+    skin_masking_seconds: float
     local_tracking_seconds: float
     aruco_detection_seconds: float
     image_database_write_seconds: float

@@ -191,7 +191,17 @@ def main():
             trial.set_user_attr("tracking_constraint", constraint)
             for key, value in summary.items():
                 trial.set_user_attr(key, value)
+            if constraint > 0.0:
+                rejection_reason = (
+                    "Tracking coverage below minimum: "
+                    f'{summary["min_tracked_percent"]:.2f}% < '
+                    f"{MIN_TRACKED_PERCENT:.2f}%"
+                )
+                trial.set_user_attr("rejection_reason", rejection_reason)
+                raise optuna.TrialPruned(rejection_reason)
             return values
+        except optuna.TrialPruned:
+            raise
         except Exception as error:
             traceback.print_exc()
             trial.set_user_attr("error", f"{type(error).__name__}: {error}")

@@ -88,7 +88,6 @@ def run_recording(
         recording_parameters["feature_roi_bottom_fraction"],
         reconstruction_method=config["reconstruction_method"],
         **frame_range,
-        skin_tone=recording_parameters["skin_tone"],
         feature_type=config["feature_type"],
         mapping_detected_max_features=config["mapping_detected_max_features"],
         mapping_max_features=config["mapping_max_features"],

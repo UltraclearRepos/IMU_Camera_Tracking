@@ -39,7 +39,6 @@ from visualization.tracking_visualization import (
 
 RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_14.39.08"
 # RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_15.30.28"
-SKIN_TONE = "white"
 DATA_FOLDER = "Cylinder"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
@@ -176,7 +175,6 @@ def run_tracking(
     mapping_start_frame,
     mapping_end_frame,
     tracking_start_frame,
-    skin_tone,
     feature_type,
     mapping_detected_max_features,
     mapping_max_features,
@@ -240,7 +238,7 @@ def run_tracking(
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
     distortion = np.load(DISTORTION_PATH)
-    mapping_adaptive_skin_mask = AdaptiveSkinMask(skin_tone) if USE_ADAPTIVE_SKIN_MASK else None
+    mapping_adaptive_skin_mask = AdaptiveSkinMask() if USE_ADAPTIVE_SKIN_MASK else None
     mapping_feature_matching = LightGlueFeatureMatching(
         feature_roi_bottom_fraction,
         feature_type=feature_type,
@@ -321,7 +319,7 @@ def run_tracking(
             max_features=tracking_max_features,
             mask_aruco_features=MASK_ARUCO_FEATURES,
             aruco_mask_margin_mm=ARUCO_MASK_MARGIN_MM,
-            adaptive_skin_mask=AdaptiveSkinMask(skin_tone) if USE_ADAPTIVE_SKIN_MASK else None,
+            adaptive_skin_mask=AdaptiveSkinMask() if USE_ADAPTIVE_SKIN_MASK else None,
         ),
     )
 
@@ -587,7 +585,6 @@ def run_tracking(
         "mapping_start_frame": mapping_start_frame,
         "mapping_end_frame": mapping_end_frame,
         "tracking_start_frame": tracking_start_frame,
-        "skin_tone": skin_tone,
         "reconstruction_method": reconstruction_method,
         "feature_type": feature_type,
         "mapping_detected_max_features": mapping_detected_max_features,
@@ -652,7 +649,6 @@ def main():
         mapping_start_frame=MAPPING_START_FRAME,
         mapping_end_frame=MAPPING_END_FRAME,
         tracking_start_frame=TRACKING_START_FRAME,
-        skin_tone=SKIN_TONE,
         feature_type=FEATURE_TYPE,
         mapping_detected_max_features=MAPPING_DETECTED_MAX_FEATURES,
         mapping_max_features=MAPPING_MAX_FEATURES,
