@@ -108,7 +108,7 @@ def parse_arguments():
         "--trials",
         type=int,
         default=60,
-        help="Number of trials to run in a new study.",
+        help="Number of unique parameter configurations to evaluate.",
     )
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
@@ -139,6 +139,18 @@ def main():
             ),
         )
 
+    trial_count = max(arguments.trials, 0)
+    available_configuration_count = (
+        len(grid["feature_limits"])
+        * len(grid["mapping_pair_settings"])
+        * len(grid["keyframe_interval"])
+    )
+    if trial_count > available_configuration_count:
+        raise ValueError(
+            f"Requested {trial_count} unique trials, but the parameter grid "
+            f"contains only {available_configuration_count} combinations"
+        )
+
     sampler = optuna.samplers.TPESampler(
         multivariate=True,
         group=True,
@@ -161,10 +173,18 @@ def main():
         storage=f"sqlite:///{database_path.as_posix()}",
     )
     study.set_metric_names(list(OBJECTIVE_NAMES))
+    used_configurations = set()
+    unique_trial_count = 0
 
     def objective(trial):
+        nonlocal unique_trial_count
         parameters = suggest_parameters(trial, grid)
         trial.set_user_attr("resolved_parameters", parameters)
+        configuration_key = json.dumps(parameters, sort_keys=True)
+        if configuration_key in used_configurations:
+            raise optuna.TrialPruned("Configuration already evaluated")
+        used_configurations.add(configuration_key)
+        unique_trial_count += 1
 
         experiment_config = {**config, **parameters}
         recording_metrics = []
@@ -210,14 +230,14 @@ def main():
             )
             raise
 
-    trial_count = max(arguments.trials, 0)
-    print(f"Running {trial_count} trials in a new study")
+    print(f"Running {trial_count} unique trials in a new study")
 
-    study.optimize(
-        objective,
-        n_trials=trial_count,
-        catch=(Exception,),
-    )
+    while unique_trial_count < trial_count:
+        study.optimize(
+            objective,
+            n_trials=1,
+            catch=(Exception,),
+        )
 
     print(f"Saved Optuna study: {database_path}")
 
