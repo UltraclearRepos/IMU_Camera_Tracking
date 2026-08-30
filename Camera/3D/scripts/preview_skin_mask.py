@@ -22,6 +22,7 @@ KEYFRAME_INTERVAL = 10
 FEATURE_ROI_BOTTOM_FRACTION = 0.85
 ARUCO_MASK_MARGIN_MM = 7.0
 MAX_FRAMES = None  # None processes the entire video.
+REINITIALIZE_FRAME = 1081  # Source frame number, or None to disable.
 OUTPUT_PATH = (
     MODULE_DIR
     / "results"
@@ -208,6 +209,7 @@ def run_preview(
     aruco_mask_margin_mm,
     max_frames,
     output_path,
+    reinitialize_frame=None,
 ):
     video_path = find_video(data_folder, recording_name)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,8 +238,10 @@ def run_preview(
     roi_top = round(height * (1.0 - roi_bottom_fraction))
     aruco_mask = ArucoMask(margin_mm=aruco_mask_margin_mm)
     skin_mask = AdaptiveSkinMask()
+    skin_masks = [skin_mask]
     processed_frames = 0
     initial_growing_path = None
+    reinitialized = False
 
     try:
         while max_frames is None or processed_frames < max_frames:
@@ -245,10 +249,20 @@ def run_preview(
             if not success:
                 break
 
-            frame_index = int(capture.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+            timestamp_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            frame_index = round(timestamp_s * fps)
 
-            if frame_index % KEYFRAME_INTERVAL != 0:
+            if (
+                frame_index % KEYFRAME_INTERVAL != 0
+                and frame_index != reinitialize_frame
+            ):
                 continue
+
+            if frame_index == reinitialize_frame:
+                skin_mask = AdaptiveSkinMask()
+                skin_masks.append(skin_mask)
+                reinitialized = True
+                print(f"Reinitializing skin mask at frame {frame_index}")
 
             aruco_exclusion_mask = aruco_mask.compute(frame)
             skin_result = skin_mask.compute(
@@ -281,16 +295,25 @@ def run_preview(
     if processed_frames == 0:
         raise RuntimeError(f"No frames were read from {video_path}")
 
+    compute_count = sum(mask.compute_count for mask in skin_masks)
+    compute_seconds = sum(mask.compute_seconds for mask in skin_masks)
+    average_compute_ms = (
+        1000.0 * compute_seconds / compute_count
+        if compute_count > 0
+        else 0.0
+    )
     effective_fps = (
-        skin_mask.compute_count / skin_mask.compute_seconds
-        if skin_mask.compute_seconds > 0.0
+        compute_count / compute_seconds
+        if compute_seconds > 0.0
         else 0.0
     )
     print(
-        f"Skin mask timing: {skin_mask.compute_seconds:.3f} s total, "
-        f"{skin_mask.average_compute_ms:.2f} ms/frame, "
+        f"Skin mask timing: {compute_seconds:.3f} s total, "
+        f"{average_compute_ms:.2f} ms/frame, "
         f"{effective_fps:.1f} FPS"
     )
+    if reinitialize_frame is not None and not reinitialized:
+        print(f"Reinitialization frame {reinitialize_frame} was not reached")
     if initial_growing_path is not None:
         print(f"Saved initial growing image: {initial_growing_path}")
     print(f"Saved {processed_frames} frames: {output_path}")
@@ -305,6 +328,7 @@ def main():
         aruco_mask_margin_mm=ARUCO_MASK_MARGIN_MM,
         max_frames=MAX_FRAMES,
         output_path=OUTPUT_PATH,
+        reinitialize_frame=REINITIALIZE_FRAME,
     )
 
 

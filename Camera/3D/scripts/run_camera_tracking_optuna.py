@@ -20,9 +20,8 @@ if str(MODULE_DIR) not in sys.path:
 OBJECTIVE_NAMES = (
     "position_score_mm",
     "orientation_score_deg",
-    "mean_map_build_wall_time_s",
 )
-OBJECTIVE_STUDY_SUFFIX = "quality_time_v1"
+OBJECTIVE_STUDY_SUFFIX = "quality_v1"
 RMSE_STD_WEIGHT = 0.5
 MIN_TRACKED_PERCENT = 90.0
 
@@ -80,7 +79,6 @@ def aggregate_metrics(recording_metrics):
     values = (
         mean_position + RMSE_STD_WEIGHT * std_position,
         mean_orientation + RMSE_STD_WEIGHT * std_orientation,
-        mean_map_build_time,
     )
     if not all(math.isfinite(value) for value in values):
         raise ValueError("Non-finite objective")
