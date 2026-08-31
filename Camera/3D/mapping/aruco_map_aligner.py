@@ -128,6 +128,12 @@ class ArucoMapAligner:
         for first_index, first in enumerate(alignment_frames):
             for second in alignment_frames[first_index + 1 :]:
 
+                if (
+                    first.aruco_pose.marker_id
+                    != second.aruco_pose.marker_id
+                ):
+                    continue
+
                 if (abs(first.frame_number - second.frame_number) > self.MAXIMUM_ALIGNMENT_PAIR_FRAME_GAP):
                     continue
 

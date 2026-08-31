@@ -4,10 +4,6 @@ import numpy as np
 from mapping.mapping_data import ArucoPoseResult
 
 
-ARUCO_ID = 7
-ARUCO_SIZE_MM = 20.0
-
-
 def create_aruco_detector():
     dictionary = cv2.aruco.getPredefinedDictionary(
         cv2.aruco.DICT_4X4_50
@@ -20,8 +16,8 @@ def create_aruco_detector():
     return cv2.aruco.ArucoDetector(dictionary, parameters)
 
 
-def aruco_object_points():
-    half = ARUCO_SIZE_MM / 2.0
+def aruco_object_points(aruco_size_mm):
+    half = aruco_size_mm / 2.0
     return np.array(
         [
             [-half, half, 0.0],
@@ -38,15 +34,18 @@ def detect_aruco_pose(
     camera_matrix,
     distortion,
     detector,
+    aruco_size_mm,
 ):
     corners, ids, _ = detector.detectMarkers(frame)
-    if ids is None or ARUCO_ID not in ids.flatten():
+    if ids is None:
         return None
 
-    marker_index = np.where(ids.flatten() == ARUCO_ID)[0][0]
+    marker_index = 0
+    marker_id = int(ids.flatten()[marker_index])
     image_points = corners[marker_index].reshape(4, 2).astype(np.float64)
+    object_points = aruco_object_points(aruco_size_mm)
     success, rvec, tvec = cv2.solvePnP(
-        aruco_object_points(),
+        object_points,
         image_points,
         camera_matrix,
         distortion,
@@ -56,7 +55,7 @@ def detect_aruco_pose(
         return None
 
     projected_points, _ = cv2.projectPoints(
-        aruco_object_points(),
+        object_points,
         rvec,
         tvec,
         camera_matrix,
@@ -72,6 +71,7 @@ def detect_aruco_pose(
     )
 
     return ArucoPoseResult(
+        marker_id=marker_id,
         rotation=cv2.Rodrigues(rvec)[0],
         translation=tvec.reshape(3),
         reprojection_rms_px=float(

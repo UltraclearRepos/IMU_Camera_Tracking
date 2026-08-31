@@ -40,6 +40,7 @@ class SkinMapBuilder:
         global_map_grid_rows,
         global_map_grid_columns,
         global_map_reprojection_error_weight,
+        aruco_size_mm,
         imu_gravity_provider=None,
     ):
         self.configuration = MapBuildConfiguration(
@@ -82,6 +83,7 @@ class SkinMapBuilder:
             maximum_features=mapping_maximum_features,
             feature_grid_rows=mapping_feature_grid_rows,
             feature_grid_columns=mapping_feature_grid_columns,
+            aruco_size_mm=aruco_size_mm,
             imu_gravity_provider=imu_gravity_provider,
         )
         self.reconstructor = SfmReconstructor(

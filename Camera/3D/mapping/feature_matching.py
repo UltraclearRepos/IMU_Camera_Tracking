@@ -23,6 +23,7 @@ class LightGlueFeatureMatching:
         feature_roi_bottom_fraction,
         max_features,
         mask_aruco_features,
+        aruco_size_mm,
         aruco_mask_margin_mm,
         adaptive_skin_mask,
         feature_type="disk",
@@ -39,7 +40,14 @@ class LightGlueFeatureMatching:
         self.max_features = max_features
         self.requires_scale_orientation = feature_type == "sift"
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
-        self.aruco_mask = (ArucoMask(margin_mm=aruco_mask_margin_mm) if mask_aruco_features else None)
+        self.aruco_mask = (
+            ArucoMask(
+                marker_size_mm=aruco_size_mm,
+                margin_mm=aruco_mask_margin_mm,
+            )
+            if mask_aruco_features
+            else None
+        )
         self.adaptive_skin_mask = adaptive_skin_mask
         if feature_type == "disk":
             self.extractor = DISK(

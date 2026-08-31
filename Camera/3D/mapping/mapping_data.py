@@ -20,6 +20,7 @@ class FeatureSet:
 
 @dataclass(frozen=True)
 class ArucoPoseResult:
+    marker_id: int
     rotation: np.ndarray  # (3, 3) rotation matrix
     translation: np.ndarray  # (3,) translation vector
     reprojection_rms_px: float

@@ -72,6 +72,7 @@ GLOBAL_MAP_GRID_COLUMNS = 8  # Surface grid columns used for uniform landmark se
 GLOBAL_MAP_REPROJECTION_ERROR_WEIGHT = 0.70  # Geometry error weight versus track length.
 MASK_ARUCO_FEATURES = True  # Prevent the removable marker becoming a landmark.
 ARUCO_MASK_MARGIN_MM = 7.0
+ARUCO_SIZE_MM = 20.0
 USE_ADAPTIVE_SKIN_MASK = True
 USE_IMU_GRAVITY_PRIOR = False
 IMU_GRAVITY_HISTORY_SECONDS = 0.05
@@ -185,8 +186,11 @@ def run_tracking(
     mapping_recent_pair_count,
     mapping_motion_targets_px,
     use_imu,
+    aruco_size_mm,
     mapping_recent_pair_interval=1,
 ):
+    if aruco_size_mm <= 0.0:
+        raise ValueError("aruco_size_mm must be positive")
     feature_type = feature_type.lower()
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
@@ -244,6 +248,7 @@ def run_tracking(
         feature_type=feature_type,
         max_features=mapping_detected_max_features,
         mask_aruco_features=MASK_ARUCO_FEATURES,
+        aruco_size_mm=aruco_size_mm,
         aruco_mask_margin_mm=ARUCO_MASK_MARGIN_MM,
         adaptive_skin_mask=mapping_adaptive_skin_mask,
     )
@@ -267,6 +272,7 @@ def run_tracking(
         GLOBAL_MAP_GRID_ROWS,
         GLOBAL_MAP_GRID_COLUMNS,
         GLOBAL_MAP_REPROJECTION_ERROR_WEIGHT,
+        aruco_size_mm,
         imu_gravity_provider=imu_gravity_provider,
     )
     map_build_started = time.perf_counter()
@@ -318,6 +324,7 @@ def run_tracking(
             feature_type=feature_type,
             max_features=tracking_max_features,
             mask_aruco_features=MASK_ARUCO_FEATURES,
+            aruco_size_mm=aruco_size_mm,
             aruco_mask_margin_mm=ARUCO_MASK_MARGIN_MM,
             adaptive_skin_mask=AdaptiveSkinMask() if USE_ADAPTIVE_SKIN_MASK else None,
         ),
@@ -596,6 +603,7 @@ def run_tracking(
         "mapping_recent_pair_count": mapping_recent_pair_count,
         "mapping_recent_pair_interval": mapping_recent_pair_interval,
         "mapping_motion_targets_px": list(mapping_motion_targets_px),
+        "aruco_size_mm": aruco_size_mm,
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": len(global_map.candidate_positions),
         "map_occupied_grid_cells": global_map.occupied_grid_cell_count,
@@ -659,6 +667,7 @@ def main():
         mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
         mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
         use_imu=USE_IMU_GRAVITY_PRIOR,
+        aruco_size_mm=ARUCO_SIZE_MM,
         mapping_recent_pair_interval=MAPPING_RECENT_PAIR_INTERVAL,
     )
 

@@ -40,6 +40,7 @@ class MappingFrameBuilder:
         maximum_features,
         feature_grid_rows,
         feature_grid_columns,
+        aruco_size_mm,
         imu_gravity_provider=None,
     ):
         self.camera_matrix = camera_matrix
@@ -56,6 +57,7 @@ class MappingFrameBuilder:
         self.maximum_features = maximum_features
         self.feature_grid_rows = feature_grid_rows
         self.feature_grid_columns = feature_grid_columns
+        self.aruco_size_mm = aruco_size_mm
         self.imu_gravity_provider = imu_gravity_provider
         self.aruco_detector = create_aruco_detector()
 
@@ -529,6 +531,7 @@ class MappingFrameBuilder:
             self.camera_matrix,
             self.distortion,
             self.aruco_detector,
+            self.aruco_size_mm,
         )
 
     def _gravity_for_timestamp(self, timestamp_s):

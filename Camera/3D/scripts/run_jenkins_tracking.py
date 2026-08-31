@@ -58,6 +58,7 @@ def parse_arguments():
         required=True,
     )
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--aruco-size-mm", type=float, required=True)
     return parser.parse_args()
 
 
@@ -91,6 +92,7 @@ def main():
         mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
         mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
         use_imu=USE_IMU_GRAVITY_PRIOR,
+        aruco_size_mm=arguments.aruco_size_mm,
     )
     metrics["total_pipeline_seconds"] = time.perf_counter() - started
     metrics["pycolmap_version"] = str(pycolmap.__version__)

@@ -7,9 +7,10 @@ from mapping.aruco_reference import aruco_object_points, create_aruco_detector
 class ArucoMask:
     """Detect ArUco markers and mask their image regions."""
 
-    def __init__(self, margin_mm=10.0):
+    def __init__(self, marker_size_mm=20.0, margin_mm=10.0):
         if margin_mm < 0:
             raise ValueError("margin_mm must be non-negative")
+        self.marker_size_mm = float(marker_size_mm)
         self.margin_mm = float(margin_mm)
         self.detector = create_aruco_detector()
         self._last_detected_ids = np.empty(0, dtype=np.int32)
@@ -43,7 +44,9 @@ class ArucoMask:
             else np.empty(0, dtype=np.int32)
         )
         self._last_detected_count = len(corners)
-        marker_points_mm = aruco_object_points()[:, :2].astype(np.float32)
+        marker_points_mm = aruco_object_points(
+            self.marker_size_mm
+        )[:, :2].astype(np.float32)
         mask_points_mm = (
             marker_points_mm
             + np.sign(marker_points_mm) * self.margin_mm
