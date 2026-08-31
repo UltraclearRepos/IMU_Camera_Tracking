@@ -66,9 +66,6 @@ MAPPING_MAX_FEATURES = 256  # Spatially distributed features retained per map fr
 TRACKING_MAX_FEATURES = 512  # Features extracted per tracked frame.
 MAPPING_FEATURE_GRID_ROWS = 4  # Image grid rows used to distribute map features.
 MAPPING_FEATURE_GRID_COLUMNS = 4  # Image grid columns used to distribute map features.
-GLOBAL_MAP_MAX_LANDMARKS = 1024  # Maximum landmarks in the frozen global map.
-GLOBAL_MAP_GRID_ROWS = 8  # Surface grid rows used for uniform landmark selection.
-GLOBAL_MAP_GRID_COLUMNS = 8  # Surface grid columns used for uniform landmark selection.
 GLOBAL_MAP_REPROJECTION_ERROR_WEIGHT = 0.70  # Geometry error weight versus track length.
 MASK_ARUCO_FEATURES = True  # Prevent the removable marker becoming a landmark.
 ARUCO_MASK_MARGIN_MM = 7.0
@@ -268,9 +265,6 @@ def run_tracking(
         mapping_max_features,
         MAPPING_FEATURE_GRID_ROWS,
         MAPPING_FEATURE_GRID_COLUMNS,
-        GLOBAL_MAP_MAX_LANDMARKS,
-        GLOBAL_MAP_GRID_ROWS,
-        GLOBAL_MAP_GRID_COLUMNS,
         GLOBAL_MAP_REPROJECTION_ERROR_WEIGHT,
         aruco_size_mm,
         imu_gravity_provider=imu_gravity_provider,
@@ -606,7 +600,6 @@ def run_tracking(
         "aruco_size_mm": aruco_size_mm,
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": len(global_map.candidate_positions),
-        "map_occupied_grid_cells": global_map.occupied_grid_cell_count,
         "mapping_position_rmse_mm": float(mapping_position_rmse),
         "mapping_orientation_rmse_deg": float(mapping_orientation_rmse),
         "mapping_registered_percent": float(mapping_registered_percent),

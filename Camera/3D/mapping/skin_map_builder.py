@@ -36,9 +36,6 @@ class SkinMapBuilder:
         mapping_maximum_features,
         mapping_feature_grid_rows,
         mapping_feature_grid_columns,
-        maximum_global_landmarks,
-        global_map_grid_rows,
-        global_map_grid_columns,
         global_map_reprojection_error_weight,
         aruco_size_mm,
         imu_gravity_provider=None,
@@ -96,9 +93,6 @@ class SkinMapBuilder:
         self.aruco_aligner = ArucoMapAligner()
         self.global_map_builder = GlobalMapBuilder(
             feature_matcher=feature_matcher,
-            maximum_landmarks=maximum_global_landmarks,
-            grid_rows=global_map_grid_rows,
-            grid_columns=global_map_grid_columns,
             reprojection_error_weight=global_map_reprojection_error_weight,
         )
         self.diagnostics = MapBuildDiagnostics()

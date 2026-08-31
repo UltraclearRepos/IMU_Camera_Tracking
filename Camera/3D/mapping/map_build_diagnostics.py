@@ -646,7 +646,6 @@ class MapBuildDiagnostics:
             "registered_images": reconstruction.num_reg_images(),
             "selected_landmarks": len(frozen_map.positions),
             "candidate_landmarks": len(frozen_map.candidate_positions),
-            "occupied_grid_cells": frozen_map.occupied_grid_cell_count,
             "scale_candidate_frames": alignment.candidate_frame_count,
             "scale_frames": alignment.aligned_frame_count,
             "scale_reprojection_rms_threshold_px": (
@@ -694,7 +693,6 @@ class MapBuildDiagnostics:
         print(
             f"Map: {len(frozen_map.positions)}/"
             f"{len(frozen_map.candidate_positions)} selected landmarks | "
-            f"{frozen_map.occupied_grid_cell_count} occupied grid cells | "
             f"{reconstruction.num_reg_images()}/"
             f"{frame_collection.image_count} registered images"
         )

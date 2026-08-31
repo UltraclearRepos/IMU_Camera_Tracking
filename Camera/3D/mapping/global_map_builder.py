@@ -19,19 +19,16 @@ class GlobalMapBuilder:
 
     MINIMUM_TRACK_LENGTH = 3
     MAXIMUM_REPROJECTION_ERROR_PX = 3.0
+    HARD_MINIMUM_DISTANCE_MM = 1.0
+    LOCAL_RADIUS_MM = 4.0
+    MAXIMUM_OTHER_POINTS_IN_LOCAL_RADIUS = 3
 
     def __init__(
         self,
         feature_matcher,
-        maximum_landmarks,
-        grid_rows,
-        grid_columns,
         reprojection_error_weight,
     ):
         self.feature_matcher = feature_matcher
-        self.maximum_landmarks = maximum_landmarks
-        self.grid_rows = grid_rows
-        self.grid_columns = grid_columns
         self.reprojection_error_weight = reprojection_error_weight
 
     def build(
@@ -115,7 +112,6 @@ class GlobalMapBuilder:
             ),
             coordinate_frame="last_registered_mapping_camera",
             mapping_extracted_image_count=frame_collection.image_count,
-            occupied_grid_cell_count=selection.occupied_grid_cell_count,
             scales=appearance.scales,
             orientations=appearance.orientations,
         )
@@ -147,9 +143,6 @@ class GlobalMapBuilder:
             "coordinate_frame": frozen_map.coordinate_frame,
             "mapping_extracted_image_count": (
                 frozen_map.mapping_extracted_image_count
-            ),
-            "occupied_grid_cell_count": (
-                frozen_map.occupied_grid_cell_count
             ),
         }
         if frozen_map.scales is not None:
@@ -212,51 +205,43 @@ class GlobalMapBuilder:
 
     def _select_landmarks(self, candidates: LandmarkCandidates):
         positions = candidates.positions
-        minimum_xy = np.min(positions[:, :2], axis=0)
-        extent_xy = np.maximum(
-            np.ptp(positions[:, :2], axis=0),
-            np.finfo(float).eps,
-        )
-        normalized_xy = (positions[:, :2] - minimum_xy) / extent_xy
-        columns = np.minimum(
-            (normalized_xy[:, 0] * self.grid_columns).astype(int),
-            self.grid_columns - 1,
-        )
-        rows = np.minimum(
-            (normalized_xy[:, 1] * self.grid_rows).astype(int),
-            self.grid_rows - 1,
-        )
         landmark_quality = self._landmark_quality(candidates)
-
-        ranked_indices_by_cell = []
-        for row in range(self.grid_rows):
-            for column in range(self.grid_columns):
-                cell_indices = np.flatnonzero(
-                    (rows == row) & (columns == column)
-                )
-                if len(cell_indices) == 0:
-                    continue
-                quality_order = np.argsort(
-                    landmark_quality[cell_indices]
-                )[::-1]
-                ranked_indices_by_cell.append(cell_indices[quality_order])
-
         selected_indices = []
-        cell_rank = 0
-        while len(selected_indices) < self.maximum_landmarks:
-            added_landmark = False
-            for cell_indices in ranked_indices_by_cell:
-                if cell_rank < len(cell_indices):
-                    selected_indices.append(cell_indices[cell_rank])
-                    added_landmark = True
-                    if len(selected_indices) == self.maximum_landmarks:
-                        break
-            if not added_landmark:
-                break
-            cell_rank += 1
+        selected_positions = []
+        neighbor_counts = []
+
+        for candidate_index in np.argsort(landmark_quality)[::-1]:
+            candidate_position = positions[candidate_index]
+            if not selected_positions:
+                selected_indices.append(candidate_index)
+                selected_positions.append(candidate_position)
+                neighbor_counts.append(0)
+                continue
+
+            distances = np.linalg.norm(
+                np.asarray(selected_positions) - candidate_position,
+                axis=1,
+            )
+            if np.any(distances < self.HARD_MINIMUM_DISTANCE_MM):
+                continue
+
+            nearby = np.flatnonzero(distances < self.LOCAL_RADIUS_MM)
+            if len(nearby) > self.MAXIMUM_OTHER_POINTS_IN_LOCAL_RADIUS:
+                continue
+            if any(
+                neighbor_counts[index]
+                >= self.MAXIMUM_OTHER_POINTS_IN_LOCAL_RADIUS
+                for index in nearby
+            ):
+                continue
+
+            selected_indices.append(candidate_index)
+            selected_positions.append(candidate_position)
+            neighbor_counts.append(len(nearby))
+            for index in nearby:
+                neighbor_counts[index] += 1
 
         selected_indices = np.asarray(selected_indices, dtype=int)
-        occupied_cell_count = len(ranked_indices_by_cell)
         return LandmarkSelection(
             candidate_indices=selected_indices,
             colmap_points=[
@@ -264,7 +249,6 @@ class GlobalMapBuilder:
             ],
             positions=candidates.positions[selected_indices],
             track_lengths=candidates.track_lengths[selected_indices],
-            occupied_grid_cell_count=occupied_cell_count,
         )
 
     def _landmark_quality(self, candidates):

@@ -172,7 +172,6 @@ class LandmarkSelection:
     colmap_points: list[Any]
     positions: np.ndarray
     track_lengths: np.ndarray
-    occupied_grid_cell_count: int
 
 
 @dataclass
@@ -211,7 +210,6 @@ class FrozenMap:
     mapping_reference_frame: int
     coordinate_frame: str
     mapping_extracted_image_count: int
-    occupied_grid_cell_count: int
     scales: np.ndarray | None = None
     orientations: np.ndarray | None = None
 
