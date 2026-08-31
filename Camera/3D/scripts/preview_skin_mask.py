@@ -15,14 +15,15 @@ from mapping.adaptive_skin_mask import AdaptiveSkinMask
 from mapping.aruco_mask import ArucoMask
 
 
-RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_15.30.28"
-DATA_FOLDER = "Cylinder"
+RECORDING_NAME = "initial_3aruco_1cmedge_3position_darkskin_Arc180-Speed-3_2026-08-28_18.35.57"
+# RECORDING_NAME = "inital_50mm_3aruco_1cmedge_Arc180-Speed-3_2026-08-28_16.37.35"
+DATA_FOLDER = "CylinderVertical3Aruco"
 CAMERA_NAME = "cam1"
-KEYFRAME_INTERVAL = 10
+KEYFRAME_INTERVAL = 1
 FEATURE_ROI_BOTTOM_FRACTION = 0.85
 ARUCO_MASK_MARGIN_MM = 7.0
 MAX_FRAMES = None  # None processes the entire video.
-REINITIALIZE_FRAME = 1081  # Source frame number, or None to disable.
+REINITIALIZE_FRAME = None  # Source frame number, or None to disable.
 OUTPUT_PATH = (
     MODULE_DIR
     / "results"
@@ -162,7 +163,12 @@ def draw_mask_diagnostics(
     return output
 
 
-def save_initial_growing_diagnostics(output, skin_mask, output_path):
+def save_initial_growing_diagnostics(
+    output,
+    skin_mask,
+    roi_top,
+    output_path,
+):
     seed = skin_mask.initial_seed
     if seed is None:
         return None
@@ -183,6 +189,13 @@ def save_initial_growing_diagnostics(output, skin_mask, output_path):
         cv2.LINE_AA,
     )
     height, width = diagnostic.shape[:2]
+    cv2.line(
+        diagnostic,
+        (0, roi_top),
+        (width - 1, roi_top),
+        (255, 255, 0),
+        2,
+    )
     cv2.rectangle(diagnostic, (0, height - 25), (width - 1, height - 1), (0, 0, 0), -1)
     cv2.putText(
         diagnostic,
@@ -282,6 +295,7 @@ def run_preview(
                 initial_growing_path = save_initial_growing_diagnostics(
                     output,
                     skin_mask,
+                    roi_top,
                     output_path,
                 )
             writer.write(output)

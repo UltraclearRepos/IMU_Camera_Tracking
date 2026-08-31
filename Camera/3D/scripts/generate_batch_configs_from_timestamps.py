@@ -4,6 +4,8 @@ import csv
 import json
 from pathlib import Path
 
+import cv2
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODULE_DIR = SCRIPT_DIR.parent
@@ -11,7 +13,7 @@ PROJECT_DIR = MODULE_DIR.parent.parent
 DATA_DIR = PROJECT_DIR / "Data"
 BASE_CONFIG_DIR = MODULE_DIR / "batch_configs"
 OUTPUT_DIR = MODULE_DIR / "batch_configs_from_timestamps"
-VIDEO_FPS = 30.0
+CAMERA_NAME = "cam1"
 
 # For every recording enter:
 # (mapping_start_sync_timestamp, mapping_end_sync_timestamp,
@@ -115,11 +117,11 @@ TIMESTAMP_RANGES = {
     #     "initial_50mm_Arc180-Speed-3_2026-08-20_15.30.28": (1787232629.088867, 1787232665.031767, 1787232665.096267)
     # }
     "CylinderVertical": {
-        "inital_50mm_1aruco_Arc180-Speed-3_2026-08-28_15.25.30": (1787923531.470267, 1787923568.550367, 1787923568.610367)
+        "inital_50mm_1aruco_Arc180-Speed-3_2026-08-28_15.25.30": (1787923531.470267, 1787923569.502067, 1787923569.546967)
     },
     "CylinderVertical3Aruco": {
-        "inital_50mm_3aruco_1cmedge_Arc180-Speed-3_2026-08-28_16.37.35": (1787927855.675367, 1787927892.720167, 1787927892.784267),
-        "initial_3aruco_1cmedge_3position_darkskin_Arc180-Speed-3_2026-08-28_18.35.57": (1787934958.209567, 1787934995.441067, 1787934995.496067)
+        "inital_50mm_3aruco_1cmedge_Arc180-Speed-3_2026-08-28_16.37.35": (1787927855.675367, 1787927893.283867, 1787927893.335167),
+        "initial_3aruco_1cmedge_3position_darkskin_Arc180-Speed-3_2026-08-28_18.35.57": (1787934958.209567, 1787934996.077367, 1787934996.128967)
     }
 }
 
@@ -130,8 +132,32 @@ def get_video_start_timestamp(data_folder, recording_name):
         return float(next(csv.DictReader(file))["start_timestamp"])
 
 
-def timestamp_to_frame(timestamp, video_start_timestamp):
-    return max(round((timestamp - video_start_timestamp) * VIDEO_FPS), 1)
+def get_video_fps(data_folder, recording_name):
+    video_paths = list(
+        (DATA_DIR / data_folder / "videos").glob(
+            f"{recording_name}_{CAMERA_NAME}.*"
+        )
+    )
+    if len(video_paths) != 1:
+        raise RuntimeError(
+            f"Expected one video for {recording_name!r}, found "
+            f"{len(video_paths)}"
+        )
+
+    capture = cv2.VideoCapture(str(video_paths[0]))
+    try:
+        if not capture.isOpened():
+            raise RuntimeError(f"Could not open video: {video_paths[0]}")
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        if fps <= 0.0:
+            raise RuntimeError("Video does not report a valid FPS")
+        return fps
+    finally:
+        capture.release()
+
+
+def timestamp_to_frame(timestamp, video_start_timestamp, fps):
+    return max(round((timestamp - video_start_timestamp) * fps), 1)
 
 
 def main():
@@ -141,10 +167,15 @@ def main():
         config = json.loads(config_path.read_text(encoding="utf-8"))
         for recording_name, timestamps in recordings.items():
             video_start = get_video_start_timestamp(data_folder, recording_name)
+            fps = get_video_fps(data_folder, recording_name)
             start, end, tracking = timestamps
-            mapping_start_frame = timestamp_to_frame(start, video_start)
-            mapping_end_frame = timestamp_to_frame(end, video_start)
-            tracking_start_frame = timestamp_to_frame(tracking, video_start)
+            mapping_start_frame = timestamp_to_frame(start, video_start, fps)
+            mapping_end_frame = timestamp_to_frame(end, video_start, fps)
+            tracking_start_frame = timestamp_to_frame(
+                tracking,
+                video_start,
+                fps,
+            )
 
             if tracking_start_frame == mapping_end_frame:
                 tracking_start_frame += 1

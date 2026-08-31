@@ -37,28 +37,28 @@ from visualization.tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_14.39.08"
+RECORDING_NAME = "inital_50mm_1aruco_Arc180-Speed-3_2026-08-28_15.25.30"
 # RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_15.30.28"
-DATA_FOLDER = "Cylinder"
+DATA_FOLDER = "CylinderVertical"
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 1000000
 FEATURE_ROI_BOTTOM_FRACTION = 0.85
 FEATURE_TYPE = "sift"  # "disk" or "sift".
 
-MAPPING_START_FRAME = 1  # First frame used to build the frozen 3D map.
-MAPPING_END_FRAME = 1080  # Last frame used to build the frozen 3D map.
-TRACKING_START_FRAME = 1081  # First frame processed by frozen-map tracking.
+MAPPING_START_FRAME = 4  # First frame used to build the frozen 3D map.
+MAPPING_END_FRAME = 574  # Last frame used to build the frozen 3D map.
+TRACKING_START_FRAME = 575  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
 KEYFRAME_INTERVAL = 1  # Use every Nth frame during map construction.
 # Set these to offsets from the mapping boundaries to keep all frames at the
 # beginning and end. Between them, frames are sampled using KEYFRAME_INTERVAL.
 # None preserves the original uniform sampling across the whole mapping interval.
-MAPPING_EVERY_FRAME_UNTIL_FRAME = 200
-MAPPING_EVERY_FRAME_FROM_FRAME = 100
+MAPPING_EVERY_FRAME_UNTIL_FRAME = 100
+MAPPING_EVERY_FRAME_FROM_FRAME = 50
 # Adaptive example: recent=2, motion=(10.0, 20.0, 40.0).
 # Legacy example: recent=10, motion=() matches only the 10 previous frames.
-MAPPING_RECENT_PAIR_COUNT = 3
+MAPPING_RECENT_PAIR_COUNT = 4
 MAPPING_RECENT_PAIR_INTERVAL = 1
 MAPPING_MOTION_TARGETS_PX = ()
 MAPPING_DETECTED_MAX_FEATURES = 512  # Features detected per map frame.

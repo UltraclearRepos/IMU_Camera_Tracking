@@ -16,15 +16,19 @@ class AdaptiveSkinMask:
 
     def __init__(
         self,
-        seed_width_fraction=0.4,
-        seed_height_fraction=0.85,
+        seed_width_fraction=0.8,
+        seed_height_fraction=0.7,
         cluster_count=3,
         processing_width=160,
+        learning_rate=0.005,
     ):
+        if not 0.0 <= learning_rate <= 1.0:
+            raise ValueError("learning_rate must be between 0 and 1")
         self.seed_width_fraction = seed_width_fraction
         self.seed_height_fraction = seed_height_fraction
         self.cluster_count = cluster_count
         self.processing_width = processing_width
+        self.learning_rate = float(learning_rate)
 
         self._centres = None
         self._scales = None
@@ -112,12 +116,12 @@ class AdaptiveSkinMask:
         candidate = cv2.morphologyEx(
             candidate.astype(np.uint8),
             cv2.MORPH_CLOSE,
-            np.ones((7, 7), dtype=np.uint8),
+            np.ones((9, 9), dtype=np.uint8),
         )
         candidate = cv2.morphologyEx(
             candidate,
             cv2.MORPH_OPEN,
-            np.ones((3, 3), dtype=np.uint8),
+            np.ones((4, 4), dtype=np.uint8),
         ).astype(bool)
         candidate &= valid
 
@@ -125,6 +129,9 @@ class AdaptiveSkinMask:
         if not np.any(selected):
             self.last_result = None
             return None
+
+        if not first_frame:
+            self._update_model(features, selected, distance)
 
         if scale < 1.0:
             selected = cv2.resize(
@@ -164,15 +171,14 @@ class AdaptiveSkinMask:
     def _initial_seed(self, height, width, roi_top, valid):
         seed = np.zeros((height, width), dtype=bool)
         half_width = round(width * self.seed_width_fraction / 2.0)
-        half_height = round(
-            (height - roi_top) * self.seed_height_fraction / 2.0
-        )
+        half_height = round(height * self.seed_height_fraction / 2.0)
         center_x = width // 2
-        center_y = roi_top + (height - roi_top) // 2
+        center_y = height // 2
         seed[
             max(roi_top, center_y - half_height):min(height, center_y + half_height),
             max(0, center_x - half_width):min(width, center_x + half_width),
         ] = True
+        seed[:roi_top] = False
         seed &= valid
         return seed
 
@@ -212,6 +218,29 @@ class AdaptiveSkinMask:
             centres.append(centre)
             scales.append(np.maximum(scale, 0.12))
         return np.asarray(centres), np.asarray(scales)
+
+    def _update_model(self, features, selected, distance):
+        if self.learning_rate == 0.0:
+            return
+
+        confident = (
+            selected
+            & (distance <= 0.7 * self._distance_threshold)
+        )
+        samples = features[confident]
+        if len(samples) < 100:
+            return
+
+        new_centres, new_scales = self._fit_model(samples)
+        alpha = self.learning_rate
+        self._centres = (
+            (1.0 - alpha) * self._centres
+            + alpha * new_centres
+        )
+        self._scales = (
+            (1.0 - alpha) * self._scales
+            + alpha * new_scales
+        )
 
     def _distance(self, features, mask=None):
         samples = features if mask is None else features[mask]

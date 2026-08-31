@@ -5,10 +5,20 @@ import numpy as np
 # Relative to the previous camera convention: X' = -Y, Y' = X, Z' = Z.
 # It converts vectors expressed in TCP axes into native camera axes:
 # Dobot +X -> camera +Z, Dobot +Y -> camera -X, Dobot +Z -> camera -Y.
+# Cylinder Horizontal
+# TCP_TO_CAMERA_AXES = np.array(
+#     [
+#         [0.0, -1.0, 0.0],
+#         [0.0, 0.0, -1.0],
+#         [1.0, 0.0, 0.0],
+#     ]
+# )
+
+# Cylinder Vertical
 TCP_TO_CAMERA_AXES = np.array(
     [
-        [0.0, -1.0, 0.0],
         [0.0, 0.0, -1.0],
+        [0.0, 1.0, 0.0],
         [1.0, 0.0, 0.0],
     ]
 )

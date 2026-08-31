@@ -15,11 +15,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 MAP_PATH = (
     SCRIPT_DIR.parent
     / "results"
-    / "Cylinder"
+    / "CylinderVertical"
     / "sift"
     / "global"
     / "noIMU"
-    / "initial_50mm_Arc180-Speed-3_2026-08-20_14.39.08"
+    / "newScaleEstimation"
+    / "inital_50mm_1aruco_Arc180-Speed-3_2026-08-28_15.25.30"
     / "map"
     / "global_map.npz"
 )
