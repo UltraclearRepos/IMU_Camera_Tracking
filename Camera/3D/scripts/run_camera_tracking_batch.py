@@ -99,6 +99,8 @@ def run_recording(
         mapping_motion_targets_px=config["mapping_motion_targets_px"],
         use_imu=config["use_imu"],
         aruco_size_mm=recording_parameters["aruco_size_mm"],
+        seed_width_fraction=recording_parameters["seed_width_fraction"],
+        seed_height_fraction=recording_parameters["seed_height_fraction"],
         mapping_recent_pair_interval=config["mapping_recent_pair_interval"]
     )
 

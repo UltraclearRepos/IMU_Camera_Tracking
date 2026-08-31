@@ -22,6 +22,8 @@ from camera_tracking import (
     MAPPING_MOTION_TARGETS_PX,
     MAPPING_RECENT_PAIR_COUNT,
     MAPPING_START_FRAME,
+    SEED_HEIGHT_FRACTION,
+    SEED_WIDTH_FRACTION,
     TRACKING_MAX_FEATURES,
     TRACKING_START_FRAME,
     USE_IMU_GRAVITY_PRIOR,
@@ -93,6 +95,8 @@ def main():
         mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
         use_imu=USE_IMU_GRAVITY_PRIOR,
         aruco_size_mm=arguments.aruco_size_mm,
+        seed_width_fraction=SEED_WIDTH_FRACTION,
+        seed_height_fraction=SEED_HEIGHT_FRACTION,
     )
     metrics["total_pipeline_seconds"] = time.perf_counter() - started
     metrics["pycolmap_version"] = str(pycolmap.__version__)

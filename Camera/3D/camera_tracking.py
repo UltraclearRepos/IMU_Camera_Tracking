@@ -44,6 +44,8 @@ CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 1000000
 FEATURE_ROI_BOTTOM_FRACTION = 0.85
+SEED_WIDTH_FRACTION = 0.8
+SEED_HEIGHT_FRACTION = 0.7
 FEATURE_TYPE = "sift"  # "disk" or "sift".
 
 MAPPING_START_FRAME = 4  # First frame used to build the frozen 3D map.
@@ -184,6 +186,8 @@ def run_tracking(
     mapping_motion_targets_px,
     use_imu,
     aruco_size_mm,
+    seed_width_fraction,
+    seed_height_fraction,
     mapping_recent_pair_interval=1,
 ):
     if aruco_size_mm <= 0.0:
@@ -239,7 +243,14 @@ def run_tracking(
 
     camera_matrix = np.load(CAMERA_MATRIX_PATH)
     distortion = np.load(DISTORTION_PATH)
-    mapping_adaptive_skin_mask = AdaptiveSkinMask() if USE_ADAPTIVE_SKIN_MASK else None
+    mapping_adaptive_skin_mask = (
+        AdaptiveSkinMask(
+            seed_width_fraction=seed_width_fraction,
+            seed_height_fraction=seed_height_fraction,
+        )
+        if USE_ADAPTIVE_SKIN_MASK
+        else None
+    )
     mapping_feature_matching = LightGlueFeatureMatching(
         feature_roi_bottom_fraction,
         feature_type=feature_type,
@@ -320,7 +331,14 @@ def run_tracking(
             mask_aruco_features=MASK_ARUCO_FEATURES,
             aruco_size_mm=aruco_size_mm,
             aruco_mask_margin_mm=ARUCO_MASK_MARGIN_MM,
-            adaptive_skin_mask=AdaptiveSkinMask() if USE_ADAPTIVE_SKIN_MASK else None,
+            adaptive_skin_mask=(
+                AdaptiveSkinMask(
+                    seed_width_fraction=seed_width_fraction,
+                    seed_height_fraction=seed_height_fraction,
+                )
+                if USE_ADAPTIVE_SKIN_MASK
+                else None
+            ),
         ),
     )
 
@@ -598,6 +616,8 @@ def run_tracking(
         "mapping_recent_pair_interval": mapping_recent_pair_interval,
         "mapping_motion_targets_px": list(mapping_motion_targets_px),
         "aruco_size_mm": aruco_size_mm,
+        "seed_width_fraction": seed_width_fraction,
+        "seed_height_fraction": seed_height_fraction,
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": len(global_map.candidate_positions),
         "mapping_position_rmse_mm": float(mapping_position_rmse),
@@ -661,6 +681,8 @@ def main():
         mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
         use_imu=USE_IMU_GRAVITY_PRIOR,
         aruco_size_mm=ARUCO_SIZE_MM,
+        seed_width_fraction=SEED_WIDTH_FRACTION,
+        seed_height_fraction=SEED_HEIGHT_FRACTION,
         mapping_recent_pair_interval=MAPPING_RECENT_PAIR_INTERVAL,
     )
 
