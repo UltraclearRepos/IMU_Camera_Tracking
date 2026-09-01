@@ -22,7 +22,7 @@ TCP_TO_CAMERA_AXES_BY_CYLINDER_ORIENTATION = {
 
 TRACKED_POINT_OFFSET_CAMERA_MM_BY_CYLINDER_ORIENTATION = {
     "horizontal": np.zeros(3),
-    "vertical": np.array([-22.0, 0.0, -40.0]),
+    "vertical": np.array([-22.0, 0.0, -32.0]),
 }
 
 # Provisional fixed orientation of the IMU rigidly mounted to the camera.
