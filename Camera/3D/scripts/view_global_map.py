@@ -14,13 +14,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 MAP_PATH = (
     SCRIPT_DIR.parent
-    / "results"
-    / "CylinderVertical"
+    / "jenkins_results"
+    / "Cylinder"
+    / "keyframe_int=1_recent=5_interval_1_20px_30px_mapF=512_256_new"
     / "sift"
-    / "global"
-    / "noIMU"
-    / "newScaleEstimation"
-    / "inital_50mm_1aruco_Arc180-Speed-3_2026-08-28_15.25.30"
+    / "initial_50mm_Arc180-Speed-3_2026-08-20_14.39.08"
     / "map"
     / "global_map.npz"
 )

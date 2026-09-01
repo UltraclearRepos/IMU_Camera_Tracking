@@ -9,9 +9,7 @@ from mapping.mapping_data import FeatureSet
 
 
 MIN_MATCHES = 20
-MIN_MATCH_RATIO = 0.15
-MIN_INLIERS = 20
-MIN_INLIER_RATIO = 0.125
+MIN_INLIERS = 30
 MAX_REPROJECTION_ERROR_PX = 3.0
 GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80
 
@@ -30,18 +28,6 @@ def elapsed_ms(started):
     if DEVICE == "cuda":
         torch.cuda.synchronize()
     return 1000.0 * (time.perf_counter() - started)
-
-
-def required_pose_counts(matchable_landmarks):
-    required_matches = max(
-        MIN_MATCHES,
-        int(np.ceil(MIN_MATCH_RATIO * matchable_landmarks)),
-    )
-    required_inliers = max(
-        MIN_INLIERS,
-        int(np.ceil(MIN_INLIER_RATIO * matchable_landmarks)),
-    )
-    return required_matches, required_inliers
 
 
 class SkinMapTracker:
@@ -245,13 +231,8 @@ class SkinMapTracker:
             expected_visible_count,
         ) = visible_map
         self.last_diagnostics["visible_landmarks"] = expected_visible_count
-        matchable_landmarks = min(
-            expected_visible_count,
-            len(current_features.keypoints),
-        )
-        required_matches, required_inliers = required_pose_counts(
-            matchable_landmarks
-        )
+        required_matches = MIN_MATCHES
+        required_inliers = MIN_INLIERS
         self.last_diagnostics["required_matches"] = required_matches
         self.last_diagnostics["required_inliers"] = required_inliers
 
