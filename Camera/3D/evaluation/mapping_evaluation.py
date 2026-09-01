@@ -8,7 +8,10 @@ from geometry.coordinate_frames import (
     tcp_displacements_to_camera_axes,
     tcp_rotations_to_camera_axes,
 )
-from visualization.tracking_visualization import save_comparison_figure
+from visualization.tracking_visualization import (
+    continuous_rotation_vectors_degrees,
+    save_comparison_figure,
+)
 
 
 def load_ground_truth(path):
@@ -38,26 +41,6 @@ def interpolate_columns(sample_times, source_times, values):
             for axis in range(values.shape[1])
         ]
     )
-
-
-def continuous_rotation_vectors_degrees(rotations):
-    """Return rotation vectors without the principal-angle jump at 180 deg."""
-    quaternions = Rotation.from_matrix(rotations).as_quat()
-    for index in range(1, len(quaternions)):
-        if np.dot(quaternions[index - 1], quaternions[index]) < 0.0:
-            quaternions[index] *= -1.0
-
-    vector_parts = quaternions[:, :3]
-    vector_norms = np.linalg.norm(vector_parts, axis=1)
-    angles = 2.0 * np.arctan2(vector_norms, quaternions[:, 3])
-    rotation_vectors = np.zeros_like(vector_parts)
-    nonzero = vector_norms > np.finfo(float).eps
-    rotation_vectors[nonzero] = (
-        vector_parts[nonzero]
-        / vector_norms[nonzero, None]
-        * angles[nonzero, None]
-    )
-    return np.degrees(rotation_vectors)
 
 
 def save_mapping_csv(

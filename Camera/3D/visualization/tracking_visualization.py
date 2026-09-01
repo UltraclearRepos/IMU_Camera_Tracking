@@ -11,6 +11,20 @@ from geometry.coordinate_frames import (
 )
 
 
+def continuous_rotation_vectors_degrees(rotations):
+    quaternions = Rotation.from_matrix(rotations).as_quat()
+    for index in range(1, len(quaternions)):
+        if np.dot(quaternions[index - 1], quaternions[index]) < 0.0:
+            quaternions[index] *= -1.0
+
+    vectors = quaternions[:, :3]
+    norms = np.linalg.norm(vectors, axis=1)
+    angles = 2.0 * np.arctan2(norms, quaternions[:, 3])
+    nonzero = norms > np.finfo(float).eps
+    vectors[nonzero] *= (angles[nonzero] / norms[nonzero])[:, None]
+    return np.degrees(vectors)
+
+
 def save_skin_mask_initialization_diagnostics(feature_matching, output_dir):
     """Save the central seed and the first adaptive skin-mask result."""
     adaptive_skin_mask = feature_matching.adaptive_skin_mask
@@ -1275,9 +1289,9 @@ def create_comparison_plots(
     # Around a 90-degree pitch, the same physical pose has an equivalent Euler
     # representation with roll and yaw shifted by 180 degrees.  That made a
     # pure pitch movement appear as large roll/yaw jumps in the comparison.
-    gt_rotation_vectors = Rotation.from_matrix(
+    gt_rotation_vectors = continuous_rotation_vectors_degrees(
         gt_rotations_camera
-    ).as_rotvec(degrees=True)
+    )
     plot_time = camera_time - min(camera_time[0], gt_time[0])
 
     position_component_errors = np.full_like(estimate, np.nan)
@@ -1292,21 +1306,21 @@ def create_comparison_plots(
         "xyz", estimate_euler[valid], degrees=True
     ).as_matrix()
     estimate_rotation_vectors = np.full_like(estimate_euler, np.nan)
-    estimate_rotation_vectors[valid] = Rotation.from_matrix(
+    estimate_rotation_vectors[valid] = continuous_rotation_vectors_degrees(
         estimate_rotations
-    ).as_rotvec(degrees=True)
-    valid_orientation_errors = (
-        estimate_rotation_vectors[valid] - gt_rotation_vectors[valid]
     )
+    relative_rotations = (
+        np.transpose(gt_rotations_camera[valid], (0, 2, 1))
+        @ estimate_rotations
+    )
+    valid_orientation_errors = Rotation.from_matrix(
+        relative_rotations
+    ).as_rotvec(degrees=True)
     orientation_component_errors = np.full_like(
         estimate_rotation_vectors,
         np.nan,
     )
     orientation_component_errors[valid] = valid_orientation_errors
-    relative_rotations = (
-        np.transpose(gt_rotations_camera[valid], (0, 2, 1))
-        @ estimate_rotations
-    )
     valid_angular_errors = np.degrees(
         Rotation.from_matrix(relative_rotations).magnitude()
     )
@@ -1346,7 +1360,11 @@ def create_comparison_plots(
         estimate_rotation_vectors,
         orientation_component_errors,
         angular_errors,
-        ["Roll", "Pitch", "Yaw"],
+        [
+            "Rotation about camera X",
+            "Rotation about camera Y",
+            "Rotation about camera Z",
+        ],
         "deg",
         "Angular distance on tracked frames",
         orientation_output_path,
