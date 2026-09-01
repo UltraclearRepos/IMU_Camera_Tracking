@@ -139,7 +139,6 @@ class SkinMapBuilder:
         self.diagnostics.enrich_frame_metrics(
             frame_collection,
             reconstruction,
-            alignment,
         )
 
         finalization_started = time.perf_counter()

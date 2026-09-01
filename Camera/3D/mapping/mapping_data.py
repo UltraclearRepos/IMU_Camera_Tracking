@@ -99,8 +99,6 @@ class MappingFrameDiagnostics:
     triangulated_feature_ratio: float = 0.0
     median_point_track_length: float = np.nan
     median_point_reprojection_error_px: float = np.nan
-    camera_translation_step_mm: float = np.nan
-    camera_rotation_step_deg: float = np.nan
 
 
 @dataclass(frozen=True)
@@ -155,6 +153,7 @@ class ArucoAlignment:
     aligned_image_names: tuple[str, ...]
     aligned_image_pairs: tuple[tuple[str, str], ...]
     aligned_pair_distances_mm: tuple[float, ...]
+    aligned_pair_sfm_distances: tuple[float, ...]
 
 
 @dataclass

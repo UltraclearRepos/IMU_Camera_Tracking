@@ -97,6 +97,9 @@ class ArucoMapAligner:
             aligned_pair_distances_mm=tuple(
                 pair.aruco_distance_mm for pair in alignment_pairs
             ),
+            aligned_pair_sfm_distances=tuple(
+                pair.sfm_distance for pair in alignment_pairs
+            ),
         )
 
     @staticmethod

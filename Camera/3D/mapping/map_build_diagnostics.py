@@ -4,7 +4,6 @@ from dataclasses import asdict
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 from mapping.mapping_data import (
     ArucoAlignment,
@@ -23,12 +22,10 @@ class MapBuildDiagnostics:
         self,
         frame_collection: MappingFrameCollection,
         reconstruction,
-        alignment: ArucoAlignment,
     ):
         registered_images = {
             image.name: image for image in reconstruction.images.values()
         }
-        camera_steps = self._camera_steps(reconstruction, alignment.scale)
 
         for metrics in frame_collection.frame_diagnostics:
             image = registered_images.get(metrics.image_name)
@@ -54,10 +51,6 @@ class MapBuildDiagnostics:
                 metrics.median_point_reprojection_error_px = float(
                     np.median([point.error for point in points])
                 )
-            (
-                metrics.camera_translation_step_mm,
-                metrics.camera_rotation_step_deg,
-            ) = camera_steps[metrics.image_name]
 
     def save_report(
         self,
@@ -122,6 +115,10 @@ class MapBuildDiagnostics:
             output_directory / "track_length_statistics.json",
             track_statistics,
         )
+        self._print_scale_statistics(
+            alignment.scale,
+            self._scale_pair_statistics(alignment)["statistics"],
+        )
         self._print_summary(
             frozen_map,
             reconstruction,
@@ -131,36 +128,6 @@ class MapBuildDiagnostics:
             map_path,
             output_directory,
         )
-
-    def _camera_steps(self, reconstruction, metric_scale):
-        camera_steps = {}
-        previous_position = None
-        previous_rotation = None
-        registered_images = sorted(
-            reconstruction.images.values(),
-            key=lambda image: image.name,
-        )
-        for image in registered_images:
-            position = metric_scale * image.projection_center()
-            camera_rotation = image.cam_from_world().rotation.matrix().T
-            if previous_position is None:
-                translation_step = np.nan
-                rotation_step = np.nan
-            else:
-                translation_step = float(
-                    np.linalg.norm(position - previous_position)
-                )
-                rotation_step = float(
-                    np.degrees(
-                        Rotation.from_matrix(
-                            previous_rotation.T @ camera_rotation
-                        ).magnitude()
-                    )
-                )
-            camera_steps[image.name] = (translation_step, rotation_step)
-            previous_position = position
-            previous_rotation = camera_rotation
-        return camera_steps
 
     @staticmethod
     def _save_frame_csv(frame_collection, output_path):
@@ -197,14 +164,6 @@ class MapBuildDiagnostics:
             metrics,
             "median_point_reprojection_error_px",
         )
-        camera_translation_step = self._field(
-            metrics,
-            "camera_translation_step_mm",
-        )
-        camera_rotation_step = self._field(
-            metrics,
-            "camera_rotation_step_deg",
-        )
         aruco_detected = self._field(metrics, "aruco_detected").astype(bool)
         aruco_rms = self._field(metrics, "aruco_reprojection_rms_px")
         aligned_image_names = set(alignment.aligned_image_names)
@@ -212,12 +171,19 @@ class MapBuildDiagnostics:
             [item.image_name in aligned_image_names for item in metrics],
             dtype=bool,
         )
+        frame_by_image_name = {
+            item.image_name: item.frame_index for item in metrics
+        }
 
         matches_per_pair = raw_matches / np.maximum(attempted_pairs, 1)
         inliers_per_pair = verified_inliers / np.maximum(verified_pairs, 1)
         pair_acceptance = verified_pairs / np.maximum(attempted_pairs, 1)
 
-        figure, axes = plt.subplots(6, 1, figsize=(16, 19), sharex=True)
+        figure, axes = plt.subplots(6, 1, figsize=(16, 19))
+        for axis_index in (1, 2, 3, 5):
+            axes[axis_index].sharex(axes[0])
+        for axis_index in range(4):
+            axes[axis_index].tick_params(labelbottom=False)
         axes[0].plot(frames, feature_count, color="tab:blue")
         axes[0].set_ylabel("Selected features")
         axes[0].set_title("1. Spatial feature selection")
@@ -280,24 +246,105 @@ class MapBuildDiagnostics:
         reprojection_axis.set_ylabel("Reprojection error [px]")
         reprojection_axis.legend(loc="upper right")
 
-        axes[4].plot(
-            frames,
-            camera_translation_step,
-            label="Consecutive camera-center distance",
+        pair_scale_diagnostics = self._scale_pair_statistics(alignment)
+        scale_statistics = pair_scale_diagnostics["statistics"]
+        ordered_pair_indices = np.asarray(
+            sorted(
+                range(len(alignment.aligned_image_pairs)),
+                key=lambda index: (
+                    frame_by_image_name[
+                        alignment.aligned_image_pairs[index][0]
+                    ],
+                    frame_by_image_name[
+                        alignment.aligned_image_pairs[index][1]
+                    ],
+                ),
+            ),
+            dtype=int,
         )
-        axes[4].set_ylabel("Translation [mm]")
-        axes[4].set_title("5. Recovered camera motion")
-        axes[4].grid(True)
-        axes[4].legend(loc="upper left")
-        rotation_axis = axes[4].twinx()
-        rotation_axis.plot(
-            frames,
-            camera_rotation_step,
+        ordered_image_pairs = [
+            alignment.aligned_image_pairs[index]
+            for index in ordered_pair_indices
+        ]
+        aruco_pair_distances = np.asarray(
+            alignment.aligned_pair_distances_mm,
+            dtype=float,
+        )[ordered_pair_indices]
+        sfm_pair_distances = np.asarray(
+            alignment.aligned_pair_sfm_distances,
+            dtype=float,
+        )[ordered_pair_indices]
+        pair_numbers = np.arange(1, len(aruco_pair_distances) + 1)
+        aruco_line = axes[4].plot(
+            pair_numbers,
+            aruco_pair_distances,
+            color="tab:blue",
+            marker="o",
+            markersize=3,
+            linewidth=1.5,
+            label="ArUco displacement",
+        )
+        sfm_distance_axis = axes[4].twinx()
+        sfm_line = sfm_distance_axis.plot(
+            pair_numbers,
+            sfm_pair_distances,
             color="tab:orange",
-            label="Consecutive camera rotation",
+            marker="o",
+            markersize=3,
+            linewidth=1.5,
+            label="SfM displacement",
         )
-        rotation_axis.set_ylabel("Rotation [deg]")
-        rotation_axis.legend(loc="upper right")
+        comparison_maximum_mm = 1.08 * max(
+            float(np.max(aruco_pair_distances)),
+            float(alignment.scale * np.max(sfm_pair_distances)),
+        )
+        axes[4].set_ylim(0.0, comparison_maximum_mm)
+        sfm_distance_axis.set_ylim(
+            0.0,
+            comparison_maximum_mm / alignment.scale,
+        )
+
+        axes[4].set_xticks(pair_numbers)
+        axes[4].set_xticklabels(
+            [
+                (
+                    f"{frame_by_image_name[first_name]}-"
+                    f"{frame_by_image_name[second_name]}"
+                )
+                for first_name, second_name in ordered_image_pairs
+            ],
+            rotation=90,
+            ha="center",
+            fontsize=6,
+        )
+        axes[4].text(
+            0.01,
+            0.97,
+            (
+                f"Axes linked by LS scale: {alignment.scale:.3f} mm/unit\n"
+                "overlap = pair agrees with fitted scale\n"
+                "robust CV: "
+                f"{scale_statistics['robust_coefficient_of_variation_percent']:.1f}%\n"
+                "relative fit RMSE: "
+                f"{scale_statistics['fit_relative_rmse_percent']:.1f}%"
+            ),
+            transform=axes[4].transAxes,
+            va="top",
+            bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "0.7"},
+        )
+        axes[4].set_ylabel("ArUco displacement [mm]", color="tab:blue")
+        sfm_distance_axis.set_ylabel(
+            "SfM displacement [SfM unit]",
+            color="tab:orange",
+        )
+        axes[4].set_xlabel("Selected frame pair")
+        axes[4].set_title("5. ArUco and SfM displacement for each pair")
+        axes[4].grid(True)
+        axes[4].legend(
+            aruco_line + sfm_line,
+            [line.get_label() for line in aruco_line + sfm_line],
+            loc="upper right",
+        )
 
         axes[5].plot(
             frames[aruco_detected],
@@ -316,9 +363,6 @@ class MapBuildDiagnostics:
             label="Used for scale estimation",
             zorder=3,
         )
-        frame_by_image_name = {
-            item.image_name: item.frame_index for item in metrics
-        }
         pair_distance_axis = axes[5].twinx()
         for pair_index, (image_pair, distance_mm) in enumerate(
             zip(
@@ -658,6 +702,7 @@ class MapBuildDiagnostics:
             "scale_pair_distances_mm": list(
                 alignment.aligned_pair_distances_mm
             ),
+            "scale_mm_per_sfm_unit": alignment.scale,
             "scale_pairwise_distance_rmse_mm": alignment.rmse_mm,
             "last_mapping_image": max(
                 image.name for image in reconstruction.images.values()
@@ -668,6 +713,58 @@ class MapBuildDiagnostics:
             "mapping_pairing_diagnostics_plot": pairing_plot_path.name,
             "imu_gravity": frame_collection.imu_gravity_summary,
             "timing": timing,
+        }
+
+    @staticmethod
+    def _scale_pair_statistics(alignment):
+        aruco_distances = np.asarray(
+            alignment.aligned_pair_distances_mm,
+            dtype=float,
+        )
+        sfm_distances = np.asarray(
+            alignment.aligned_pair_sfm_distances,
+            dtype=float,
+        )
+        pair_scales = aruco_distances / sfm_distances
+
+        median = float(np.median(pair_scales))
+        mad = float(np.median(np.abs(pair_scales - median)))
+        robust_standard_deviation = 1.4826 * mad
+        percentile_10, percentile_90 = np.percentile(
+            pair_scales,
+            [10.0, 90.0],
+        )
+        rms_aruco_distance = float(
+            np.sqrt(np.mean(aruco_distances**2))
+        )
+
+        return {
+            "pair_estimates_mm_per_sfm_unit": pair_scales.tolist(),
+            "statistics": {
+                "pair_count": len(pair_scales),
+                "mean_mm_per_sfm_unit": float(np.mean(pair_scales)),
+                "median_mm_per_sfm_unit": median,
+                "standard_deviation_mm_per_sfm_unit": float(
+                    np.std(pair_scales)
+                ),
+                "median_absolute_deviation_mm_per_sfm_unit": mad,
+                "robust_standard_deviation_mm_per_sfm_unit": (
+                    robust_standard_deviation
+                ),
+                "robust_coefficient_of_variation_percent": float(
+                    100.0 * robust_standard_deviation / abs(median)
+                ),
+                "percentile_10_mm_per_sfm_unit": float(percentile_10),
+                "percentile_90_mm_per_sfm_unit": float(percentile_90),
+                "central_80_percent_relative_span_percent": float(
+                    100.0
+                    * (percentile_90 - percentile_10)
+                    / abs(median)
+                ),
+                "fit_relative_rmse_percent": float(
+                    100.0 * alignment.rmse_mm / rms_aruco_distance
+                ),
+            },
         }
 
     @staticmethod
@@ -715,6 +812,27 @@ class MapBuildDiagnostics:
                 for length, count in values["ranges"].items()
             )
             print(f"    ranges: {ranges}")
+
+    @staticmethod
+    def _print_scale_statistics(scale, statistics):
+        print("ArUco scale diagnostics")
+        print(f"  Least-squares scale: {scale:.6f} mm/SfM unit")
+        print(
+            "  Pair scale median: "
+            f"{statistics['median_mm_per_sfm_unit']:.6f} mm/SfM unit"
+        )
+        print(
+            "  Robust coefficient of variation: "
+            f"{statistics['robust_coefficient_of_variation_percent']:.2f}%"
+        )
+        print(
+            "  Central 80% relative span: "
+            f"{statistics['central_80_percent_relative_span_percent']:.2f}%"
+        )
+        print(
+            "  Relative distance-fit RMSE: "
+            f"{statistics['fit_relative_rmse_percent']:.2f}%"
+        )
 
     @staticmethod
     def _print_timing(timing):

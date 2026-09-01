@@ -33,6 +33,9 @@ from visualization.tracking_visualization import (
     save_timing_diagnostics,
 )
 
+# 1. Improve how we select points from global map to be matched with currently detected. Currently we use all points that are visible in xy plate which are in front of camera
+#   But these points can be on the other side of cylinder then. Of course LightGlue will not match them and PnP wont make them inliers but there is some potential computation gain here.
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -60,7 +63,7 @@ MAPPING_EVERY_FRAME_UNTIL_FRAME = 100
 MAPPING_EVERY_FRAME_FROM_FRAME = 50
 # Adaptive example: recent=2, motion=(10.0, 20.0, 40.0).
 # Legacy example: recent=10, motion=() matches only the 10 previous frames.
-MAPPING_RECENT_PAIR_COUNT = 4
+MAPPING_RECENT_PAIR_COUNT = 10
 MAPPING_RECENT_PAIR_INTERVAL = 1
 MAPPING_MOTION_TARGETS_PX = ()
 MAPPING_DETECTED_MAX_FEATURES = 512  # Features detected per map frame.
