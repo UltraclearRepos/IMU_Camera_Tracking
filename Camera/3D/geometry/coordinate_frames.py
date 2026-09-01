@@ -20,6 +20,11 @@ TCP_TO_CAMERA_AXES_BY_CYLINDER_ORIENTATION = {
     ),
 }
 
+TRACKED_POINT_OFFSET_CAMERA_MM_BY_CYLINDER_ORIENTATION = {
+    "horizontal": np.zeros(3),
+    "vertical": np.array([-22.0, 0.0, -40.0]),
+}
+
 # Provisional fixed orientation of the IMU rigidly mounted to the camera.
 # It converts a vector expressed in IMU axes into native OpenCV camera axes.
 CAMERA_FROM_IMU = np.array(
@@ -32,16 +37,13 @@ CAMERA_FROM_IMU = np.array(
 
 
 def get_tcp_to_camera_axes(cylinder_orientation):
-    if not isinstance(cylinder_orientation, str):
-        raise ValueError("cylinder_orientation must be 'horizontal' or 'vertical'")
-    orientation = cylinder_orientation.lower()
-    try:
-        return TCP_TO_CAMERA_AXES_BY_CYLINDER_ORIENTATION[orientation]
-    except KeyError as error:
-        raise ValueError(
-            "cylinder_orientation must be 'horizontal' or 'vertical', "
-            f"got {cylinder_orientation!r}"
-        ) from error
+    return TCP_TO_CAMERA_AXES_BY_CYLINDER_ORIENTATION[cylinder_orientation]
+
+
+def get_tracked_point_offset_camera_mm(cylinder_orientation):
+    return TRACKED_POINT_OFFSET_CAMERA_MM_BY_CYLINDER_ORIENTATION[
+        cylinder_orientation
+    ]
 
 
 def tcp_displacements_to_camera_axes(

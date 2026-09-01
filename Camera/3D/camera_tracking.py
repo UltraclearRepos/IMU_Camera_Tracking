@@ -13,6 +13,9 @@ import cv2
 import numpy as np
 import torch
 from evaluation.mapping_evaluation import evaluate_final_mapping_poses
+from geometry.coordinate_frames import (
+    get_tracked_point_offset_camera_mm,
+)
 from mapping.adaptive_skin_mask import AdaptiveSkinMask
 from mapping.feature_matching import DEVICE, LightGlueFeatureMatching
 from mapping.skin_map_builder import SkinMapBuilder
@@ -198,6 +201,10 @@ def run_tracking(
     if aruco_size_mm <= 0.0:
         raise ValueError("aruco_size_mm must be positive")
 
+    tracked_point_offset_camera_mm = get_tracked_point_offset_camera_mm(
+        cylinder_orientation
+    )
+
     feature_type = feature_type.lower()
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
@@ -304,6 +311,7 @@ def run_tracking(
         output_dir,
         recording_name,
         cylinder_orientation,
+        tracked_point_offset_camera_mm,
     )
     if SAVE_MAPPING_FEATURE_VIDEO:
         save_mapping_feature_video(
@@ -415,14 +423,17 @@ def run_tracking(
         if result is not None:
             camera_position_map = camera_position(result["R"], result["t"])
             camera_to_map_rotation = result["R"].T
+            tracked_point_position_map = camera_position_map + (
+                camera_to_map_rotation @ tracked_point_offset_camera_mm
+            )
 
             if tracking_reference_position_map is None:
-                tracking_reference_position_map = camera_position_map.copy()
+                tracking_reference_position_map = tracked_point_position_map.copy()
                 tracking_reference_camera_to_map_rotation = camera_to_map_rotation.copy()
 
             position = (
                 tracking_reference_camera_to_map_rotation.T
-                @ (camera_position_map - tracking_reference_position_map)
+                @ (tracked_point_position_map - tracking_reference_position_map)
             )
             relative_rotation = (
                 tracking_reference_camera_to_map_rotation.T

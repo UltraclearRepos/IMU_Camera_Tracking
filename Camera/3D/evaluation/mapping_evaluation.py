@@ -212,6 +212,7 @@ def evaluate_final_mapping_poses(
     output_dir,
     recording_name,
     cylinder_orientation,
+    tracked_point_offset_camera_mm,
 ):
     frames = global_map.mapping_frames
     times_s = global_map.mapping_times_s
@@ -234,13 +235,17 @@ def evaluate_final_mapping_poses(
             "No registered mapping frames overlap the ground-truth timeline"
         )
 
+    tracked_point_positions = camera_positions + (
+        camera_rotations @ tracked_point_offset_camera_mm
+    )
+
     # Metrics describe drift relative to the first registered mapping frame.
     # The frozen map itself remains anchored at the last registered camera.
-    reference_position = camera_positions[0]
+    reference_position = tracked_point_positions[0]
     reference_rotation = camera_rotations[0]
     estimate_positions = (
         reference_rotation.T
-        @ (camera_positions - reference_position).T
+        @ (tracked_point_positions - reference_position).T
     ).T
     estimate_relative_rotations = reference_rotation.T @ camera_rotations
 
