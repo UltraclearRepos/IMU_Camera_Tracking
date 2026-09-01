@@ -1,28 +1,24 @@
 import numpy as np
 
 
-# Fixed orientation of the camera mounted on the Dobot TCP.
-# Relative to the previous camera convention: X' = -Y, Y' = X, Z' = Z.
-# It converts vectors expressed in TCP axes into native camera axes:
-# Dobot +X -> camera +Z, Dobot +Y -> camera -X, Dobot +Z -> camera -Y.
-# Cylinder Horizontal
-# TCP_TO_CAMERA_AXES = np.array(
-#     [
-#         [0.0, -1.0, 0.0],
-#         [0.0, 0.0, -1.0],
-#         [1.0, 0.0, 0.0],
-#     ]
-# )
-
-# Cylinder Vertical
-TCP_TO_CAMERA_AXES = np.array(
-    [
-        [0.0, 0.0, -1.0],
-        [0.0, 1.0, 0.0],
-        [1.0, 0.0, 0.0],
-    ]
-)
-
+# Fixed orientations of the camera mounted on the Dobot TCP. They convert
+# vectors expressed in TCP axes into native camera axes.
+TCP_TO_CAMERA_AXES_BY_CYLINDER_ORIENTATION = {
+    "horizontal": np.array(
+        [
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, -1.0],
+            [1.0, 0.0, 0.0],
+        ]
+    ),
+    "vertical": np.array(
+        [
+            [0.0, 0.0, -1.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ]
+    ),
+}
 
 # Provisional fixed orientation of the IMU rigidly mounted to the camera.
 # It converts a vector expressed in IMU axes into native OpenCV camera axes.
@@ -35,17 +31,35 @@ CAMERA_FROM_IMU = np.array(
 )
 
 
-def tcp_displacements_to_camera_axes(displacements):
-    return (TCP_TO_CAMERA_AXES @ np.asarray(displacements).T).T
+def get_tcp_to_camera_axes(cylinder_orientation):
+    if not isinstance(cylinder_orientation, str):
+        raise ValueError("cylinder_orientation must be 'horizontal' or 'vertical'")
+    orientation = cylinder_orientation.lower()
+    try:
+        return TCP_TO_CAMERA_AXES_BY_CYLINDER_ORIENTATION[orientation]
+    except KeyError as error:
+        raise ValueError(
+            "cylinder_orientation must be 'horizontal' or 'vertical', "
+            f"got {cylinder_orientation!r}"
+        ) from error
 
 
-def tcp_rotations_to_camera_axes(rotations):
+def tcp_displacements_to_camera_axes(
+    displacements,
+    cylinder_orientation,
+):
+    axes = get_tcp_to_camera_axes(cylinder_orientation)
+    return (axes @ np.asarray(displacements).T).T
+
+
+def tcp_rotations_to_camera_axes(rotations, cylinder_orientation):
     rotations = np.asarray(rotations)
+    axes = get_tcp_to_camera_axes(cylinder_orientation)
     return np.einsum(
         "ij,njk,kl->nil",
-        TCP_TO_CAMERA_AXES,
+        axes,
         rotations,
-        TCP_TO_CAMERA_AXES.T,
+        axes.T,
     )
 
 

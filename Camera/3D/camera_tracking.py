@@ -43,6 +43,7 @@ from visualization.tracking_visualization import (
 RECORDING_NAME = "inital_50mm_1aruco_Arc180-Speed-3_2026-08-28_15.25.30"
 # RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_15.30.28"
 DATA_FOLDER = "CylinderVertical"
+CYLINDER_ORIENTATION = "vertical"  # "horizontal" or "vertical".
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
 MAX_FRAMES = 1000000
@@ -191,10 +192,12 @@ def run_tracking(
     aruco_size_mm,
     seed_width_fraction,
     seed_height_fraction,
+    cylinder_orientation,
     mapping_recent_pair_interval=1,
 ):
     if aruco_size_mm <= 0.0:
         raise ValueError("aruco_size_mm must be positive")
+
     feature_type = feature_type.lower()
     if not torch.cuda.is_available() and DEVICE == "cuda":
         raise RuntimeError("CUDA is not available in the project .venv")
@@ -300,6 +303,7 @@ def run_tracking(
         ground_truth_path,
         output_dir,
         recording_name,
+        cylinder_orientation,
     )
     if SAVE_MAPPING_FEATURE_VIDEO:
         save_mapping_feature_video(
@@ -573,6 +577,7 @@ def run_tracking(
         ground_truth_path,
         tracking_quality_plot_path,
         recording_name,
+        cylinder_orientation,
     )
     position_rmse, orientation_rmse = create_comparison_plots(
         rows,
@@ -581,6 +586,7 @@ def run_tracking(
         orientation_plot_path,
         camera_gt_path,
         recording_name,
+        cylinder_orientation,
     )
     tracked_frames = sum(row["tracked"] for row in rows)
     tracked_percent = 100.0 * tracked_frames / len(rows)
@@ -621,6 +627,7 @@ def run_tracking(
         "aruco_size_mm": aruco_size_mm,
         "seed_width_fraction": seed_width_fraction,
         "seed_height_fraction": seed_height_fraction,
+        "cylinder_orientation": cylinder_orientation,
         "map_landmarks": len(tracker.landmarks),
         "map_candidate_landmarks": len(global_map.candidate_positions),
         "mapping_position_rmse_mm": float(mapping_position_rmse),
@@ -687,6 +694,7 @@ def main():
         seed_width_fraction=SEED_WIDTH_FRACTION,
         seed_height_fraction=SEED_HEIGHT_FRACTION,
         mapping_recent_pair_interval=MAPPING_RECENT_PAIR_INTERVAL,
+        cylinder_orientation=CYLINDER_ORIENTATION,
     )
 
 

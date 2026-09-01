@@ -61,6 +61,11 @@ def parse_arguments():
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--aruco-size-mm", type=float, required=True)
+    parser.add_argument(
+        "--cylinder-orientation",
+        choices=("horizontal", "vertical"),
+        required=True,
+    )
     return parser.parse_args()
 
 
@@ -97,6 +102,7 @@ def main():
         aruco_size_mm=arguments.aruco_size_mm,
         seed_width_fraction=SEED_WIDTH_FRACTION,
         seed_height_fraction=SEED_HEIGHT_FRACTION,
+        cylinder_orientation=arguments.cylinder_orientation,
     )
     metrics["total_pipeline_seconds"] = time.perf_counter() - started
     metrics["pycolmap_version"] = str(pycolmap.__version__)

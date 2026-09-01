@@ -211,6 +211,7 @@ def evaluate_final_mapping_poses(
     ground_truth_path,
     output_dir,
     recording_name,
+    cylinder_orientation,
 ):
     frames = global_map.mapping_frames
     times_s = global_map.mapping_times_s
@@ -270,12 +271,16 @@ def evaluate_final_mapping_poses(
         @ (interpolated_gt_positions - reference_gt_position).T
     ).T
     ground_truth_positions = tcp_displacements_to_camera_axes(
-        tcp_displacements
+        tcp_displacements,
+        cylinder_orientation,
     )
     relative_gt_rotations = (
         reference_gt_rotation.T @ ground_truth_rotations
     )
-    gt_rotations = tcp_rotations_to_camera_axes(relative_gt_rotations)
+    gt_rotations = tcp_rotations_to_camera_axes(
+        relative_gt_rotations,
+        cylinder_orientation,
+    )
 
     position_component_errors = estimate_positions - ground_truth_positions
     position_errors = np.linalg.norm(position_component_errors, axis=1)

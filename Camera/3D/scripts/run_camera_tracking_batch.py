@@ -15,6 +15,7 @@ if str(MODULE_DIR) not in sys.path:
 
 import matplotlib.pyplot as plt
 from camera_tracking import run_tracking
+from geometry.coordinate_frames import get_tcp_to_camera_axes
 
 
 DEFAULT_CONFIG_PATH = MODULE_DIR / "batch_config.json"
@@ -22,7 +23,8 @@ DEFAULT_CONFIG_PATH = MODULE_DIR / "batch_config.json"
 
 def load_experiment_config(path):
     with Path(path).open(encoding="utf-8") as file:
-        return json.load(file)
+        config = json.load(file)
+    return config
 
 
 def resolve_data_dir(config):
@@ -101,7 +103,8 @@ def run_recording(
         aruco_size_mm=recording_parameters["aruco_size_mm"],
         seed_width_fraction=recording_parameters["seed_width_fraction"],
         seed_height_fraction=recording_parameters["seed_height_fraction"],
-        mapping_recent_pair_interval=config["mapping_recent_pair_interval"]
+        mapping_recent_pair_interval=config["mapping_recent_pair_interval"],
+        cylinder_orientation=config["cylinder_orientation"],
     )
 
 

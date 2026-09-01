@@ -1178,6 +1178,7 @@ def create_comparison_plots(
     orientation_output_path,
     camera_gt_output_path,
     recording_name,
+    cylinder_orientation,
 ):
     camera_frames = np.asarray([row["frame"] for row in rows])
     camera_times_s = np.asarray([row["time_s"] for row in rows], dtype=float)
@@ -1261,9 +1262,15 @@ def create_comparison_plots(
         reference_gt_rotation.T
         @ (interpolated_gt_positions - reference_gt_position).T
     ).T
-    gt = tcp_displacements_to_camera_axes(tcp_displacements)
+    gt = tcp_displacements_to_camera_axes(
+        tcp_displacements,
+        cylinder_orientation,
+    )
     relative_gt_rotations = reference_gt_rotation.T @ gt_rotations
-    gt_rotations_camera = tcp_rotations_to_camera_axes(relative_gt_rotations)
+    gt_rotations_camera = tcp_rotations_to_camera_axes(
+        relative_gt_rotations,
+        cylinder_orientation,
+    )
     # Do not convert the transformed ground truth back to XYZ Euler angles.
     # Around a 90-degree pitch, the same physical pose has an equivalent Euler
     # representation with roll and yaw shifted by 180 degrees.  That made a
@@ -1350,7 +1357,13 @@ def create_comparison_plots(
     return position_rmse, orientation_rmse
 
 
-def save_3d_tracking_diagnostics(rows, gt_path, output_path, recording_name):
+def save_3d_tracking_diagnostics(
+    rows,
+    gt_path,
+    output_path,
+    recording_name,
+    cylinder_orientation,
+):
     """Diagnose metric pose estimation and 3D observability during tracking."""
     frames = np.asarray([row["frame"] for row in rows])
     timestamps = np.asarray([row["timestamp"] for row in rows], dtype=float)
@@ -1404,10 +1417,12 @@ def save_3d_tracking_diagnostics(rows, gt_path, output_path, recording_name):
         (
             reference_rotation.T
             @ (interpolated_positions - reference_position).T
-        ).T
+        ).T,
+        cylinder_orientation,
     )
     gt_rotations_c0 = tcp_rotations_to_camera_axes(
-        reference_rotation.T @ gt_rotations
+        reference_rotation.T @ gt_rotations,
+        cylinder_orientation,
     )
 
     position_error = np.full(len(rows), np.nan)
