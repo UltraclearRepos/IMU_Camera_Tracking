@@ -21,7 +21,7 @@ TCP_TO_CAMERA_AXES_BY_CYLINDER_ORIENTATION = {
 }
 
 TRACKED_POINT_OFFSET_CAMERA_MM_BY_CYLINDER_ORIENTATION = {
-    "horizontal": np.array([0.0, -22.0, -32.0]),
+    "horizontal": np.array([0.0, -22.0, -24.0]),
     "vertical": np.array([-35.0, 0.0, -32.0]),
 }
 
