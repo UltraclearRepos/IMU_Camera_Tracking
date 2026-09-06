@@ -216,20 +216,28 @@ class SkinMapTracker:
                 self.initialization_frame_count
             )
 
-        projection_started = start_timer()
-        visible_map = self.visible_global_map(current_features)
-        self.last_diagnostics["global_map_projection_ms"] = elapsed_ms(
-            projection_started
-        )
-        if visible_map is None:
-            return None
+        if initializing:
+            visible_landmark_ids = np.arange(
+                len(self.map_points),
+                dtype=np.int64,
+            )
+            visible_map_points = self.map_points
+            expected_visible_count = len(self.map_points)
+        else:
+            projection_started = start_timer()
+            visible_map = self.visible_global_map(current_features)
+            self.last_diagnostics["global_map_projection_ms"] = elapsed_ms(
+                projection_started
+            )
+            if visible_map is None:
+                return None
 
-        (
-            visible_landmark_ids,
-            visible_map_points,
-            global_features,
-            expected_visible_count,
-        ) = visible_map
+            (
+                visible_landmark_ids,
+                visible_map_points,
+                global_features,
+                expected_visible_count,
+            ) = visible_map
         self.last_diagnostics["visible_landmarks"] = expected_visible_count
         required_matches = MIN_MATCHES
         required_inliers = MIN_INLIERS
@@ -237,10 +245,16 @@ class SkinMapTracker:
         self.last_diagnostics["required_inliers"] = required_inliers
 
         matching_started = start_timer()
-        matches = self.feature_matching.match(
-            global_features,
-            current_features,
-        )
+        if initializing:
+            matches = self.feature_matching.match_descriptors(
+                self.map_descriptors,
+                current_features.descriptors,
+            )
+        else:
+            matches = self.feature_matching.match(
+                global_features,
+                current_features,
+            )
         self.last_diagnostics["lightglue_ms"] = elapsed_ms(matching_started)
         self.last_diagnostics["matches"] = len(matches)
         self.last_diagnostics["new_features"] = (

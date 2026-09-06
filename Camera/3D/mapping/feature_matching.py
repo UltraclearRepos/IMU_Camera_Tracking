@@ -210,3 +210,41 @@ class LightGlueFeatureMatching:
             .numpy()
             .astype(np.uint32)
         )
+
+    @staticmethod
+    def match_descriptors(descriptors0, descriptors1, ratio=0.8):
+        """Match descriptors without using keypoint positions."""
+        if len(descriptors0) == 0 or len(descriptors1) < 2:
+            return np.empty((0, 2), dtype=np.uint32)
+
+        descriptors0 = np.ascontiguousarray(
+            descriptors0,
+            dtype=np.float32,
+        )
+        descriptors1 = np.ascontiguousarray(
+            descriptors1,
+            dtype=np.float32,
+        )
+        matcher = cv2.BFMatcher(cv2.NORM_L2)
+        forward_matches = matcher.knnMatch(
+            descriptors0,
+            descriptors1,
+            k=2,
+        )
+        reverse_matches = matcher.match(descriptors1, descriptors0)
+        reverse_best = {
+            match.queryIdx: match.trainIdx for match in reverse_matches
+        }
+
+        matches = []
+        for candidates in forward_matches:
+            if len(candidates) < 2:
+                continue
+            best, second_best = candidates
+            if (
+                best.distance < ratio * second_best.distance
+                and reverse_best.get(best.trainIdx) == best.queryIdx
+            ):
+                matches.append((best.queryIdx, best.trainIdx))
+
+        return np.asarray(matches, dtype=np.uint32).reshape(-1, 2)

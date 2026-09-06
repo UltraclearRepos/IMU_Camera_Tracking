@@ -16,7 +16,7 @@ MAP_PATH = (
     SCRIPT_DIR.parent
     / "jenkins_results"
     / "CylinderVertical"
-    / "kf_int=1_rec=10_int_1_mapF=512_256_trackF=512_adjusted_camera_tcp_offset"
+    / "kf_int=2_rec=2_int_1_mapF=512_512_trackF=512"
     / "sift"
     / "inital_50mm_1aruco_Arc180-Speed-3_2026-08-28_15.25.30"
     / "map"
