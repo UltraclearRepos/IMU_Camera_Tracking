@@ -12,6 +12,7 @@ MIN_MATCHES = 20
 MIN_INLIERS = 30
 MAX_REPROJECTION_ERROR_PX = 3.0
 GLOBAL_MAP_VISIBILITY_MARGIN_PX = 80
+GLOBAL_RELOCALIZATION_FAILURE_FRAMES = 20
 
 MAP_COVERAGE_GRID_ROWS = 4
 MAP_COVERAGE_GRID_COLUMNS = 4
@@ -67,6 +68,7 @@ class SkinMapTracker:
         self.R_map_to_camera = np.eye(3, dtype=np.float64)
         self.t_map_to_camera = np.zeros(3, dtype=np.float64)
         self.initialized = False
+        self.consecutive_tracking_failures = 0
 
         self.landmarks = {
             landmark_id: {
@@ -201,8 +203,18 @@ class SkinMapTracker:
             "new_landmark_points": np.empty((0, 2)),
         }
 
+    def _tracking_failed(self):
+        if self.initialized:
+            self.consecutive_tracking_failures += 1
+        return None
+
     def track(self, frame):
         initializing = not self.initialized
+        global_matching = (
+            initializing
+            or self.consecutive_tracking_failures
+            >= GLOBAL_RELOCALIZATION_FAILURE_FRAMES
+        )
         extraction_started = start_timer()
         current_features = self.feature_matching.extract(frame)
         feature_extraction_ms = elapsed_ms(extraction_started)
@@ -210,13 +222,15 @@ class SkinMapTracker:
         self.last_diagnostics["feature_extraction_ms"] = (
             feature_extraction_ms
         )
+        if global_matching:
+            self.last_diagnostics["tracking_method"] = "global_descriptors"
         if initializing:
             self.initialization_frame_count += 1
             self.last_diagnostics["initialization_frames"] = (
                 self.initialization_frame_count
             )
 
-        if initializing:
+        if global_matching:
             visible_landmark_ids = np.arange(
                 len(self.map_points),
                 dtype=np.int64,
@@ -230,7 +244,7 @@ class SkinMapTracker:
                 projection_started
             )
             if visible_map is None:
-                return None
+                return self._tracking_failed()
 
             (
                 visible_landmark_ids,
@@ -245,7 +259,7 @@ class SkinMapTracker:
         self.last_diagnostics["required_inliers"] = required_inliers
 
         matching_started = start_timer()
-        if initializing:
+        if global_matching:
             matches = self.feature_matching.match_descriptors(
                 self.map_descriptors,
                 current_features.descriptors,
@@ -266,7 +280,7 @@ class SkinMapTracker:
                 current_features.keypoints[matches[:, 1]].copy()
             )
         if len(matches) < required_matches:
-            return None
+            return self._tracking_failed()
 
         landmark_ids = visible_landmark_ids[matches[:, 0]]
         map_points = np.ascontiguousarray(
@@ -279,7 +293,7 @@ class SkinMapTracker:
         )
 
         pnp_guess = {}
-        if self.initialized:
+        if not global_matching:
             pnp_guess = {
                 "rvec": cv2.Rodrigues(self.R_map_to_camera)[0],
                 "tvec": self.t_map_to_camera.reshape(3, 1).copy(),
@@ -305,7 +319,7 @@ class SkinMapTracker:
             inlier_count / len(matches)
         )
         if not success or inlier_count < required_inliers:
-            return None
+            return self._tracking_failed()
 
         inlier_indices = inliers.ravel()
         refinement_started = start_timer()
@@ -323,6 +337,7 @@ class SkinMapTracker:
 
         self.R_map_to_camera = cv2.Rodrigues(rvec)[0]
         self.t_map_to_camera = tvec.reshape(3)
+        self.consecutive_tracking_failures = 0
         if initializing:
             self.initialized = True
             self.keyframes = ["tracking_start"]
