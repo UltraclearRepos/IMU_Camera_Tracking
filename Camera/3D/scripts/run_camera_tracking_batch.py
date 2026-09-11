@@ -80,7 +80,7 @@ def run_recording(
     results_dir,
 ):
     recording_output_dir = (
-        results_dir / config["feature_type"] / recording_name
+        results_dir / config["experiment_name"] / recording_name
     )
     frame_range = resolve_frame_range(config, recording_parameters)
     return run_tracking(
@@ -97,6 +97,7 @@ def run_recording(
         keyframe_interval=config["keyframe_interval"],
         every_frame_until_frame=config["every_frame_until_frame"],
         every_frame_from_frame=config["every_frame_from_frame"],
+        boundary_frame_interval=config.get("boundary_frame_interval", 1),
         mapping_recent_pair_count=config["mapping_recent_pair_count"],
         mapping_motion_targets_px=config["mapping_motion_targets_px"],
         use_imu=config["use_imu"],

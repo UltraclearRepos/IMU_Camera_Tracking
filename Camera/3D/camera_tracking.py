@@ -49,25 +49,26 @@ DATA_FOLDER = "CylinderVertical"
 CYLINDER_ORIENTATION = "vertical"  # "horizontal" or "vertical".
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"
-MAX_FRAMES = 1000000
+MAX_FRAMES = 1000
 FEATURE_ROI_BOTTOM_FRACTION = 0.85
 SEED_WIDTH_FRACTION = 0.8
 SEED_HEIGHT_FRACTION = 0.7
 FEATURE_TYPE = "sift"  # "disk" or "sift".
 
-MAPPING_START_FRAME = 4  # First frame used to build the frozen 3D map.
+MAPPING_START_FRAME = 60  # First frame used to build the frozen 3D map.
 MAPPING_END_FRAME = 574  # Last frame used to build the frozen 3D map.
 TRACKING_START_FRAME = 575  # First frame processed by frozen-map tracking.
 RECONSTRUCTION_METHOD = "global"  # "global" (GLOMAP) or "incremental" (COLMAP).
-KEYFRAME_INTERVAL = 1  # Use every Nth frame during map construction.
-# Set these to offsets from the mapping boundaries to keep all frames at the
-# beginning and end. Between them, frames are sampled using KEYFRAME_INTERVAL.
-# None preserves the original uniform sampling across the whole mapping interval.
-MAPPING_EVERY_FRAME_UNTIL_FRAME = 100
-MAPPING_EVERY_FRAME_FROM_FRAME = 50
+KEYFRAME_INTERVAL = 5  # Use every Nth frame during map construction.
+# Set these to offsets from the mapping boundaries. Frames in the boundary
+# ranges use MAPPING_BOUNDARY_FRAME_INTERVAL; frames between them use
+# KEYFRAME_INTERVAL. None preserves uniform KEYFRAME_INTERVAL sampling.
+MAPPING_EVERY_FRAME_UNTIL_FRAME = 0
+MAPPING_EVERY_FRAME_FROM_FRAME = 0
+MAPPING_BOUNDARY_FRAME_INTERVAL = 1
 # Adaptive example: recent=2, motion=(10.0, 20.0, 40.0).
 # Legacy example: recent=10, motion=() matches only the 10 previous frames.
-MAPPING_RECENT_PAIR_COUNT = 10
+MAPPING_RECENT_PAIR_COUNT = 3
 MAPPING_RECENT_PAIR_INTERVAL = 1
 MAPPING_MOTION_TARGETS_PX = ()
 MAPPING_DETECTED_MAX_FEATURES = 512  # Features detected per map frame.
@@ -189,6 +190,7 @@ def run_tracking(
     keyframe_interval,
     every_frame_until_frame,
     every_frame_from_frame,
+    boundary_frame_interval,
     mapping_recent_pair_count,
     mapping_motion_targets_px,
     use_imu,
@@ -283,6 +285,7 @@ def run_tracking(
         keyframe_interval,
         every_frame_until_frame,
         every_frame_from_frame,
+        boundary_frame_interval,
         mapping_recent_pair_count,
         mapping_recent_pair_interval,
         mapping_motion_targets_px,
@@ -632,6 +635,7 @@ def run_tracking(
         "keyframe_interval": keyframe_interval,
         "every_frame_until_frame": every_frame_until_frame,
         "every_frame_from_frame": every_frame_from_frame,
+        "boundary_frame_interval": boundary_frame_interval,
         "mapping_recent_pair_count": mapping_recent_pair_count,
         "mapping_recent_pair_interval": mapping_recent_pair_interval,
         "mapping_motion_targets_px": list(mapping_motion_targets_px),
@@ -698,6 +702,7 @@ def main():
         keyframe_interval=KEYFRAME_INTERVAL,
         every_frame_until_frame=MAPPING_EVERY_FRAME_UNTIL_FRAME,
         every_frame_from_frame=MAPPING_EVERY_FRAME_FROM_FRAME,
+        boundary_frame_interval=MAPPING_BOUNDARY_FRAME_INTERVAL,
         mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
         mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
         use_imu=USE_IMU_GRAVITY_PRIOR,

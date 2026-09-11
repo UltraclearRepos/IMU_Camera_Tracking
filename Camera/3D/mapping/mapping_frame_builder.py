@@ -34,6 +34,7 @@ class MappingFrameBuilder:
         keyframe_interval,
         every_frame_until_frame,
         every_frame_from_frame,
+        boundary_frame_interval,
         recent_pair_count,
         recent_pair_interval,
         motion_targets_px,
@@ -51,6 +52,15 @@ class MappingFrameBuilder:
         self.keyframe_interval = keyframe_interval
         self.every_frame_until_frame = every_frame_until_frame
         self.every_frame_from_frame = every_frame_from_frame
+        if (
+            not isinstance(boundary_frame_interval, int)
+            or isinstance(boundary_frame_interval, bool)
+            or boundary_frame_interval < 1
+        ):
+            raise ValueError(
+                "boundary_frame_interval must be a positive integer"
+            )
+        self.boundary_frame_interval = boundary_frame_interval
         self.recent_pair_count = recent_pair_count
         self.recent_pair_interval = recent_pair_interval
         self.motion_targets_px = tuple(motion_targets_px)
@@ -255,7 +265,9 @@ class MappingFrameBuilder:
                 <= self.start_frame + self.every_frame_until_frame
             )
         ):
-            return True
+            return (
+                frame_index - self.start_frame
+            ) % self.boundary_frame_interval == 0
         if (
             self.every_frame_from_frame is not None
             and (
@@ -263,7 +275,9 @@ class MappingFrameBuilder:
                 >= self.end_frame - self.every_frame_from_frame
             )
         ):
-            return True
+            return (
+                self.end_frame - frame_index
+            ) % self.boundary_frame_interval == 0
         return (frame_index - self.start_frame) % self.keyframe_interval == 0
 
     @staticmethod

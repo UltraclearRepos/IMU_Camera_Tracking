@@ -236,6 +236,7 @@ class MapBuildConfiguration:
     end_frame: int
     reconstruction_method: str
     keyframe_interval: int
+    boundary_frame_interval: int
     recent_pair_count: int
     recent_pair_interval: int
     motion_targets_px: tuple[float, ...]

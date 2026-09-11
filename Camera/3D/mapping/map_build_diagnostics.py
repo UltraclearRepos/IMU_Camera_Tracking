@@ -664,6 +664,7 @@ class MapBuildDiagnostics:
             "mapping_end_frame": configuration.end_frame,
             "reconstruction_method": configuration.reconstruction_method,
             "keyframe_interval": configuration.keyframe_interval,
+            "boundary_frame_interval": configuration.boundary_frame_interval,
             "adaptive_pair_selection": {
                 "recent_pair_count": configuration.recent_pair_count,
                 "motion_targets_px": list(configuration.motion_targets_px),

@@ -13,6 +13,7 @@ import pycolmap
 
 from camera_tracking import (
     FEATURE_TYPE,
+    MAPPING_BOUNDARY_FRAME_INTERVAL,
     MAPPING_END_FRAME,
     KEYFRAME_INTERVAL,
     MAPPING_EVERY_FRAME_FROM_FRAME,
@@ -96,6 +97,7 @@ def main():
         keyframe_interval=KEYFRAME_INTERVAL,
         every_frame_until_frame=MAPPING_EVERY_FRAME_UNTIL_FRAME,
         every_frame_from_frame=MAPPING_EVERY_FRAME_FROM_FRAME,
+        boundary_frame_interval=MAPPING_BOUNDARY_FRAME_INTERVAL,
         mapping_recent_pair_count=MAPPING_RECENT_PAIR_COUNT,
         mapping_motion_targets_px=MAPPING_MOTION_TARGETS_PX,
         use_imu=USE_IMU_GRAVITY_PRIOR,

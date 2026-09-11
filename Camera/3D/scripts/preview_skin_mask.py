@@ -15,9 +15,9 @@ from mapping.adaptive_skin_mask import AdaptiveSkinMask
 from mapping.aruco_mask import ArucoMask
 
 
-RECORDING_NAME = "initial_3aruco_1cmedge_3position_darkskin_Arc180-Speed-3_2026-08-28_18.35.57"
+RECORDING_NAME = "50mm_white_2cmaruco_Arc180-Speed-3_2026-09-10_15.48.07"
 # RECORDING_NAME = "inital_50mm_3aruco_1cmedge_Arc180-Speed-3_2026-08-28_16.37.35"
-DATA_FOLDER = "CylinderVertical3Aruco"
+DATA_FOLDER = "CylinderVertical"
 CAMERA_NAME = "cam1"
 KEYFRAME_INTERVAL = 1
 FEATURE_ROI_BOTTOM_FRACTION = 0.85
