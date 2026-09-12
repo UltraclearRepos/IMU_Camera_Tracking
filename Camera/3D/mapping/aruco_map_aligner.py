@@ -32,7 +32,7 @@ class ArucoMapAligner:
     """Estimate the metric scale of a COLMAP/GLOMAP reconstruction."""
 
     MINIMUM_ALIGNMENT_FRAMES = 3
-    MAXIMUM_ARUCO_REPROJECTION_RMS_PX = 1.0
+    ARUCO_REPROJECTION_RMS_PERCENTILE = 90.0
     MINIMUM_ARUCO_PAIR_DISPLACEMENT_MM = 3.0
     MAXIMUM_ALIGNMENT_PAIR_FRAME_GAP = 200
 
@@ -110,21 +110,31 @@ class ArucoMapAligner:
         )
 
     def _select_alignment_frames(self, candidate_frames):
+        rms_threshold = float(
+            np.percentile(
+                [
+                    frame.aruco_pose.reprojection_rms_px
+                    for frame in candidate_frames
+                ],
+                self.ARUCO_REPROJECTION_RMS_PERCENTILE,
+            )
+        )
         alignment_frames = [
             frame
             for frame in candidate_frames
             if frame.aruco_pose.reprojection_rms_px
-            <= self.MAXIMUM_ARUCO_REPROJECTION_RMS_PX
+            <= rms_threshold
         ]
         if len(alignment_frames) < self.MINIMUM_ALIGNMENT_FRAMES:
             raise RuntimeError(
-                "ArUco reprojection RMS must not exceed "
-                f"{self.MAXIMUM_ARUCO_REPROJECTION_RMS_PX:g} px in at least "
+                "ArUco reprojection RMS must fall within the "
+                f"{self.ARUCO_REPROJECTION_RMS_PERCENTILE:g}th percentile "
+                f"({rms_threshold:g} px) in at least "
                 f"{self.MINIMUM_ALIGNMENT_FRAMES} registered mapping frames"
             )
 
         alignment_frames.sort(key=lambda frame: frame.name)
-        return alignment_frames, self.MAXIMUM_ARUCO_REPROJECTION_RMS_PX
+        return alignment_frames, rms_threshold
 
     def _select_alignment_pairs(self, alignment_frames):
         candidate_pairs = []
