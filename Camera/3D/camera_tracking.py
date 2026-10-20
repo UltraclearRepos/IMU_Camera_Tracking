@@ -365,7 +365,8 @@ def run_tracking(
         raise FileNotFoundError(video_path)
 
     frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-    source_fps = float(capture.get(cv2.CAP_PROP_FPS))
+    # source_fps = float(capture.get(cv2.CAP_PROP_FPS))
+    source_fps = 15
     if source_fps <= 0.0:
         capture.release()
         raise RuntimeError("Tracking video does not report a valid FPS")
@@ -395,6 +396,7 @@ def run_tracking(
     )
 
     tracking_wall_started = time.perf_counter()
+    last_frame_index = None
     while True:
         success, frame = capture.read()
         if not success:
@@ -402,6 +404,10 @@ def run_tracking(
 
         time_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
         frame_index = round(time_s * source_fps)
+        if frame_index == last_frame_index:
+            continue
+        last_frame_index = frame_index
+
         if frame_index < tracking_start_frame:
             continue
         if frame_index >= MAX_FRAMES:

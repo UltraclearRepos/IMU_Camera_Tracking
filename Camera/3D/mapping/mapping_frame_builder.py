@@ -109,9 +109,13 @@ class MappingFrameBuilder:
             geometry_verification_seconds = 0.0
             pair_database_write_seconds = 0.0
 
-            fps = float(capture.get(cv2.CAP_PROP_FPS))
+            # fps = float(capture.get(cv2.CAP_PROP_FPS))
+            fps = 15
             if fps <= 0.0:
                 raise RuntimeError("Mapping video does not report a valid FPS")
+
+            print(f"Found FPS: {fps:.2f} for video: {video_path}")
+            last_frame_index = None
 
             while True:
                 read_started = time.perf_counter()
@@ -122,6 +126,10 @@ class MappingFrameBuilder:
 
                 timestamp_s = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
                 frame_index = round(timestamp_s * fps)
+                if frame_index == last_frame_index:
+                    continue
+                last_frame_index = frame_index
+                
                 if frame_index < self.start_frame:
                     continue
                 if frame_index > self.end_frame:

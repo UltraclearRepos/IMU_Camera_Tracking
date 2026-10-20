@@ -19,5 +19,13 @@ Camera/DataOld
 Camera/__pycache__
 IMU/__pycache__
 IMU/results
+Camera/archive_results_2D
 # hunkwise
 .vscode/hunkwise/
+Camera/3D/batch_configs
+Camera/3D/batch_configs_from_timestamps
+Camera/3D/docs
+Camera/3D/*/__pycache__
+Camera/3D/sweep_analyses/*.csv
+Camera/3D/sweep_analyses/*.png
+Camera/3D/sweep_analyses/*.xlsx

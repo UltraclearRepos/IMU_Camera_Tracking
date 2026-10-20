@@ -12,7 +12,7 @@ from pathlib import Path
 
 DATASET_DIRECTORIES = tuple(
     Path(__file__).resolve().parent / "Data" / name
-    for name in ("CylinderVertical", "CylinderVertical3Aruco")
+    for name in ("NewCamera",)
 )
 
 IMU_DATA_COLUMNS = (
