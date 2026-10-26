@@ -15,7 +15,7 @@ from mapping.mapping_data import (
 
 
 class GlobalMapBuilder:
-    """Build a metric map in the last registered mapping-camera frame."""
+    """Build a metric map in the first registered mapping-camera frame."""
 
     MINIMUM_TRACK_LENGTH = 3
     MAXIMUM_REPROJECTION_ERROR_PX = 3.0
@@ -38,13 +38,13 @@ class GlobalMapBuilder:
         alignment: ArucoAlignment,
     ):
         # ArUco supplies the metric scale only.  The final map axes and
-        # origin come from the last camera registered by the reconstruction.
-        last_registered_image = self._last_registered_image(reconstruction)
+        # origin come from the earliest registered mapping frame.
+        first_registered_image = self._first_registered_image(reconstruction)
         millimeters_per_colmap_unit = alignment.scale
         candidates = self._collect_candidates(
             reconstruction,
             millimeters_per_colmap_unit,
-            last_registered_image,
+            first_registered_image,
         )
         selection = self._select_landmarks(candidates)
         appearance = self._build_landmark_appearance(
@@ -56,7 +56,7 @@ class GlobalMapBuilder:
             reconstruction,
             frame_collection,
             millimeters_per_colmap_unit,
-            last_registered_image,
+            first_registered_image,
         )
         features_by_frame = {}
         feature_bounds_by_frame = {}
@@ -108,9 +108,9 @@ class GlobalMapBuilder:
             mapping_camera_rotations=trajectory.camera_rotations,
             mapping_camera_headings=trajectory.camera_headings,
             mapping_reference_frame=self._frame_number(
-                last_registered_image.name
+                first_registered_image.name
             ),
-            coordinate_frame="last_registered_mapping_camera",
+            coordinate_frame="first_registered_mapping_camera",
             mapping_extracted_image_count=frame_collection.image_count,
             scales=appearance.scales,
             orientations=appearance.orientations,
@@ -155,7 +155,7 @@ class GlobalMapBuilder:
         self,
         reconstruction,
         millimeters_per_colmap_unit,
-        last_registered_image,
+        first_registered_image,
     ):
         colmap_points = []
         colmap_landmark_positions = []
@@ -186,10 +186,10 @@ class GlobalMapBuilder:
             )
 
         map_landmark_positions = (
-            self._transform_colmap_landmarks_to_last_camera_frame(
+            self._transform_colmap_landmarks_to_first_camera_frame(
                 np.asarray(colmap_landmark_positions, dtype=np.float64),
                 millimeters_per_colmap_unit,
-                last_registered_image,
+                first_registered_image,
             )
         )
         return LandmarkCandidates(
@@ -344,7 +344,7 @@ class GlobalMapBuilder:
         reconstruction,
         frame_collection,
         millimeters_per_colmap_unit,
-        last_registered_image,
+        first_registered_image,
     ):
         mapping_images = {
             image.name: image for image in frame_collection.images
@@ -364,7 +364,7 @@ class GlobalMapBuilder:
                 self._map_to_camera_pose(
                     image,
                     millimeters_per_colmap_unit,
-                    last_registered_image,
+                    first_registered_image,
                 )
             )
             camera_to_map_rotation = map_to_camera_rotation.T
@@ -393,47 +393,47 @@ class GlobalMapBuilder:
     def _frame_number(image_name):
         return int(Path(image_name).stem.rsplit("_", 1)[1])
 
-    def _last_registered_image(self, reconstruction):
+    def _first_registered_image(self, reconstruction):
         if not reconstruction.images:
             raise RuntimeError(
                 "The reconstruction does not contain registered images"
             )
-        return max(
+        return min(
             reconstruction.images.values(),
             key=lambda image: self._frame_number(image.name),
         )
 
     @staticmethod
-    def _transform_colmap_landmarks_to_last_camera_frame(
+    def _transform_colmap_landmarks_to_first_camera_frame(
         colmap_landmark_positions,
         millimeters_per_colmap_unit,
-        last_registered_image,
+        first_registered_image,
     ):
-        last_pose = last_registered_image.cam_from_world()
-        last_rotation = last_pose.rotation.matrix()
-        last_translation = np.asarray(last_pose.translation).reshape(3)
+        first_pose = first_registered_image.cam_from_world()
+        first_rotation = first_pose.rotation.matrix()
+        first_translation = np.asarray(first_pose.translation).reshape(3)
         return millimeters_per_colmap_unit * (
-            (last_rotation @ colmap_landmark_positions.T).T
-            + last_translation
+            (first_rotation @ colmap_landmark_positions.T).T
+            + first_translation
         )
 
     @staticmethod
     def _map_to_camera_pose(
         image,
         millimeters_per_colmap_unit,
-        last_registered_image,
+        first_registered_image,
     ):
         image_pose = image.cam_from_world()
-        last_pose = last_registered_image.cam_from_world()
+        first_pose = first_registered_image.cam_from_world()
         image_rotation = image_pose.rotation.matrix()
         image_translation = np.asarray(image_pose.translation).reshape(3)
-        last_rotation = last_pose.rotation.matrix()
-        last_translation = np.asarray(last_pose.translation).reshape(3)
+        first_rotation = first_pose.rotation.matrix()
+        first_translation = np.asarray(first_pose.translation).reshape(3)
 
-        map_to_camera_rotation = image_rotation @ last_rotation.T
+        map_to_camera_rotation = image_rotation @ first_rotation.T
         map_to_camera_translation = millimeters_per_colmap_unit * (
             image_translation
-            - map_to_camera_rotation @ last_translation
+            - map_to_camera_rotation @ first_translation
         )
         return map_to_camera_rotation, map_to_camera_translation
 

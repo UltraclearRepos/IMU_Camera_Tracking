@@ -13,6 +13,7 @@ Camera/surface_models
 Camera/3D/__pycache__
 Camera/3D/results
 Camera/3D/results_DISK_batch
+Camera/3D/results_batch
 Camera/3D/jenkins_results
 Data
 Camera/DataOld

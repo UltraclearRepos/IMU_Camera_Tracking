@@ -45,12 +45,6 @@ class SkinMapTracker:
         self.feature_roi_bottom_fraction = feature_roi_bottom_fraction
         self.feature_matching = feature_matching
 
-        if global_map.coordinate_frame != "last_registered_mapping_camera":
-            raise ValueError(
-                "The frozen map must use the last registered mapping camera "
-                "coordinate frame"
-            )
-
         self.map_points = global_map.positions.copy()
         self.map_descriptors = global_map.descriptors
         self.map_scores = global_map.scores
@@ -63,8 +57,8 @@ class SkinMapTracker:
                 "SIFT global map must contain landmark scales and "
                 "orientations"
             )
-        # The map frame is the last mapping-camera frame, so I, 0 is the
-        # initial pose hypothesis for the first tracking frame.
+        # Placeholder pose until global-map PnP initializes tracking.
+        # Initialization does not use this pose as an extrinsic guess.
         self.R_map_to_camera = np.eye(3, dtype=np.float64)
         self.t_map_to_camera = np.zeros(3, dtype=np.float64)
         self.initialized = False

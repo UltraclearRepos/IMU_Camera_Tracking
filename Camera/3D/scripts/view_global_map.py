@@ -14,11 +14,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 MAP_PATH = (
     SCRIPT_DIR.parent
-    / "results"
-    / "CylinderVertical"
+    / "results_batch"
+    / "NewCamera"
+    / "mappingOnlyForward"
     / "sift"
-    / "base"
-    / "50mm_whiteskin_2cmaruco_Arc180-Speed-3_2026-09-11_15.32.01"
+    / "noIMU"
+    / "mappingOnlyForward"
+    / "warmlight_dark_room_Arc180-Speed-3_2026-10-22_17.22.08"
     / "map"
     / "global_map.npz"
 )

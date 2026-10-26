@@ -43,9 +43,9 @@ from visualization.tracking_visualization import (
 # Configuration
 # -----------------------------------------------------------------------------
 
-RECORDING_NAME = "inital_50mm_1aruco_Arc180-Speed-3_2026-08-28_15.25.30"
+RECORDING_NAME = "warmlight_bright_room_60ma_Arc180-Speed-3_2026-10-22_17.31.18"
 # RECORDING_NAME = "initial_50mm_Arc180-Speed-3_2026-08-20_15.30.28"
-DATA_FOLDER = "CylinderVertical"
+DATA_FOLDER = "NewCamera"
 CYLINDER_ORIENTATION = "vertical"  # "horizontal" or "vertical".
 CAMERA_NAME = "cam1"
 CAMERA_CALIBRATION = "camera_jabra_640_360"

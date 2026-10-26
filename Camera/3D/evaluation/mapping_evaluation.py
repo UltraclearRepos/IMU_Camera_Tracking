@@ -223,7 +223,7 @@ def evaluate_final_mapping_poses(
     )
 
     # Metrics describe drift relative to the first registered mapping frame.
-    # The frozen map itself remains anchored at the last registered camera.
+    # The frozen map is anchored at the first registered mapping camera.
     reference_position = tracked_point_positions[0]
     reference_rotation = camera_rotations[0]
     estimate_positions = (
